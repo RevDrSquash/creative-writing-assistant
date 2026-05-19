@@ -1,0 +1,17 @@
+# Environment
+.env
+.venv/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+dist/
+*.egg-info/
+
+# IDE
+.idea/
+.vscode/
+.agents/
+skills-lock.json
+.cursor/
