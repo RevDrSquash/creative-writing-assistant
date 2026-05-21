@@ -17,4 +17,3 @@ dist/
 .vscode/
 .agents/
 skills-lock.json
-.cursor/
