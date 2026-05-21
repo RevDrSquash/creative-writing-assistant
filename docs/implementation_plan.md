@@ -1,4 +1,4 @@
-## Phase 0: Pre-Coding & Environment Setup
+## Phase 0: Pre-Coding & Environment Setup (Completed)
 
 * Dependency Management: Initialize project using Poetry.
 * Environment Configuration: Create a .env file for API keys and configuration variables.
@@ -6,7 +6,7 @@
 
 ---
 
-## Phase 1: UI Skeleton & Proof of Concept
+## Phase 1: UI Skeleton & Proof of Concept (Completed)
 
 * Main Layout: Construct the primary UI window/dashboard with two main panels, story bible navigation in a sidebar, settings screen, model config screen, and model selection screen.
 * Placeholders: Populate panels with mock/placeholder data.
