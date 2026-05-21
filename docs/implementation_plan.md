@@ -8,7 +8,7 @@
 
 ## Phase 1: UI Skeleton & Proof of Concept
 
-* Main Layout: Construct the primary UI window/dashboard with two main panels, sidebar navigation, and settings screen.
+* Main Layout: Construct the primary UI window/dashboard with two main panels, story bible navigation in a sidebar, settings screen, model config screen, and model selection screen.
 * Placeholders: Populate panels with mock/placeholder data.
 * Execution Verification: Run the application to confirm the UI renders successfully and is fully accessible.
 

@@ -6,6 +6,9 @@ authors = []
 readme = "docs/overview.md"
 packages = [{ include = "app" }]
 
+[tool.poetry.scripts]
+writing-agent = "app.ui.app:main"
+
 [tool.poetry.dependencies]
 python = "^3.10"
 nicegui = "*"

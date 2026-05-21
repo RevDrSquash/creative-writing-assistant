@@ -9,6 +9,9 @@ __pycache__/
 dist/
 *.egg-info/
 
+# NiceGUI
+.nicegui/
+
 # IDE
 .idea/
 .vscode/
