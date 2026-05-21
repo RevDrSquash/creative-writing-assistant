@@ -1,0 +1,35 @@
+[tool.poetry]
+name = "writing-agent-v2"
+version = "0.1.0"
+description = "Local-first AI writing workspace for long-form fiction and worldbuilding"
+authors = []
+readme = "docs/overview.md"
+packages = [{ include = "app" }]
+
+[tool.poetry.dependencies]
+python = "^3.10"
+nicegui = "*"
+pydantic = "^2.0"
+pydantic-settings = "^2.0"
+python-dotenv = "*"
+langchain = "^1.0"
+langchain-core = "^1.0"
+langgraph = "^1.0"
+langsmith = "^0.3.0"
+langchain-openai = "*"
+
+[tool.poetry.group.dev.dependencies]
+pytest = "*"
+ruff = "*"
+
+[build-system]
+requires = ["poetry-core>=2.0.0,<3.0.0"]
+build-backend = "poetry.core.masonry.api"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
