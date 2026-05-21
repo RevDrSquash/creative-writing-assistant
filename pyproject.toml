@@ -36,3 +36,13 @@ pythonpath = ["."]
 [tool.ruff]
 line-length = 100
 target-version = "py310"
+
+[tool.ruff.lint]
+extend-select = [
+    "I",    # import sorting
+    "B",    # likely bugs / unsafe patterns
+    "UP",   # modern Python syntax
+    "RUF",  # Ruff-specific correctness rules
+    "PT",   # pytest style
+    "T20",  # disallow stray print()
+]
