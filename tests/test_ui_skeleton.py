@@ -1,9 +1,12 @@
 """Smoke tests for the Phase 1 NiceGUI UI skeleton."""
 
+import importlib
 from collections.abc import Iterable
 
-import app.ui.app as app
-from app.ui.app import NavigationItem, SidebarGroup
+import app.ui.app as ui_app
+from app.ui import navigation
+from app.ui.navigation import NavigationItem, SidebarGroup
+from app.ui.pages import models, workspace
 
 
 def labels(items: Iterable[NavigationItem]) -> set[str]:
@@ -19,18 +22,18 @@ def group_labels(groups: Iterable[SidebarGroup]) -> set[str]:
 
 
 def test_ui_entrypoint_is_available() -> None:
-    assert callable(app.main)
+    assert callable(ui_app.main)
 
 
 def test_header_navigation_has_phase_one_screens() -> None:
-    assert labels(app.HEADER_NAV_ITEMS) == {"Workspace", "Models", "Settings"}
-    assert paths(app.HEADER_NAV_ITEMS) == {"/workspace", "/models", "/settings"}
+    assert labels(navigation.HEADER_NAV_ITEMS) == {"Workspace", "Models", "Settings"}
+    assert paths(navigation.HEADER_NAV_ITEMS) == {"/workspace", "/models", "/settings"}
 
 
 def test_workspace_sidebar_has_story_bible_and_scenes() -> None:
-    sidebar_labels = labels(app.WORKSPACE_SIDEBAR_ITEMS)
+    sidebar_labels = labels(workspace.WORKSPACE_SIDEBAR_ITEMS)
 
-    assert group_labels(app.WORKSPACE_SIDEBAR_GROUPS) == {"Story Bible", "Scenes"}
+    assert group_labels(workspace.WORKSPACE_SIDEBAR_GROUPS) == {"Story Bible", "Scenes"}
     assert "Story Bible" not in sidebar_labels
     assert "Scenes" not in sidebar_labels
     assert {"Characters", "Locations", "Lore", "Narrative Style", "New Scene"}.issubset(
@@ -39,17 +42,24 @@ def test_workspace_sidebar_has_story_bible_and_scenes() -> None:
 
 
 def test_models_sidebar_has_selection_new_model_and_configs() -> None:
-    sidebar_labels = labels(app.MODELS_SIDEBAR_ITEMS)
+    sidebar_labels = labels(models.MODELS_SIDEBAR_ITEMS)
 
     assert {"Model Selection", "New Model"}.issubset(sidebar_labels)
-    assert labels(app.MODEL_CONFIGURATIONS).issubset(sidebar_labels)
-    assert app.MODELS_SIDEBAR_ITEMS == (
-        *app.MODEL_STATIC_SIDEBAR_ITEMS,
-        *app.MODEL_CONFIGURATIONS,
+    assert labels(models.MODEL_CONFIGURATIONS).issubset(sidebar_labels)
+    assert models.MODELS_SIDEBAR_ITEMS == (
+        *models.MODEL_STATIC_SIDEBAR_ITEMS,
+        *models.MODEL_CONFIGURATIONS,
     )
 
 
 def test_models_routes_have_distinct_placeholder_renderers() -> None:
-    assert callable(app._model_selection_page)
-    assert callable(app._new_model_page)
-    assert callable(app._model_configuration_page)
+    assert callable(models._model_selection_page)
+    assert callable(models._new_model_page)
+    assert callable(models._model_configuration_page)
+
+
+def test_ui_page_modules_import_cleanly() -> None:
+    assert importlib.import_module("app.ui.app")
+    assert importlib.import_module("app.ui.pages.workspace")
+    assert importlib.import_module("app.ui.pages.models")
+    assert importlib.import_module("app.ui.pages.settings")
