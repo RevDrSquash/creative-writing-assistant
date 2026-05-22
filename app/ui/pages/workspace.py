@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from nicegui import app, ui
 
+from app.ui.components.chat import render_chat
 from app.ui.layout import render_grouped_sidebar, render_header
 from app.ui.navigation import NavigationItem, SidebarGroup
 
@@ -55,10 +56,7 @@ def _workspace_page(active_path: str = "/workspace") -> None:
 
             with splitter.after:
                 with ui.column().classes("w-full h-full gap-4 pl-4"):
-                    ui.label("AI Chat Interface").classes("text-xl font-semibold")
-                    ui.label(
-                        "Phase 1 placeholder for the future LangGraph-powered chat."
-                    ).classes("text-grey-7")
+                    render_chat()
 
 
 @ui.page("/workspace")
