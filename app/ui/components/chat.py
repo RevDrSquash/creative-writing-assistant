@@ -24,11 +24,7 @@ def render_chat() -> None:
     configuration_error = _chat_configuration_error()
     is_streaming = False
 
-    with ui.column().classes("w-full h-full gap-3"):
-        ui.label("AI Chat Interface").classes("text-xl font-semibold")
-        ui.label("Ask for brainstorming, drafting, revision, or continuity help.").classes(
-            "text-grey-7"
-        )
+    with ui.column().classes("w-full h-full min-h-0 gap-3"):
         if configuration_error:
             with ui.card().classes("w-full bg-red-1 text-negative"):
                 ui.label("Chat is disabled because model settings are invalid.").classes(
@@ -36,14 +32,16 @@ def render_chat() -> None:
                 )
                 ui.label(configuration_error)
 
-        with ui.scroll_area().classes("w-full h-[60vh] border rounded p-2 bg-grey-1"):
+        with ui.scroll_area().classes("w-full grow min-h-0 border rounded p-2 bg-grey-1"):
             with ui.column().classes("w-full gap-2") as message_column:
                 for message in app.storage.user[CHAT_HISTORY_KEY]:
                     _render_stored_message(message)
 
-        with ui.row().classes("w-full items-end gap-2"):
+        with ui.row().classes("w-full shrink-0 items-end gap-2"):
             message_input = ui.textarea(placeholder="Message the writing agent...").classes("grow")
-            message_input.props("outlined autogrow")
+            message_input.props(
+                'outlined autogrow rows=3 input-style="max-height: 12rem"'
+            )
             send_button = ui.button("Send", color="primary")
             with ui.button(icon="settings").props("flat round"):
                 with ui.menu():
@@ -115,7 +113,6 @@ def render_chat() -> None:
             is_streaming = False
 
     send_button.on_click(send_message)
-    message_input.on("keydown.enter.exact.prevent", send_message)
 
 
 def _chat_configuration_error(

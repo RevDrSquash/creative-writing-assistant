@@ -41,21 +41,28 @@ def _workspace_page(active_path: str = "/workspace") -> None:
     render_header("/workspace")
     render_grouped_sidebar(WORKSPACE_SIDEBAR_GROUPS, active_path)
 
+    # Make the page content fill the viewport beneath the header without the
+    # default 1em padding/gap so the splitter can use the full height and
+    # children (chat input, etc.) can pin to the bottom edge.
+    ui.query(".nicegui-content").classes("p-0 gap-0 no-wrap").style(
+        "height: calc(100vh - 80px); overflow: hidden;"
+    )
+
     app.storage.user.setdefault(WORKSPACE_SPLIT_KEY, WORKSPACE_SPLIT_DEFAULT)
 
-    with ui.column().classes("w-full p-4"):
+    with ui.column().classes("w-full h-full min-h-0 overflow-hidden px-4 py-3 gap-0"):
         splitter = ui.splitter(value=app.storage.user[WORKSPACE_SPLIT_KEY])
         splitter.bind_value(app.storage.user, WORKSPACE_SPLIT_KEY)
-        with splitter.classes("w-full min-h-[78vh]"):
+        with splitter.classes("w-full h-full min-h-0"):
             with splitter.before:
-                with ui.column().classes("w-full h-full gap-4 pr-4"):
+                with ui.column().classes("w-full h-full min-h-0 gap-4 pr-4"):
                     ui.label("Editor Panel").classes("text-xl font-semibold")
                     ui.label(
                         "Phase 1 placeholder for Markdown scenes and Story Bible editing."
                     ).classes("text-grey-7")
 
             with splitter.after:
-                with ui.column().classes("w-full h-full gap-4 pl-4"):
+                with ui.column().classes("w-full h-full min-h-0 gap-4 pl-4"):
                     render_chat()
 
 
