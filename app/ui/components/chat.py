@@ -14,8 +14,6 @@ from app.graphs.context import StoredChatMessage
 from app.models import ModelSettings
 
 CHAT_HISTORY_KEY = "chat_history"
-USER_NAME = "You"
-ASSISTANT_NAME = "Writing Agent"
 
 
 def render_chat() -> None:
@@ -38,8 +36,8 @@ def render_chat() -> None:
                 )
                 ui.label(configuration_error)
 
-        with ui.scroll_area().classes("w-full h-[60vh] border rounded p-3 bg-grey-1"):
-            with ui.column().classes("w-full gap-3") as message_column:
+        with ui.scroll_area().classes("w-full h-[60vh] border rounded p-2 bg-grey-1"):
+            with ui.column().classes("w-full gap-2") as message_column:
                 for message in app.storage.user[CHAT_HISTORY_KEY]:
                     _render_stored_message(message)
 
@@ -73,9 +71,8 @@ def render_chat() -> None:
         with message_column:
             _render_stored_message(user_message)
 
-            assistant_message = ui.chat_message(name=ASSISTANT_NAME, sent=False)
-            with assistant_message:
-                assistant_markdown = ui.markdown("")
+            with ui.column().classes(_message_classes("assistant")):
+                assistant_markdown = ui.markdown("").classes("w-full")
                 spinner = ui.spinner(size="sm")
 
         assistant_text = ""
@@ -122,10 +119,14 @@ def _chat_configuration_error(
 
 def _render_stored_message(message: StoredChatMessage) -> None:
     role = message["role"]
-    is_user = role == "user"
-    name = USER_NAME if is_user else ASSISTANT_NAME
-    with ui.chat_message(name=name, sent=is_user):
-        ui.markdown(message["content"])
+    with ui.column().classes(_message_classes(role)):
+        ui.markdown(message["content"]).classes("w-full")
+
+
+def _message_classes(role: str) -> str:
+    if role == "user":
+        return "w-full rounded border border-grey-4 bg-grey-2 px-2 py-2"
+    return "w-full px-2 py-1"
 
 
 def _token_text(token: BaseMessageChunk | Any) -> str:
