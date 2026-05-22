@@ -45,9 +45,21 @@ def render_chat() -> None:
             message_input = ui.textarea(placeholder="Message the writing agent...").classes("grow")
             message_input.props("outlined autogrow")
             send_button = ui.button("Send", color="primary")
+            with ui.button(icon="settings").props("flat round"):
+                with ui.menu():
+                    ui.menu_item("Clear chat history", on_click=lambda: clear_chat_history())
             if configuration_error:
                 message_input.disable()
                 send_button.disable()
+
+    def clear_chat_history() -> None:
+        if is_streaming:
+            ui.notify("Wait for the current response to finish before clearing chat history.")
+            return
+
+        app.storage.user[CHAT_HISTORY_KEY] = []
+        message_column.clear()
+        ui.notify("Chat history cleared.")
 
     async def send_message() -> None:
         nonlocal is_streaming
