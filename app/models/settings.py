@@ -5,7 +5,6 @@ from pathlib import Path
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-# DEFAULT_MODEL = "deepseek/deepseek-v4-flash:free"
 DEFAULT_MODEL = "moonshotai/kimi-k2.6"
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 REPO_ROOT = Path(__file__).resolve().parents[2]
