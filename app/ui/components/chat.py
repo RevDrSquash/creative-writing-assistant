@@ -86,6 +86,7 @@ def render_chat() -> None:
                 spinner = ui.spinner(size="sm")
 
         assistant_text = ""
+        stream_failed = False
         try:
             stored_history = app.storage.user[CHAT_HISTORY_KEY]
             messages = assembler.assemble(assembler.from_storage(stored_history))
@@ -99,12 +100,15 @@ def render_chat() -> None:
                 assistant_text += content
                 assistant_markdown.set_content(assistant_text)
         except Exception as exc:
-            assistant_text = f"Chat agent error: {exc}"
-            assistant_markdown.set_content(assistant_text)
-            ui.notify(assistant_text, type="negative")
+            stream_failed = True
+            error_text = f"Chat agent error: {exc}"
+            assistant_markdown.set_content(error_text)
+            ui.notify(error_text, type="negative")
         finally:
             spinner.delete()
-            if assistant_text:
+            # Only persist genuine assistant output; never store error messages
+            # as assistant turns, since they would poison subsequent model context.
+            if assistant_text and not stream_failed:
                 app.storage.user[CHAT_HISTORY_KEY].append(
                     {"role": "assistant", "content": assistant_text}
                 )
