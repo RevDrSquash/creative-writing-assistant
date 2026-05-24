@@ -1,6 +1,5 @@
 """Unit tests for Phase 2 chat context assembly."""
 
-import pytest
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 
 from app.graphs.context import ContextAssembler
@@ -30,20 +29,13 @@ def test_assemble_preserves_chat_history_order() -> None:
     ]
 
 
-def test_storage_round_trip_preserves_roles_and_content() -> None:
-    assembler = ContextAssembler()
-    stored_messages = [
-        {"role": "user", "content": "Draft a scene."},
-        {"role": "assistant", "content": "Here is a scene."},
-    ]
+def test_assemble_is_idempotent() -> None:
+    assembler = ContextAssembler(system_prompt="System instructions")
+    assembled_once = assembler.assemble([HumanMessage(content="Hello")])
 
-    messages = assembler.from_storage(stored_messages)
+    assembled_twice = assembler.assemble(assembled_once)
 
-    assert assembler.to_storage(messages) == stored_messages
-
-
-def test_from_storage_rejects_unknown_roles() -> None:
-    assembler = ContextAssembler()
-
-    with pytest.raises(ValueError, match="Unsupported stored chat message role"):
-        assembler.from_storage([{"role": "system", "content": "Nope"}])
+    assert [type(message) for message in assembled_twice] == [SystemMessage, HumanMessage]
+    assert sum(isinstance(message, SystemMessage) for message in assembled_twice) == 1
+    assert assembled_twice[0].content == "System instructions"
+    assert assembled_twice[1].content == "Hello"

@@ -5,22 +5,19 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Any
 
-from langchain_core.messages import BaseMessageChunk
-from nicegui import app, ui
+from langchain_core.messages import AIMessageChunk, BaseMessageChunk
+from nicegui import ui
 from pydantic import ValidationError
 
-from app.graphs import ContextAssembler, get_chat_agent
-from app.graphs.context import StoredChatMessage
+from app.graphs import get_chat_agent
 from app.models import ModelSettings
-
-CHAT_HISTORY_KEY = "chat_history"
+from app.persistence import StoredChatMessage, get_chat_message_store, stored_to_messages
 
 
 def render_chat() -> None:
     """Render a simple streaming chat interface."""
 
-    app.storage.user.setdefault(CHAT_HISTORY_KEY, [])
-    assembler = ContextAssembler()
+    store = get_chat_message_store()
     configuration_error = _chat_configuration_error()
     is_streaming = False
 
@@ -34,7 +31,7 @@ def render_chat() -> None:
 
         with ui.scroll_area().classes("w-full grow min-h-0 border rounded p-2 bg-grey-1"):
             with ui.column().classes("w-full gap-2") as message_column:
-                for message in app.storage.user[CHAT_HISTORY_KEY]:
+                for message in store.load():
                     _render_stored_message(message)
 
         with ui.row().classes("w-full shrink-0 items-end gap-2"):
@@ -55,7 +52,7 @@ def render_chat() -> None:
             ui.notify("Wait for the current response to finish before clearing chat history.")
             return
 
-        app.storage.user[CHAT_HISTORY_KEY] = []
+        store.clear()
         message_column.clear()
         ui.notify("Chat history cleared.")
 
@@ -77,7 +74,7 @@ def render_chat() -> None:
         message_input.set_value("")
 
         user_message: StoredChatMessage = {"role": "user", "content": user_text}
-        app.storage.user[CHAT_HISTORY_KEY].append(user_message)
+        store.append(user_message)
         with message_column:
             _render_stored_message(user_message)
 
@@ -88,8 +85,7 @@ def render_chat() -> None:
         assistant_text = ""
         stream_failed = False
         try:
-            stored_history = app.storage.user[CHAT_HISTORY_KEY]
-            messages = assembler.assemble(assembler.from_storage(stored_history))
+            messages = stored_to_messages(store.load())
             async for token, _metadata in get_chat_agent().astream(
                 {"messages": messages},
                 stream_mode="messages",
@@ -109,9 +105,7 @@ def render_chat() -> None:
             # Only persist genuine assistant output; never store error messages
             # as assistant turns, since they would poison subsequent model context.
             if assistant_text and not stream_failed:
-                app.storage.user[CHAT_HISTORY_KEY].append(
-                    {"role": "assistant", "content": assistant_text}
-                )
+                store.append({"role": "assistant", "content": assistant_text})
             message_input.enable()
             send_button.enable()
             is_streaming = False
@@ -143,5 +137,12 @@ def _message_classes(role: str) -> str:
 
 
 def _token_text(token: BaseMessageChunk | Any) -> str:
+    # stream_mode="messages" emits every message added to the graph's
+    # `messages` channel, including the SystemMessage our middleware writes
+    # in `before_model`. Only LLM-generated `AIMessageChunk`s should reach
+    # the assistant markdown; everything else (system/remove/tool messages)
+    # is graph plumbing, not assistant output.
+    if not isinstance(token, AIMessageChunk):
+        return ""
     content = getattr(token, "content", "")
     return content if isinstance(content, str) else ""
