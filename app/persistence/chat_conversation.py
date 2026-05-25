@@ -46,7 +46,13 @@ class ChatConversation:
         self.store.clear()
 
     def _append(self, role: str, text: str) -> StoredChatMessage:
-        message: StoredChatMessage = {"role": role, "content": text}
+        # Stored history must never carry leading whitespace. NiceGUI's
+        # ``ui.markdown`` treats the first non-empty line's indent as the
+        # dedent amount for every line, so a stray leading space (common at
+        # the start of an LLM stream) silently chews the first character off
+        # every subsequent line. Normalising here means every consumer of
+        # ``history()`` can trust the content.
+        message: StoredChatMessage = {"role": role, "content": text.lstrip()}
         self.store.append(message)
         return message
 

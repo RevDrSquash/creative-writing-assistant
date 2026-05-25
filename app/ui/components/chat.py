@@ -92,6 +92,15 @@ def render_chat(conversation: ChatConversation | None = None) -> None:
                 content = _token_text(token)
                 if not content:
                     continue
+                if not assistant_text:
+                    # Models frequently start a stream with a stray leading
+                    # space. NiceGUI's markdown auto-dedent would then chew
+                    # the first character off every subsequent line during
+                    # live rendering, so trim leading whitespace before it
+                    # ever lands in ``assistant_text``.
+                    content = content.lstrip()
+                    if not content:
+                        continue
                 assistant_text += content
                 assistant_markdown.set_content(assistant_text)
         except Exception as exc:
