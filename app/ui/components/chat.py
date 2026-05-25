@@ -11,13 +11,13 @@ from pydantic import ValidationError
 
 from app.graphs import get_chat_agent
 from app.models import ModelSettings
-from app.persistence import StoredChatMessage, get_chat_message_store, stored_to_messages
+from app.persistence import ChatConversation, StoredChatMessage, get_chat_conversation
 
 
-def render_chat() -> None:
+def render_chat(conversation: ChatConversation | None = None) -> None:
     """Render a simple streaming chat interface."""
 
-    store = get_chat_message_store()
+    conversation = conversation or get_chat_conversation()
     configuration_error = _chat_configuration_error()
     is_streaming = False
 
@@ -31,7 +31,7 @@ def render_chat() -> None:
 
         with ui.scroll_area().classes("w-full grow min-h-0 border rounded p-2 bg-grey-1"):
             with ui.column().classes("w-full gap-2") as message_column:
-                for message in store.load():
+                for message in conversation.history():
                     _render_stored_message(message)
 
         with ui.row().classes("w-full shrink-0 items-end gap-2"):
@@ -52,7 +52,7 @@ def render_chat() -> None:
             ui.notify("Wait for the current response to finish before clearing chat history.")
             return
 
-        store.clear()
+        conversation.clear()
         message_column.clear()
         ui.notify("Chat history cleared.")
 
@@ -73,8 +73,7 @@ def render_chat() -> None:
         send_button.disable()
         message_input.set_value("")
 
-        user_message: StoredChatMessage = {"role": "user", "content": user_text}
-        store.append(user_message)
+        user_message = conversation.add_user_message(user_text)
         with message_column:
             _render_stored_message(user_message)
 
@@ -85,7 +84,7 @@ def render_chat() -> None:
         assistant_text = ""
         stream_failed = False
         try:
-            messages = stored_to_messages(store.load())
+            messages = conversation.agent_messages()
             async for token, _metadata in get_chat_agent().astream(
                 {"messages": messages},
                 stream_mode="messages",
@@ -105,7 +104,7 @@ def render_chat() -> None:
             # Only persist genuine assistant output; never store error messages
             # as assistant turns, since they would poison subsequent model context.
             if assistant_text and not stream_failed:
-                store.append({"role": "assistant", "content": assistant_text})
+                conversation.add_assistant_message(assistant_text)
             message_input.enable()
             send_button.enable()
             is_streaming = False
