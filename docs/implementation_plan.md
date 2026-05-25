@@ -14,7 +14,7 @@
 
 ---
 
-## Phase 2: LangGraph Agent & Chat Interface
+## Phase 2: LangGraph Agent & Chat Interface (Completed)
 
 * LangGraph Agent: Implement the LangGraph agent using a hard-coded model configuration.
 * Chat UI: Replace the right side panel from Phase 1 with a simple streaming chat interface for interacting with the agent. 
@@ -72,3 +72,10 @@
 * Tool-Call Display: Render tool calls clearly in the chat history.
 * Tool Confirmations: Add tool confirmations to the chat window, including diffs where agent tools edit scene Markdown or Story Bible data.
 * Stop/Cancel: Add controls to stop or cancel in-flight agent and sub-agent runs.
+
+---
+
+## Future Work
+
+* Modify Chat History: Delete/modify messages in the chat history.
+* Multiple Conversations: Persist more than the current conversation and allow switching between them.
