@@ -8,11 +8,10 @@ from app.ui.components import render_markdown_editor
 from app.ui.components.chat import render_chat
 from app.ui.layout import render_grouped_sidebar, render_header
 from app.ui.navigation import NavigationItem, SidebarGroup
+from app.world.scene import DEFAULT_SCENE_MARKDOWN, SCENE_CONTENT_KEY
 
 WORKSPACE_SPLIT_KEY = "workspace_split"
 WORKSPACE_SPLIT_DEFAULT = 75
-SCENE_CONTENT_KEY = "scene_content"
-DEFAULT_SCENE_MARKDOWN = "# New Scene\n\nStart writing..."
 
 WORKSPACE_STORY_BIBLE_ITEMS: tuple[NavigationItem, ...] = (
     NavigationItem(

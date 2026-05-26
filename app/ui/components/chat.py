@@ -12,6 +12,7 @@ from pydantic import ValidationError
 from app.graphs import get_chat_agent
 from app.models import ModelSettings
 from app.persistence import ChatConversation, StoredChatMessage, get_chat_conversation
+from app.world.scene import get_current_scene_text, set_current_scene_text
 
 
 def render_chat(conversation: ChatConversation | None = None) -> None:
@@ -85,10 +86,20 @@ def render_chat(conversation: ChatConversation | None = None) -> None:
         stream_failed = False
         try:
             messages = conversation.agent_messages()
-            async for token, _metadata in get_chat_agent().astream(
-                {"messages": messages},
-                stream_mode="messages",
+            async for stream_name, payload in get_chat_agent().astream(
+                {
+                    "messages": messages,
+                    "current_scene": get_current_scene_text(),
+                },
+                stream_mode=["messages", "updates"],
             ):
+                if stream_name == "updates":
+                    _write_scene_updates_from_payload(payload)
+                    continue
+                if stream_name != "messages":
+                    continue
+
+                token, _metadata = payload
                 content = _token_text(token)
                 if not content:
                     continue
@@ -154,3 +165,18 @@ def _token_text(token: BaseMessageChunk | Any) -> str:
         return ""
     content = getattr(token, "content", "")
     return content if isinstance(content, str) else ""
+
+
+def _write_scene_updates_from_payload(
+    payload: Any,
+    scene_setter: Callable[[str], None] = set_current_scene_text,
+) -> None:
+    if not isinstance(payload, dict):
+        return
+
+    for node_updates in payload.values():
+        if not isinstance(node_updates, dict):
+            continue
+        new_scene = node_updates.get("current_scene")
+        if isinstance(new_scene, str):
+            scene_setter(new_scene)

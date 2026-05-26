@@ -7,7 +7,9 @@ from langchain_core.language_models import BaseChatModel
 from langgraph.graph.state import CompiledStateGraph
 
 from app.graphs.context import ContextAssembler
+from app.graphs.state import WritingAgentState
 from app.models import ModelSettings, get_chat_model
+from app.tools import SCENE_TOOLS
 
 _CHAT_AGENT: CompiledStateGraph | None = None
 _CHAT_AGENT_API_KEY: str | None = None
@@ -22,7 +24,8 @@ def build_chat_agent(
     assembler = assembler or ContextAssembler()
     return create_agent(
         model=model or get_chat_model(),
-        tools=[],
+        tools=SCENE_TOOLS,
+        state_schema=WritingAgentState,
         system_prompt=assembler.system_prompt,
     )
 
