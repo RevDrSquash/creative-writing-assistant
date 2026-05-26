@@ -4,12 +4,15 @@ from __future__ import annotations
 
 from nicegui import app, ui
 
+from app.ui.components import render_markdown_editor
 from app.ui.components.chat import render_chat
 from app.ui.layout import render_grouped_sidebar, render_header
 from app.ui.navigation import NavigationItem, SidebarGroup
 
 WORKSPACE_SPLIT_KEY = "workspace_split"
 WORKSPACE_SPLIT_DEFAULT = 75
+SCENE_CONTENT_KEY = "scene_content"
+DEFAULT_SCENE_MARKDOWN = "# New Scene\n\nStart writing..."
 
 WORKSPACE_STORY_BIBLE_ITEMS: tuple[NavigationItem, ...] = (
     NavigationItem(
@@ -36,6 +39,8 @@ WORKSPACE_SIDEBAR_ITEMS: tuple[NavigationItem, ...] = (
     *WORKSPACE_SCENE_ITEMS,
 )
 
+_WORKSPACE_PLACEHOLDERS_BY_PATH = {item.path: item.placeholder for item in WORKSPACE_SIDEBAR_ITEMS}
+
 
 def _workspace_page(active_path: str = "/workspace") -> None:
     render_header("/workspace")
@@ -56,14 +61,25 @@ def _workspace_page(active_path: str = "/workspace") -> None:
         with splitter.classes("w-full h-full min-h-0"):
             with splitter.before:
                 with ui.column().classes("w-full h-full min-h-0 gap-4 pr-4"):
-                    ui.label("Editor Panel").classes("text-xl font-semibold")
-                    ui.label(
-                        "Phase 1 placeholder for Markdown scenes and Story Bible editing."
-                    ).classes("text-grey-7")
+                    if active_path in {"/workspace", "/workspace/scenes/new"}:
+                        _render_scene_editor()
+                    else:
+                        _render_placeholder(_WORKSPACE_PLACEHOLDERS_BY_PATH[active_path])
 
             with splitter.after:
                 with ui.column().classes("w-full h-full min-h-0 gap-4 pl-4"):
                     render_chat()
+
+
+def _render_scene_editor() -> None:
+    app.storage.user.setdefault(SCENE_CONTENT_KEY, DEFAULT_SCENE_MARKDOWN)
+    ui.label("Editor Panel").classes("text-xl font-semibold shrink-0")
+    render_markdown_editor(app.storage.user, SCENE_CONTENT_KEY)
+
+
+def _render_placeholder(text: str) -> None:
+    ui.label("Editor Panel").classes("text-xl font-semibold")
+    ui.label(text).classes("text-grey-7")
 
 
 @ui.page("/workspace")
