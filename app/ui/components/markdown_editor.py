@@ -6,6 +6,25 @@ from typing import Any
 
 from nicegui import ui
 
+# Quasar's q-input (type=textarea) wraps the native <textarea> in several
+# layers (.q-field__inner > .q-field__control > .q-field__control-container).
+# Setting `h-full` on the outer field and `input-class="h-full"` on the native
+# input only pins the two ends of that chain; the intermediate wrappers
+# default to auto height, so the native textarea's height: 100% resolves to
+# the wrappers' intrinsic size (~`rows` lines). Force the chain to inherit
+# full height, scoped to a marker class so chat-style autogrow textareas are
+# unaffected.
+ui.add_css(
+    """
+    .nicegui-fill-textarea .q-field__inner,
+    .nicegui-fill-textarea .q-field__control,
+    .nicegui-fill-textarea .q-field__control-container {
+        height: 100%;
+    }
+    """,
+    shared=True,
+)
+
 
 def render_markdown_editor(
     target: Any,
@@ -33,8 +52,11 @@ def render_markdown_editor(
             textarea = ui.textarea(placeholder=placeholder)
             textarea.bind_value(target, field)
             textarea.bind_visibility_from(state, "edit_mode")
-            textarea.props('outlined autogrow=false input-class="h-full" input-style="resize: none;"')
-            textarea.classes("w-full h-full")
+            textarea.props(
+                'outlined autogrow=false hide-bottom-space'
+                ' input-class="h-full" input-style="resize: none;"'
+            )
+            textarea.classes("w-full h-full nicegui-fill-textarea")
 
             preview_scroll = ui.scroll_area().classes("w-full grow min-h-0 border rounded p-3")
             with preview_scroll:
