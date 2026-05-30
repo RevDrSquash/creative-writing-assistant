@@ -23,10 +23,11 @@
 
 ---
 
-## Phase 3: Markdown UI & Tool Integration (In Progress)
+## Phase 3: Markdown UI & Tool Integration (In Verification)
 
-* Markdown UI (Completed): Replace the placeholder panel from Phase 1 with the actual Markdown scene interface/renderer.
+* Markdown UI: Replace the placeholder panel from Phase 1 with the actual Markdown scene interface/renderer.
 * Scene Editing Tools: Build and bind the tools required for the agent to read and edit scene Markdown directly.
+* Create Scenes: Allow the agent to append to existing scenes using stream-tag interception.
 * Testing: Add unit tests for each tool.
 
 ---
@@ -49,6 +50,7 @@
 * Story Bible UI: Add structured forms for editing characters, locations, and lore.
 * ZIP Import/Export: Implement portable world import/export, including Story Bible data and scene Markdown.
 * Tools Integration: Add tools to allow the agent to interact with the story bible.
+* Multiple Scenes: Add support for multiple scenes including user and agent tools to create, select, and delete scenes.
 
 ---
 
@@ -75,7 +77,7 @@
 
 ---
 
-## Future Work
+## Related Docs
 
-* Modify Chat History: Delete/modify messages in the chat history.
-* Multiple Conversations: Persist more than the current conversation and allow switching between them.
+* Known / open issues and edge-case bugs: see [known_issues.md](known_issues.md).
+* Planned enhancements beyond the phased plan: see [future_work.md](future_work.md).

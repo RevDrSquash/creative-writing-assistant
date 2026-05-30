@@ -59,3 +59,8 @@ The app is a local-first Python writing workspace built around one in-memory `Wo
 - World data, app config, and secrets remain separate.
 - Workflow state is ephemeral unless a tool writes to the world.
 - Agent edits should use patch-style tools where possible instead of full-document replacement.
+
+## Related Docs
+
+- Known / open issues and architectural debt: see [known_issues.md](known_issues.md).
+- Planned enhancements beyond the phased plan: see [future_work.md](future_work.md).

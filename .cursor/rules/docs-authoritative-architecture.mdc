@@ -1,0 +1,13 @@
+---
+description: 
+alwaysApply: true
+---
+
+# /docs Is the Source of Truth for Architecture
+
+When planning tasks or considering architecture changes, reference `/docs` first.
+
+- `/docs` is the authoritative source for the project's architecture (see `docs/architecture.md` and related design docs).
+- Prefer the architecture already defined in `/docs`. Implement changes using those patterns whenever possible.
+- If the architecture is conflicting, ambiguous, or underspecified for the change you need, update `/docs` first to resolve it, then make the code changes to match.
+- Do not introduce architecture in code that diverges from `/docs` without updating `/docs` to reflect the new decision.
