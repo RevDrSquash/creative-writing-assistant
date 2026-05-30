@@ -9,11 +9,15 @@ from langgraph.graph.state import CompiledStateGraph
 from app.graphs.canvas_middleware import CanvasAppendMiddleware
 from app.graphs.context import ContextAssembler
 from app.graphs.state import WritingAgentState
-from app.models import ModelSettings, get_chat_model
+from app.models import ModelConfig, ModelSettings, get_chat_model, get_chat_model_for_config
+from app.models.config import CHAT_NODE_ID
+from app.persistence import get_model_config_repository
 from app.tools import SCENE_TOOLS
 
+ChatAgentCacheKey = tuple[str, str, str, str, float | None, str | None, str]
+
 _CHAT_AGENT: CompiledStateGraph | None = None
-_CHAT_AGENT_API_KEY: str | None = None
+_CHAT_AGENT_CACHE_KEY: ChatAgentCacheKey | None = None
 
 
 def build_chat_agent(
@@ -35,10 +39,27 @@ def build_chat_agent(
 def get_chat_agent() -> CompiledStateGraph:
     """Return a lazily-created singleton chat agent for the UI."""
 
-    global _CHAT_AGENT, _CHAT_AGENT_API_KEY
+    global _CHAT_AGENT, _CHAT_AGENT_CACHE_KEY
 
     settings = ModelSettings()
-    if _CHAT_AGENT is None or _CHAT_AGENT_API_KEY != settings.openrouter_api_key:
-        _CHAT_AGENT = build_chat_agent(model=get_chat_model(settings))
-        _CHAT_AGENT_API_KEY = settings.openrouter_api_key
+    config = get_model_config_repository().resolve_model_config(CHAT_NODE_ID)
+    cache_key = _chat_agent_cache_key(settings.openrouter_api_key, config)
+    if _CHAT_AGENT is None or _CHAT_AGENT_CACHE_KEY != cache_key:
+        _CHAT_AGENT = build_chat_agent(
+            model=get_chat_model_for_config(config, settings),
+            assembler=ContextAssembler(prefix=config.system_prompt_prefix),
+        )
+        _CHAT_AGENT_CACHE_KEY = cache_key
     return _CHAT_AGENT
+
+
+def _chat_agent_cache_key(api_key: str, config: ModelConfig) -> ChatAgentCacheKey:
+    return (
+        api_key,
+        config.id,
+        config.name,
+        config.model,
+        config.temperature,
+        config.reasoning_effort,
+        config.system_prompt_prefix,
+    )

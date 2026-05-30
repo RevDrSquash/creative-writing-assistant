@@ -22,5 +22,20 @@ Canvas drafting:
 class ContextAssembler:
     """Build the system prompt for the chat agent."""
 
-    def __init__(self, system_prompt: str = DEFAULT_SYSTEM_PROMPT) -> None:
-        self.system_prompt = system_prompt
+    def __init__(
+        self,
+        prefix: str = "",
+        base_prompt: str = DEFAULT_SYSTEM_PROMPT,
+        system_prompt: str | None = None,
+    ) -> None:
+        self.prefix = prefix
+        self.base_prompt = base_prompt
+        self._system_prompt = system_prompt
+
+    @property
+    def system_prompt(self) -> str:
+        """Return the composed system prompt."""
+
+        if self._system_prompt is not None:
+            return self._system_prompt
+        return "\n\n".join(part.strip() for part in (self.prefix, self.base_prompt) if part.strip())
