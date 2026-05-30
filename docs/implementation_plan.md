@@ -23,7 +23,7 @@
 
 ---
 
-## Phase 3: Markdown UI & Tool Integration (In Verification)
+## Phase 3: Markdown UI & Tool Integration (Completed)
 
 * Markdown UI: Replace the placeholder panel from Phase 1 with the actual Markdown scene interface/renderer.
 * Scene Editing Tools: Build and bind the tools required for the agent to read and edit scene Markdown directly.

@@ -62,5 +62,6 @@ The app is a local-first Python writing workspace built around one in-memory `Wo
 
 ## Related Docs
 
+- Model configuration and per-node model selection: see [model_configuration.md](model_configuration.md).
 - Known / open issues and architectural debt: see [known_issues.md](known_issues.md).
 - Planned enhancements beyond the phased plan: see [future_work.md](future_work.md).
