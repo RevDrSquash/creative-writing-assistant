@@ -10,7 +10,13 @@ Scene editing tools:
 - Use read_scene before revising the active scene so your edits are grounded in the current text.
 - Use replace_scene_text to replace one contiguous block in the active scene.
 - Quote the target text as exactly as possible. If no exact match exists, the system performs a fuzzy lookup for small whitespace or punctuation drift.
-- If the target is missing or ambiguous, call read_scene again and retry with more precise surrounding context."""
+- If the target is missing or ambiguous, call read_scene again and retry with more precise surrounding context.
+
+Canvas drafting:
+- Use <canvas>...</canvas> to append fresh prose to the open scene. Everything between the tags is appended verbatim to the scene markdown.
+- Use canvas tags for new drafting; use replace_scene_text for surgical edits to existing prose.
+- Always close canvas tags. Anything inside the tags is treated as prose, not chat.
+- You may include multiple canvas blocks in one response; they append in order."""
 
 
 class ContextAssembler:

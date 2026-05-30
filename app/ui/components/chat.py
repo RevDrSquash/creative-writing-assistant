@@ -12,6 +12,7 @@ from pydantic import ValidationError
 from app.graphs import get_chat_agent
 from app.models import ModelSettings
 from app.persistence import ChatConversation, StoredChatMessage, get_chat_conversation
+from app.ui.components.canvas_stream_parser import CanvasStreamParser, ParseEvents
 from app.world.scene import get_current_scene_text, set_current_scene_text
 
 
@@ -83,13 +84,15 @@ def render_chat(conversation: ChatConversation | None = None) -> None:
                 spinner = ui.spinner(size="sm")
 
         assistant_text = ""
+        pre_stream_scene = get_current_scene_text()
+        parser = CanvasStreamParser()
         stream_failed = False
         try:
             messages = conversation.agent_messages()
             async for stream_name, payload in get_chat_agent().astream(
                 {
                     "messages": messages,
-                    "current_scene": get_current_scene_text(),
+                    "current_scene": pre_stream_scene,
                 },
                 stream_mode=["messages", "updates"],
             ):
@@ -103,17 +106,24 @@ def render_chat(conversation: ChatConversation | None = None) -> None:
                 content = _token_text(token)
                 if not content:
                     continue
-                if not assistant_text:
-                    # Models frequently start a stream with a stray leading
-                    # space. NiceGUI's markdown auto-dedent would then chew
-                    # the first character off every subsequent line during
-                    # live rendering, so trim leading whitespace before it
-                    # ever lands in ``assistant_text``.
-                    content = content.lstrip()
-                    if not content:
-                        continue
-                assistant_text += content
-                assistant_markdown.set_content(assistant_text)
+                events = parser.feed(content)
+                if events.canvas_text:
+                    set_current_scene_text(get_current_scene_text() + events.canvas_text)
+                assistant_text = _append_streamed_chat_text(
+                    assistant_text,
+                    events.chat_text,
+                    assistant_markdown,
+                )
+
+            flush_events = parser.flush()
+            if _apply_canvas_flush_events(flush_events, pre_stream_scene):
+                pass
+            else:
+                assistant_text = _append_streamed_chat_text(
+                    assistant_text,
+                    flush_events.chat_text,
+                    assistant_markdown,
+                )
         except Exception as exc:
             stream_failed = True
             error_text = f"Chat agent error: {exc}"
@@ -165,6 +175,38 @@ def _token_text(token: BaseMessageChunk | Any) -> str:
         return ""
     content = getattr(token, "content", "")
     return content if isinstance(content, str) else ""
+
+
+def _append_streamed_chat_text(
+    assistant_text: str,
+    content: str,
+    assistant_markdown: Any,
+) -> str:
+    if not content:
+        return assistant_text
+    if not assistant_text:
+        # Models frequently start a stream with a stray leading space. NiceGUI's
+        # markdown auto-dedent would then chew the first character off every
+        # subsequent line during live rendering, so trim it before storing.
+        content = content.lstrip()
+        if not content:
+            return assistant_text
+
+    assistant_text += content
+    assistant_markdown.set_content(assistant_text)
+    return assistant_text
+
+
+def _apply_canvas_flush_events(
+    events: ParseEvents,
+    pre_stream_scene: str,
+    scene_setter: Callable[[str], None] = set_current_scene_text,
+) -> bool:
+    if not events.unterminated_canvas:
+        return False
+
+    scene_setter(pre_stream_scene)
+    return True
 
 
 def _write_scene_updates_from_payload(

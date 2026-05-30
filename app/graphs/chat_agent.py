@@ -6,6 +6,7 @@ from langchain.agents import create_agent
 from langchain_core.language_models import BaseChatModel
 from langgraph.graph.state import CompiledStateGraph
 
+from app.graphs.canvas_middleware import CanvasAppendMiddleware
 from app.graphs.context import ContextAssembler
 from app.graphs.state import WritingAgentState
 from app.models import ModelSettings, get_chat_model
@@ -27,6 +28,7 @@ def build_chat_agent(
         tools=SCENE_TOOLS,
         state_schema=WritingAgentState,
         system_prompt=assembler.system_prompt,
+        middleware=[CanvasAppendMiddleware()],
     )
 
 

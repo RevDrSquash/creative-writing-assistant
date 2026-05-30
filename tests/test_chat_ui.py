@@ -4,7 +4,12 @@ import pytest
 from pydantic import ValidationError
 
 from app.models.settings import ModelSettings
-from app.ui.components.chat import _chat_configuration_error, _write_scene_updates_from_payload
+from app.ui.components.canvas_stream_parser import ParseEvents
+from app.ui.components.chat import (
+    _apply_canvas_flush_events,
+    _chat_configuration_error,
+    _write_scene_updates_from_payload,
+)
 from app.world.scene import SCENE_CONTENT_KEY, set_current_scene_text
 
 
@@ -59,3 +64,27 @@ def test_chat_panel_writes_current_scene_updates_to_user_storage() -> None:
     )
 
     assert backing_store[SCENE_CONTENT_KEY] == "edited scene"
+
+
+def test_chat_panel_writes_appended_current_scene_updates_to_user_storage() -> None:
+    backing_store: dict[str, str] = {}
+
+    _write_scene_updates_from_payload(
+        {"CanvasAppendMiddleware": {"current_scene": "existing scene\n\nnew prose"}},
+        lambda text: set_current_scene_text(text, backing_store),
+    )
+
+    assert backing_store[SCENE_CONTENT_KEY] == "existing scene\n\nnew prose"
+
+
+def test_canvas_flush_events_roll_back_unterminated_canvas_block() -> None:
+    restored: list[str] = []
+
+    did_roll_back = _apply_canvas_flush_events(
+        ParseEvents(unterminated_canvas=True),
+        "pre-stream scene",
+        restored.append,
+    )
+
+    assert did_roll_back is True
+    assert restored == ["pre-stream scene"]
