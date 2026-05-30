@@ -4,6 +4,8 @@ import importlib
 from collections.abc import Iterable
 
 import app.ui.app as ui_app
+from app.models.config import ModelConfig
+from app.persistence import JsonFileModelConfigStore, ModelConfigRepository
 from app.ui import navigation
 from app.ui.navigation import NavigationItem, SidebarGroup
 from app.ui.pages import models, workspace
@@ -50,6 +52,15 @@ def test_models_sidebar_has_selection_new_model_and_configs() -> None:
         *models.MODEL_STATIC_SIDEBAR_ITEMS,
         *models.MODEL_CONFIGURATIONS,
     )
+
+
+def test_models_sidebar_includes_custom_configs_from_repository(tmp_path) -> None:
+    repo = ModelConfigRepository(JsonFileModelConfigStore(tmp_path / "model_configs.json"))
+    repo.save_config(ModelConfig(id="custom", name="Custom", model="example/custom"))
+
+    sidebar_labels = labels(models._models_sidebar_items(repo))
+
+    assert {"Model Selection", "New Model", "Custom"}.issubset(sidebar_labels)
 
 
 def test_models_routes_have_distinct_placeholder_renderers() -> None:
