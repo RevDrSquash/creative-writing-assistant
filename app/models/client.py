@@ -4,6 +4,7 @@ from langchain_core.language_models import BaseChatModel
 from langchain_openai import ChatOpenAI
 
 from app.models.config import CHAT_NODE_ID, ModelConfig
+from app.models.debug_logging import get_llm_debug_handler
 from app.models.settings import OPENROUTER_BASE_URL, ModelSettings
 
 
@@ -30,6 +31,7 @@ def get_chat_model_for_config(
     model_kwargs: dict[str, object] = {
         "api_key": model_settings.openrouter_api_key,
         "base_url": OPENROUTER_BASE_URL,
+        "callbacks": [get_llm_debug_handler()],
         "model": config.model,
         "streaming": True,
     }

@@ -33,6 +33,7 @@ def test_get_chat_model_for_config_sets_model_temperature_and_reasoning(
     assert captured["base_url"] == OPENROUTER_BASE_URL
     assert captured["model"] == "example/custom"
     assert captured["streaming"] is True
+    assert "callbacks" in captured
     assert captured["temperature"] == 0.3
     assert captured["extra_body"] == {"reasoning": {"effort": "medium"}}
 

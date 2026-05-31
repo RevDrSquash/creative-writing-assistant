@@ -62,6 +62,7 @@ The app is a local-first Python writing workspace built around one in-memory `Wo
 
 ## Related Docs
 
+- LLM call logging and the Debug page: see [architecture_llm_debug_logging.md](architecture_llm_debug_logging.md).
 - Model configuration and per-node model selection: see [model_configuration.md](model_configuration.md).
 - Known / open issues and architectural debt: see [known_issues.md](known_issues.md).
 - Planned enhancements beyond the phased plan: see [future_work.md](future_work.md).

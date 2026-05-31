@@ -8,7 +8,7 @@ from app.models.config import ModelConfig
 from app.persistence import JsonFileModelConfigStore, ModelConfigRepository
 from app.ui import navigation
 from app.ui.navigation import NavigationItem, SidebarGroup
-from app.ui.pages import models, workspace
+from app.ui.pages import debug, models, workspace
 
 
 def labels(items: Iterable[NavigationItem]) -> set[str]:
@@ -28,8 +28,8 @@ def test_ui_entrypoint_is_available() -> None:
 
 
 def test_header_navigation_has_phase_one_screens() -> None:
-    assert labels(navigation.HEADER_NAV_ITEMS) == {"Workspace", "Models", "Settings"}
-    assert paths(navigation.HEADER_NAV_ITEMS) == {"/workspace", "/models", "/settings"}
+    assert labels(navigation.HEADER_NAV_ITEMS) == {"Workspace", "Models", "Settings", "Debug"}
+    assert paths(navigation.HEADER_NAV_ITEMS) == {"/workspace", "/models", "/settings", "/debug"}
 
 
 def test_workspace_sidebar_has_story_bible_and_scenes() -> None:
@@ -69,8 +69,76 @@ def test_models_routes_have_distinct_placeholder_renderers() -> None:
     assert callable(models._model_configuration_page)
 
 
+def test_debug_routes_have_distinct_renderers() -> None:
+    assert callable(debug._debug_index_page)
+    assert callable(debug._debug_call_page)
+
+
+def test_debug_token_counts_prefer_usage_metadata() -> None:
+    counts = debug._token_counts(
+        {
+            "usage_metadata": {
+                "input_tokens": 12,
+                "output_tokens": 8,
+                "total_tokens": 20,
+                "output_token_details": {"reasoning": 3},
+            }
+        }
+    )
+
+    assert counts == {"Input": 12, "Output": 8, "Reasoning": 3, "Total": 20}
+
+
+def test_debug_token_counts_fall_back_to_token_usage() -> None:
+    counts = debug._token_counts(
+        {
+            "token_usage": {
+                "prompt_tokens": 100,
+                "completion_tokens": 40,
+                "total_tokens": 140,
+                "completion_tokens_details": {"reasoning_tokens": 10},
+            }
+        }
+    )
+
+    assert counts == {"Input": 100, "Output": 40, "Reasoning": 10, "Total": 140}
+
+
+def test_debug_prompt_blocks_split_into_components() -> None:
+    blocks = debug._prompt_blocks(
+        [
+            {"role": "system", "content": "System instructions"},
+            {"role": "user", "content": "Revise the line."},
+            {
+                "role": "assistant",
+                "content": "Working on it.",
+                "tool_calls": [{"name": "replace_scene_text", "args": {"target": "old"}}],
+            },
+            {"role": "tool", "content": "Replaced.", "name": "replace_scene_text"},
+        ]
+    )
+
+    assert [(title, kind) for title, kind, _ in blocks] == [
+        ("System Prompt", "markdown"),
+        ("User Message", "markdown"),
+        ("Assistant Message", "markdown"),
+        ("Tool Call: replace_scene_text", "json"),
+        ("Tool Response: replace_scene_text", "markdown"),
+    ]
+    tool_call_content = next(content for _, kind, content in blocks if kind == "json")
+    assert '"name": "replace_scene_text"' in tool_call_content
+    assert '"target": "old"' in tool_call_content
+
+
+def test_debug_escape_html_escapes_canvas_tags() -> None:
+    escaped = debug._escape_html("Use <canvas>prose</canvas> & more")
+
+    assert escaped == "Use &lt;canvas&gt;prose&lt;/canvas&gt; &amp; more"
+
+
 def test_ui_page_modules_import_cleanly() -> None:
     assert importlib.import_module("app.ui.app")
     assert importlib.import_module("app.ui.pages.workspace")
     assert importlib.import_module("app.ui.pages.models")
     assert importlib.import_module("app.ui.pages.settings")
+    assert importlib.import_module("app.ui.pages.debug")
