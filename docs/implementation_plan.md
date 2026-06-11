@@ -32,15 +32,15 @@
 
 ---
 
-## Phase 4: Model Configuration & System Prompt Prefixes
+## Phase 4: Model Configuration & System Prompt Prefixes (Completed)
 
-* Settings UI: Add Model Configuration and Configuration Selector UIs to the placeholder settings screen created in Phase 1.
 * Model Configuration UI: Add model configuration UI where the user can configure available OpenRouter models, set parameters like reasoning, and define a system prompt prefix.
 * Default Model Configs: Support three default model configuration roles: small, standard, and large.
 * Configuration Selector UI: Add a config selector UI where the user can set per-node model config overrides.
 * Configuration Selector Logic: Wire up the config selector UI to the actual LangGraph LLM nodes.
 * System Prompt Prefixes: Add system prompt prefixes, from model config, to the agent context via the context assembler.
 * Testing: Add tests for the model configuration and prompt prefixes.
+* Debugging: Add a debug page to view compiled prompts as they are seen by the LLM.
 
 ---
 
