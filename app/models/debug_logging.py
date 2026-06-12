@@ -58,7 +58,13 @@ class LLMDebugCallbackHandler(BaseCallbackHandler):
             prompt_messages=_serialize_prompt_messages(messages[0] if messages else []),
         )
         self.store.start(record)
-        LOGGER.info("LLM call started run_id=%s node=%s model=%s params=%s", run_id_text, node, model, params)
+        LOGGER.info(
+            "LLM call started run_id=%s node=%s model=%s params=%s",
+            run_id_text,
+            node,
+            model,
+            params,
+        )
 
     def on_llm_end(
         self,
@@ -79,7 +85,9 @@ class LLMDebugCallbackHandler(BaseCallbackHandler):
             response_metadata=response_metadata,
             duration_ms=self._duration_ms(run_id_text),
         )
-        LOGGER.info("LLM call finished run_id=%s response_metadata=%s", run_id_text, response_metadata)
+        LOGGER.info(
+            "LLM call finished run_id=%s response_metadata=%s", run_id_text, response_metadata
+        )
 
     def on_llm_error(
         self,
@@ -122,7 +130,9 @@ def _serialize_messages(messages: list[BaseMessage]) -> str:
     for message in messages:
         role = _message_role(message)
         parts = [f"{role}: {_content_to_text(message.content)}"]
-        tool_calls = getattr(message, "tool_calls", None) or message.additional_kwargs.get("tool_calls")
+        tool_calls = getattr(message, "tool_calls", None) or message.additional_kwargs.get(
+            "tool_calls"
+        )
         if tool_calls:
             parts.append(f"tool_calls: {json.dumps(_jsonable(tool_calls), indent=2)}")
         rendered.append("\n".join(parts))

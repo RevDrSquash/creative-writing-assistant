@@ -38,6 +38,12 @@ See [`docs/overview.md`](docs/overview.md) and [`docs/architecture.md`](docs/arc
 
    Then edit `.env` and set `OPENROUTER_API_KEY` (must start with `sk-or-v1-`).
 
+4. Install the git pre-commit hooks (runs Ruff lint + format on every commit):
+
+   ```bash
+   poetry run pre-commit install
+   ```
+
 ## Run
 
 Launch the NiceGUI app:
@@ -64,4 +70,10 @@ poetry run pytest
 
 ```bash
 poetry run ruff check .
+```
+
+## Verify (lint + full test suite)
+
+```bash
+poetry run ruff check . && poetry run pytest
 ```

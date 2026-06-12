@@ -10,8 +10,9 @@ from typing import NotRequired, Protocol, TypedDict, cast
 
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
-DEFAULT_CHAT_HISTORY_PATH = REPO_ROOT / "data" / "chat_history.json"
+from app.persistence.paths import get_data_dir
+
+DEFAULT_CHAT_HISTORY_PATH = get_data_dir() / "chat_history.json"
 
 _CHAT_MESSAGE_STORE: ChatMessageStore | None = None
 

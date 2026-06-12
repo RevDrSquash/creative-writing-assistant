@@ -38,9 +38,7 @@ def render_chat(conversation: ChatConversation | None = None) -> None:
 
         with ui.row().classes("w-full shrink-0 items-end gap-2"):
             message_input = ui.textarea(placeholder="Message the writing agent...").classes("grow")
-            message_input.props(
-                'outlined autogrow rows=3 input-style="max-height: 12rem"'
-            )
+            message_input.props('outlined autogrow rows=3 input-style="max-height: 12rem"')
             send_button = ui.button("Send", color="primary")
             with ui.button(icon="settings").props("flat round"):
                 with ui.menu():

@@ -53,7 +53,7 @@ def render_markdown_editor(
             textarea.bind_value(target, field)
             textarea.bind_visibility_from(state, "edit_mode")
             textarea.props(
-                'outlined autogrow=false hide-bottom-space'
+                "outlined autogrow=false hide-bottom-space"
                 ' input-class="h-full" input-style="resize: none;"'
             )
             textarea.classes("w-full h-full nicegui-fill-textarea")

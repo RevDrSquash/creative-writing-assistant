@@ -61,7 +61,9 @@ def render_grouped_sidebar(groups: tuple[SidebarGroup, ...], active_path: str) -
                     "px-3 pt-2 text-xs font-semibold uppercase tracking-wide text-grey-7"
                 )
                 for item in group.items:
-                    button = ui.button(item.label, on_click=lambda path=item.path: ui.navigate.to(path))
+                    button = ui.button(
+                        item.label, on_click=lambda path=item.path: ui.navigate.to(path)
+                    )
                     button.classes("w-full justify-start")
                     button.props("flat" if item.path != active_path else "unelevated color=primary")
 

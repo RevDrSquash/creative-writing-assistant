@@ -1,0 +1,17 @@
+---
+description: Use the project Poetry environment when running tests and linters
+alwaysApply: true
+---
+
+# Run Tests With Poetry
+
+This project uses Poetry for its Python environment. Do not run tests with bare system Python commands such as `python -m pytest`, because the system interpreter may not have the project dev dependencies installed.
+
+Use Poetry-wrapped commands from the repository root:
+
+- Tests: `poetry run pytest`
+- Focused tests: `poetry run pytest tests/test_example.py`
+- Ruff: `poetry run ruff check .`
+- Focused Ruff: `poetry run ruff check app/path/file.py`
+
+If a bare `python -m pytest` command fails with `No module named pytest`, retry with `poetry run pytest` before reporting a test setup problem.

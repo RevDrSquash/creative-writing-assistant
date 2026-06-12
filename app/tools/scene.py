@@ -47,10 +47,7 @@ def replace_scene_text(
             "current_scene": new_scene,
             "messages": [
                 ToolMessage(
-                    content=(
-                        f"Replaced {len(target)} chars; scene is now "
-                        f"{len(new_scene)} chars."
-                    ),
+                    content=(f"Replaced {len(target)} chars; scene is now {len(new_scene)} chars."),
                     tool_call_id=tool_call_id,
                 )
             ],

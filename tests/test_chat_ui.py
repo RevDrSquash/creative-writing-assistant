@@ -14,9 +14,7 @@ from app.world.scene import SCENE_CONTENT_KEY, set_current_scene_text
 
 
 def test_chat_configuration_error_is_none_for_valid_settings() -> None:
-    error = _chat_configuration_error(
-        lambda: ModelSettings(OPENROUTER_API_KEY="sk-or-v1-test")
-    )
+    error = _chat_configuration_error(lambda: ModelSettings(OPENROUTER_API_KEY="sk-or-v1-test"))
 
     assert error is None
 
@@ -31,11 +29,7 @@ def test_chat_configuration_error_reports_invalid_settings() -> None:
                     "loc": ("OPENROUTER_API_KEY",),
                     "msg": 'OPENROUTER_API_KEY must start with "sk-or-v1-".',
                     "input": "bad-key",
-                    "ctx": {
-                        "error": ValueError(
-                            'OPENROUTER_API_KEY must start with "sk-or-v1-".'
-                        )
-                    },
+                    "ctx": {"error": ValueError('OPENROUTER_API_KEY must start with "sk-or-v1-".')},
                 }
             ],
         )

@@ -22,7 +22,9 @@ from app.ui.navigation import NavigationItem
 
 MODEL_CONFIGURATIONS: tuple[NavigationItem, ...] = (
     *(
-        NavigationItem(config.name, f"/models/configs/{config.id}", f"{config.name} model configuration")
+        NavigationItem(
+            config.name, f"/models/configs/{config.id}", f"{config.name} model configuration"
+        )
         for config in DEFAULT_MODEL_CONFIGS
     ),
 )
@@ -90,10 +92,14 @@ def _model_selection_page() -> None:
                 with ui.row().classes("w-full items-end gap-4"):
                     with ui.column().classes("grow gap-1"):
                         ui.label(node.label).classes("font-medium")
-                        ui.label(f"Default: {node.default_config_id}").classes("text-sm text-grey-7")
+                        ui.label(f"Default: {node.default_config_id}").classes(
+                            "text-sm text-grey-7"
+                        )
                     select = ui.select(
                         config_options,
-                        value=current_selection if current_selection in config_options else node.default_config_id,
+                        value=current_selection
+                        if current_selection in config_options
+                        else node.default_config_id,
                         label="Configuration",
                     ).classes("min-w-80")
                     ui.button(
@@ -160,9 +166,9 @@ def _render_config_form(config: ModelConfig, *, is_new: bool) -> None:
                 ui.label("Live catalog unavailable; enter the model ID manually.").classes(
                     "text-sm text-grey-7"
                 )
-                ui.button("Retry", on_click=lambda: ui.navigate.to(_current_config_path(config, is_new))).props(
-                    "outline"
-                )
+                ui.button(
+                    "Retry", on_click=lambda: ui.navigate.to(_current_config_path(config, is_new))
+                ).props("outline")
 
         temperature = ui.number(
             "Temperature",

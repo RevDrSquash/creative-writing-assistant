@@ -77,9 +77,7 @@ def test_build_chat_agent_composes_config_prefix_into_model_input() -> None:
     recorded = RecordingFakeChatModel.recorded_messages
 
     assert isinstance(recorded[0], SystemMessage)
-    assert recorded[0].content == (
-        "Respond with lyrical restraint.\n\n" + DEFAULT_SYSTEM_PROMPT
-    )
+    assert recorded[0].content == ("Respond with lyrical restraint.\n\n" + DEFAULT_SYSTEM_PROMPT)
 
 
 def test_get_chat_agent_uses_resolved_config_and_rebuilds_on_prefix_change(

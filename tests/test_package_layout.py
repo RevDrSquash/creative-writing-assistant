@@ -19,9 +19,9 @@ EXPECTED_PACKAGES = [
 
 @pytest.mark.parametrize("package_name", EXPECTED_PACKAGES)
 def test_package_importable(package_name: str) -> None:
-  __import__(package_name)
+    __import__(package_name)
 
 
 def test_repo_has_poetry_files() -> None:
-  assert (REPO_ROOT / "pyproject.toml").is_file()
-  assert (REPO_ROOT / "poetry.lock").is_file()
+    assert (REPO_ROOT / "pyproject.toml").is_file()
+    assert (REPO_ROOT / "poetry.lock").is_file()

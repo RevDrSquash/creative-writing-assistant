@@ -1,6 +1,8 @@
 ---
-description: 
+description:
 alwaysApply: true
 ---
 
-At the beginning of any new task, read `docs/overview.md` to understand the project's premise and goals before proceeding.
+Project context, module map, commands, and the definition of done live in `AGENTS.md` at the repo
+root. If it has not been loaded automatically, read it before starting a task. Read
+`docs/overview.md` in addition when the task touches product behavior, goals, or scope decisions.

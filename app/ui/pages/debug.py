@@ -77,7 +77,9 @@ def _debug_call_page(run_id: str) -> None:
 
         with ui.row().classes("items-center gap-3"):
             ui.badge(record.status, color=_status_color(record.status))
-            ui.label(f"Started: {_display_timestamp(record.started_at)}").classes("text-sm text-grey-7")
+            ui.label(f"Started: {_display_timestamp(record.started_at)}").classes(
+                "text-sm text-grey-7"
+            )
             if record.duration_ms is not None:
                 ui.label(f"Duration: {record.duration_ms} ms").classes("text-sm text-grey-7")
             for label, count in _token_counts(record.response_metadata).items():

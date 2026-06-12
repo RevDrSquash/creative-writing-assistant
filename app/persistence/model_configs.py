@@ -19,9 +19,9 @@ from app.models.config import (
     ModelConfig,
     get_graph_node,
 )
+from app.persistence.paths import get_data_dir
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
-DEFAULT_MODEL_CONFIG_PATH = REPO_ROOT / "data" / "model_configs.json"
+DEFAULT_MODEL_CONFIG_PATH = get_data_dir() / "model_configs.json"
 
 _MODEL_CONFIG_REPOSITORY: ModelConfigRepository | None = None
 

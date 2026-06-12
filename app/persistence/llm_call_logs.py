@@ -10,8 +10,9 @@ from typing import Any, Literal, Protocol
 
 from pydantic import BaseModel, Field
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
-DEFAULT_LLM_CALL_LOG_PATH = REPO_ROOT / "data" / "llm_call_logs.json"
+from app.persistence.paths import get_data_dir
+
+DEFAULT_LLM_CALL_LOG_PATH = get_data_dir() / "llm_call_logs.json"
 DEFAULT_MAX_LLM_CALL_LOG_RECORDS = 200
 
 LLMCallStatus = Literal["running", "success", "error"]

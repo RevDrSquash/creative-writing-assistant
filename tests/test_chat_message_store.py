@@ -22,9 +22,7 @@ def test_append_then_load_round_trips_from_fresh_instance(tmp_path) -> None:
 
     store.append({"role": "user", "content": "Draft a scene."})
 
-    assert JsonFileChatMessageStore(path).load() == [
-        {"role": "user", "content": "Draft a scene."}
-    ]
+    assert JsonFileChatMessageStore(path).load() == [{"role": "user", "content": "Draft a scene."}]
 
 
 def test_clear_empties_subsequent_load(tmp_path) -> None:
