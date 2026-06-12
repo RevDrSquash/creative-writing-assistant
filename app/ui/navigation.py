@@ -14,14 +14,6 @@ class NavigationItem:
     placeholder: str
 
 
-@dataclass(frozen=True)
-class SidebarGroup:
-    """Static sidebar section with a non-clickable heading."""
-
-    label: str
-    items: tuple[NavigationItem, ...]
-
-
 HEADER_NAV_ITEMS: tuple[NavigationItem, ...] = (
     NavigationItem("Workspace", "/workspace", "Main writing workspace"),
     NavigationItem("Models", "/models", "Model configuration and selection"),

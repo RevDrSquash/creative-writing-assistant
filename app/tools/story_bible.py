@@ -1,0 +1,535 @@
+"""Agent tools for reading and editing the structured Story Bible.
+
+These are simple per-entity CRUD primitives; review workflows (intimacy
+deduplication, signal-driven updates) are layered on top in later phases.
+All write tools mutate the in-memory World and save it to disk before
+returning, so user-visible state is always current.
+"""
+
+from __future__ import annotations
+
+import json
+
+from langchain_core.tools import ToolException, tool
+
+from app.world.models import (
+    Character,
+    Event,
+    EventKind,
+    Intimacy,
+    Signal,
+    StoryBible,
+    WorldFact,
+    WorldStateEffect,
+    WorldStateEntry,
+    WorldStateKind,
+)
+from app.world.replay import DerivedCharacterState, derive_state
+from app.world.store import get_world, save_world
+
+
+@tool
+def read_story_bible() -> str:
+    """Return an overview of the story bible: narrative style, world facts,
+    baseline world state, characters, and the event timeline, with entity ids.
+
+    Use the ids with the more specific read/update tools.
+    """
+
+    bible = get_world().story_bible
+    lines = ["# Story Bible Overview", ""]
+
+    style = bible.narrative_style.strip()
+    lines.append("## Narrative Style")
+    lines.append(style if style else "(not set)")
+
+    lines.append("")
+    lines.append("## World Facts")
+    if not bible.world_facts:
+        lines.append("(none)")
+    for fact in bible.world_facts:
+        tags = f" tags: {', '.join(fact.tags)}" if fact.tags else ""
+        lines.append(f"- {fact.title or 'Untitled'} [id: {fact.id}]{tags}")
+
+    lines.append("")
+    lines.append("## Baseline World State")
+    if not bible.baseline_world_state:
+        lines.append("(none)")
+    for entry in bible.baseline_world_state:
+        lines.append(f"- ({entry.kind}) {entry.text} [id: {entry.id}]")
+
+    lines.append("")
+    lines.append("## Characters")
+    if not bible.characters:
+        lines.append("(none)")
+    for character in bible.characters:
+        goal = f" goal: {character.baseline_state.goal}" if character.baseline_state.goal else ""
+        lines.append(f"- {character.identity.name or 'Unnamed'} [id: {character.id}]{goal}")
+
+    lines.append("")
+    lines.append(f"## Timeline ({len(bible.timeline)} events)")
+    for position, event in enumerate(bible.timeline, start=1):
+        signal_count = len(event.signals)
+        lines.append(
+            f"{position}. {event.title or 'Untitled'} [id: {event.id}] "
+            f"({event.kind}, {signal_count} signals)"
+        )
+
+    return "\n".join(lines)
+
+
+@tool
+def update_narrative_style(style: str) -> str:
+    """Replace the narrative style text (tone, themes, writing style)."""
+
+    get_world().story_bible.narrative_style = style
+    save_world()
+    return "Updated narrative style."
+
+
+@tool
+def read_world_fact(fact_id: str) -> str:
+    """Return the full text and tags of a world fact."""
+
+    fact = get_world().story_bible.get_world_fact(fact_id)
+    if fact is None:
+        raise ToolException(f"No world fact with id {fact_id}.")
+    tags = f"\nTags: {', '.join(fact.tags)}" if fact.tags else ""
+    return f"# {fact.title or 'Untitled'} [id: {fact.id}]{tags}\n\n{fact.text}"
+
+
+@tool
+def upsert_world_fact(
+    title: str,
+    text: str,
+    fact_id: str = "",
+    tags: list[str] | None = None,
+) -> str:
+    """Create a world fact, or fully update one when `fact_id` is given.
+
+    World facts are stable setting facts; locations and lore belong here.
+    """
+
+    bible = get_world().story_bible
+    if fact_id:
+        fact = bible.get_world_fact(fact_id)
+        if fact is None:
+            raise ToolException(f"No world fact with id {fact_id}.")
+        fact.title = title
+        fact.text = text
+        if tags is not None:
+            fact.tags = tags
+        action = "Updated"
+    else:
+        fact = WorldFact(title=title, text=text, tags=tags or [])
+        bible.world_facts.append(fact)
+        action = "Created"
+    save_world()
+    return f"{action} world fact '{fact.title}' (id: {fact.id})."
+
+
+@tool
+def delete_world_fact(fact_id: str) -> str:
+    """Delete a world fact permanently."""
+
+    bible = get_world().story_bible
+    fact = bible.get_world_fact(fact_id)
+    if fact is None:
+        raise ToolException(f"No world fact with id {fact_id}.")
+    bible.world_facts = [item for item in bible.world_facts if item.id != fact_id]
+    save_world()
+    return f"Deleted world fact '{fact.title}' (id: {fact_id})."
+
+
+@tool
+def upsert_world_state_entry(
+    text: str,
+    kind: WorldStateKind = "thread",
+    entry_id: str = "",
+) -> str:
+    """Create or update a baseline world-state entry (pressure, thread, or
+    consequence in effect before any timeline events).
+
+    Mid-story world-state changes belong on events as world-state effects,
+    not in the baseline.
+    """
+
+    bible = get_world().story_bible
+    if entry_id:
+        entry = next(
+            (item for item in bible.baseline_world_state if item.id == entry_id),
+            None,
+        )
+        if entry is None:
+            raise ToolException(f"No baseline world-state entry with id {entry_id}.")
+        entry.text = text
+        entry.kind = kind
+        action = "Updated"
+    else:
+        entry = WorldStateEntry(text=text, kind=kind)
+        bible.baseline_world_state.append(entry)
+        action = "Created"
+    save_world()
+    return f"{action} baseline world-state entry (id: {entry.id})."
+
+
+@tool
+def delete_world_state_entry(entry_id: str) -> str:
+    """Delete a baseline world-state entry permanently."""
+
+    bible = get_world().story_bible
+    entry = next((item for item in bible.baseline_world_state if item.id == entry_id), None)
+    if entry is None:
+        raise ToolException(f"No baseline world-state entry with id {entry_id}.")
+    bible.baseline_world_state = [
+        item for item in bible.baseline_world_state if item.id != entry_id
+    ]
+    save_world()
+    return f"Deleted baseline world-state entry (id: {entry_id})."
+
+
+@tool
+def read_character(character_id: str) -> str:
+    """Return a character's identity, baseline state, stance, and derived
+    current state (after replaying the full timeline)."""
+
+    bible = get_world().story_bible
+    character = bible.get_character(character_id)
+    if character is None:
+        raise ToolException(f"No character with id {character_id}.")
+
+    identity = character.identity
+    baseline = character.baseline_state
+    stance = character.stance
+    lines = [
+        f"# {identity.name or 'Unnamed'} [id: {character.id}]",
+        "",
+        "## Identity",
+        f"Traits: {identity.traits or '-'}",
+        f"Appearance: {identity.appearance or '-'}",
+        f"Background: {identity.background or '-'}",
+        f"Voice: {identity.voice or '-'}",
+        "",
+        "## Baseline State (start of timeline)",
+        f"Goal: {baseline.goal or '-'}",
+        f"Status: {baseline.status or '-'}",
+        "Intimacies:",
+        *_intimacy_lines(baseline.intimacies),
+        "",
+        "## Stance (scene-level, ephemeral)",
+        f"Mood: {stance.mood or '-'}",
+        f"Intent: {stance.intent or '-'}",
+        f"Tactics: {stance.tactics or '-'}",
+        f"Stakes: {stance.stakes or '-'}",
+        "",
+        "## Current State (after full timeline)",
+    ]
+    derived = derive_state(bible).characters.get(character.id)
+    if derived is not None:
+        lines.extend(_derived_character_lines(derived))
+    return "\n".join(lines)
+
+
+@tool
+def upsert_character(
+    character_id: str = "",
+    name: str | None = None,
+    traits: str | None = None,
+    appearance: str | None = None,
+    background: str | None = None,
+    voice: str | None = None,
+    goal: str | None = None,
+    status: str | None = None,
+    intimacies: list[Intimacy] | None = None,
+) -> str:
+    """Create a character, or partially update one when `character_id` is given.
+
+    Only the provided fields change. `goal`, `status`, and `intimacies` set the
+    character's BASELINE state (start of timeline); mid-story changes belong on
+    events as signals. `intimacies` replaces the whole baseline intimacy list,
+    so read the character first and resend the full list when editing it.
+    """
+
+    bible = get_world().story_bible
+    if character_id:
+        character = bible.get_character(character_id)
+        if character is None:
+            raise ToolException(f"No character with id {character_id}.")
+        action = "Updated"
+    else:
+        character = Character()
+        bible.characters.append(character)
+        action = "Created"
+
+    identity_updates = {
+        "name": name,
+        "traits": traits,
+        "appearance": appearance,
+        "background": background,
+        "voice": voice,
+    }
+    for field, value in identity_updates.items():
+        if value is not None:
+            setattr(character.identity, field, value)
+    if goal is not None:
+        character.baseline_state.goal = goal
+    if status is not None:
+        character.baseline_state.status = status
+    if intimacies is not None:
+        character.baseline_state.intimacies = intimacies
+
+    save_world()
+    return f"{action} character '{character.identity.name or 'Unnamed'}' (id: {character.id})."
+
+
+@tool
+def update_character_stance(
+    character_id: str,
+    mood: str | None = None,
+    intent: str | None = None,
+    tactics: str | None = None,
+    stakes: str | None = None,
+) -> str:
+    """Update a character's scene-level stance (mood, intent, tactics, stakes).
+
+    Stance is ephemeral posture for the current scene; only provided fields change.
+    """
+
+    character = get_world().story_bible.get_character(character_id)
+    if character is None:
+        raise ToolException(f"No character with id {character_id}.")
+
+    updates = {"mood": mood, "intent": intent, "tactics": tactics, "stakes": stakes}
+    for field, value in updates.items():
+        if value is not None:
+            setattr(character.stance, field, value)
+    save_world()
+    return f"Updated stance for '{character.identity.name or 'Unnamed'}' (id: {character.id})."
+
+
+@tool
+def delete_character(character_id: str) -> str:
+    """Delete a character permanently.
+
+    Events keep any signals that reference the character; replay skips them.
+    """
+
+    bible = get_world().story_bible
+    character = bible.get_character(character_id)
+    if character is None:
+        raise ToolException(f"No character with id {character_id}.")
+    bible.characters = [item for item in bible.characters if item.id != character_id]
+    save_world()
+    return f"Deleted character '{character.identity.name or 'Unnamed'}' (id: {character_id})."
+
+
+@tool
+def read_timeline() -> str:
+    """Return the ordered event timeline with ids, kinds, and signal counts."""
+
+    bible = get_world().story_bible
+    if not bible.timeline:
+        return "The timeline has no events yet."
+    lines = []
+    for position, event in enumerate(bible.timeline, start=1):
+        description = f" - {event.description}" if event.description else ""
+        lines.append(
+            f"{position}. {event.title or 'Untitled'} [id: {event.id}] "
+            f"({event.kind}, {len(event.signals)} signals){description}"
+        )
+    return "\n".join(lines)
+
+
+@tool
+def read_event(event_id: str) -> str:
+    """Return an event's description, world-state effects, and signals."""
+
+    bible = get_world().story_bible
+    event = bible.get_event(event_id)
+    if event is None:
+        raise ToolException(f"No event with id {event_id}.")
+
+    index = bible.event_index(event.id) or 0
+    lines = [
+        f"# Event {index + 1}: {event.title or 'Untitled'} [id: {event.id}] ({event.kind})",
+        "",
+        event.description or "(no description)",
+        "",
+        "## World State Effects",
+    ]
+    if not event.world_state_effects:
+        lines.append("(none)")
+    for effect in event.world_state_effects:
+        lines.append(f"- {json.dumps(effect.model_dump(mode='json'))}")
+
+    lines.append("")
+    lines.append("## Signals")
+    if not event.signals:
+        lines.append("(none)")
+    for signal in event.signals:
+        character = bible.get_character(signal.character_id)
+        name = character.identity.name if character else f"unknown ({signal.character_id})"
+        lines.append(f"- {name} [signal id: {signal.id}]: {signal.interpretation or '-'}")
+        for effect in signal.effects:
+            lines.append(f"  - {json.dumps(effect.model_dump(mode='json'))}")
+    return "\n".join(lines)
+
+
+@tool
+def add_event(
+    title: str,
+    description: str = "",
+    kind: EventKind = "scene",
+    position: int | None = None,
+    world_state_effects: list[WorldStateEffect] | None = None,
+    signals: list[Signal] | None = None,
+) -> str:
+    """Add an event to the timeline.
+
+    `position` is the 1-based timeline position to insert at; omit to append
+    at the end. `world_state_effects` are structured deltas to the active
+    world state. `signals` describe how specific characters interpret the
+    event and carry character-state effects (goals, status, intimacies).
+    """
+
+    bible = get_world().story_bible
+    event = Event(
+        title=title,
+        description=description,
+        kind=kind,
+        world_state_effects=world_state_effects or [],
+        signals=signals or [],
+    )
+    index = _resolve_insert_index(bible, position)
+    bible.timeline.insert(index, event)
+    save_world()
+    return f"Added event '{event.title}' (id: {event.id}) at position {index + 1}."
+
+
+@tool
+def update_event(
+    event_id: str,
+    title: str | None = None,
+    description: str | None = None,
+    kind: EventKind | None = None,
+    position: int | None = None,
+    world_state_effects: list[WorldStateEffect] | None = None,
+    signals: list[Signal] | None = None,
+) -> str:
+    """Partially update an event; only provided fields change.
+
+    `world_state_effects` and `signals` replace the whole respective list, so
+    read the event first and resend the full list when editing them.
+    `position` moves the event to that 1-based timeline position.
+    """
+
+    bible = get_world().story_bible
+    event = bible.get_event(event_id)
+    if event is None:
+        raise ToolException(f"No event with id {event_id}.")
+
+    if title is not None:
+        event.title = title
+    if description is not None:
+        event.description = description
+    if kind is not None:
+        event.kind = kind
+    if world_state_effects is not None:
+        event.world_state_effects = world_state_effects
+    if signals is not None:
+        event.signals = signals
+    if position is not None:
+        bible.timeline.remove(event)
+        bible.timeline.insert(_resolve_insert_index(bible, position), event)
+
+    save_world()
+    new_index = bible.event_index(event.id) or 0
+    return f"Updated event '{event.title}' (id: {event.id}) at position {new_index + 1}."
+
+
+@tool
+def delete_event(event_id: str) -> str:
+    """Delete an event and its signals permanently."""
+
+    bible = get_world().story_bible
+    event = bible.get_event(event_id)
+    if event is None:
+        raise ToolException(f"No event with id {event_id}.")
+    bible.timeline = [item for item in bible.timeline if item.id != event_id]
+    save_world()
+    return f"Deleted event '{event.title or 'Untitled'}' (id: {event_id})."
+
+
+@tool
+def read_world_state(at_event_id: str = "") -> str:
+    """Return the derived world state and character states at a timeline position.
+
+    With `at_event_id`, derives state after that event has been applied;
+    without it, derives state after the full timeline.
+    """
+
+    bible = get_world().story_bible
+    try:
+        derived = derive_state(bible, at_event_id or None)
+    except ValueError as exc:
+        raise ToolException(str(exc)) from exc
+
+    lines = [
+        f"# Derived State (after {derived.events_applied} of {len(bible.timeline)} events)",
+        "",
+        "## World State",
+    ]
+    if not derived.world_state:
+        lines.append("(no active entries)")
+    for entry in derived.world_state:
+        lines.append(f"- ({entry.kind}) {entry.text} [id: {entry.id}]")
+
+    for character in derived.characters.values():
+        lines.append("")
+        lines.append(f"## {character.name or 'Unnamed'} [id: {character.character_id}]")
+        lines.extend(_derived_character_lines(character))
+    return "\n".join(lines)
+
+
+def _resolve_insert_index(bible: StoryBible, position: int | None) -> int:
+    if position is None:
+        return len(bible.timeline)
+    return max(0, min(position - 1, len(bible.timeline)))
+
+
+def _intimacy_lines(intimacies: list[Intimacy]) -> list[str]:
+    if not intimacies:
+        return ["(none)"]
+    return [
+        f"- {intimacy.text} ({intimacy.strength}) [id: {intimacy.id}]" for intimacy in intimacies
+    ]
+
+
+def _derived_character_lines(derived: DerivedCharacterState) -> list[str]:
+    return [
+        f"Goal: {derived.goal or '-'}",
+        f"Status: {derived.status or '-'}",
+        "Intimacies:",
+        *_intimacy_lines(derived.intimacies),
+    ]
+
+
+STORY_BIBLE_TOOLS = [
+    read_story_bible,
+    update_narrative_style,
+    read_world_fact,
+    upsert_world_fact,
+    delete_world_fact,
+    upsert_world_state_entry,
+    delete_world_state_entry,
+    read_character,
+    upsert_character,
+    update_character_stance,
+    delete_character,
+    read_timeline,
+    read_event,
+    add_event,
+    update_event,
+    delete_event,
+    read_world_state,
+]

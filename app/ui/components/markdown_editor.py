@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Any
 
 from nicegui import ui
@@ -32,8 +33,13 @@ def render_markdown_editor(
     *,
     placeholder: str = "Write Markdown here...",
     edit_default: bool = True,
+    on_change: Callable[[], None] | None = None,
 ) -> None:
-    """Render a textarea-backed Markdown editor bound to ``target[field]``."""
+    """Render a textarea-backed Markdown editor bound to ``target[field]``.
+
+    ``on_change`` is invoked (throttled) as the user edits, after the bound
+    value has been updated; use it to write the change through to disk.
+    """
 
     state = {"edit_mode": edit_default}
 
@@ -51,6 +57,8 @@ def render_markdown_editor(
         with ui.column().classes("w-full grow min-h-0"):
             textarea = ui.textarea(placeholder=placeholder)
             textarea.bind_value(target, field)
+            if on_change is not None:
+                textarea.on("update:model-value", lambda _: on_change(), throttle=1.0)
             textarea.bind_visibility_from(state, "edit_mode")
             textarea.props(
                 "outlined autogrow=false hide-bottom-space"

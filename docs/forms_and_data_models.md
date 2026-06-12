@@ -20,21 +20,25 @@ The `World` is the root object for a project. It contains:
 - world identity and metadata
 - Story Bible data
 - ordered scene data
-- chat history associated with the project
 - schema version for validation and future migration
 
 World metadata stores project-level information such as title, description, tags, and created/updated timestamps.
 
 ## Story Bible Model
 
-The Story Bible holds structured reference material for the story world. The initial model includes:
+The Story Bible holds structured reference material for the story world. It is event-sourced;
+the authoritative model description lives in [story_bible_model.md](story_bible_model.md). In
+summary it contains:
 
-- Characters: named people or entities with descriptive fields, goals, relationships, and notes.
-- Locations: named places with descriptive fields and notes.
-- Lore entries: world facts, history, concepts, or reference notes with tags.
 - Narrative Style: the intended tone, themes, writing style, etc.
+- World Facts: stable setting facts. Locations and lore are world facts, not separate types.
+- Baseline World State: pressures, open threads, and consequences at the start of the timeline.
+- Characters: stable identity, baseline state with intimacies, and ephemeral scene stance.
+- Timeline: an ordered list of Events carrying world-state effects and character Signals.
 
-These records are structured so important world information stays editable, reusable, and accessible to agent tools.
+World state and character state at any timeline position are derived by replaying event
+effects over the baselines; derived views are read-only. These records are structured so
+important world information stays editable, reusable, and accessible to agent tools.
 
 ## Scene Model
 
@@ -50,7 +54,7 @@ Scenes are ordered because narrative sequence matters.
 
 ## Chat History Model
 
-Chat history stores the ongoing conversation between the writer, assistant, and tool activity associated with the project. It is part of the portable world so the collaboration record can travel with the project.
+Chat history stores the ongoing conversation between the writer, assistant, and tool activity associated with the project. The long-term intent is for it to be part of the portable world so the collaboration record can travel with the project; for now it lives in an app-local store and is not exported (see `known_issues.md`).
 
 ## App Data Model
 
@@ -66,11 +70,14 @@ Secrets such as API keys are always local-only and must not appear in exported p
 
 Story Bible forms render one field per canonical data-model field.
 
-- List fields such as goals, relationships, and tags render as add/remove lists.
+- Structured list fields such as intimacies, effects, and signals render as add/remove lists.
+- Tag lists render as a single comma-separated input.
 - Multi-line text fields render as textareas sized to the field's purpose.
 - Short fields such as names and titles render as single-line inputs.
+- Derived state (world state or character state at a timeline position) renders read-only,
+  with a selector for the timeline position.
 
-The UI should present characters, locations, and lore entries as structured forms rather than raw JSON.
+The UI should present characters, world facts, and events as structured forms rather than raw JSON.
 
 ## Validation Behavior
 

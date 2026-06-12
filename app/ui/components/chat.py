@@ -13,7 +13,8 @@ from app.graphs import get_chat_agent
 from app.models import ModelSettings
 from app.persistence import ChatConversation, StoredChatMessage, get_chat_conversation
 from app.ui.components.canvas_stream_parser import CanvasStreamParser, ParseEvents
-from app.world.scene import get_current_scene_text, set_current_scene_text
+from app.ui.scene_selection import get_current_scene, set_current_scene_id
+from app.world.scene import resolve_scene, set_scene_text
 
 
 def render_chat(conversation: ChatConversation | None = None) -> None:
@@ -82,7 +83,13 @@ def render_chat(conversation: ChatConversation | None = None) -> None:
                 spinner = ui.spinner(size="sm")
 
         assistant_text = ""
-        pre_stream_scene = get_current_scene_text()
+        start_scene = get_current_scene()
+        # Tracks which scene the run is editing and its last authoritative text
+        # (graph-state updates). Optimistic canvas appends layer on top of it.
+        run_scene: dict[str, str] = {
+            "id": start_scene.id,
+            "authoritative_text": start_scene.markdown,
+        }
         parser = CanvasStreamParser()
         stream_failed = False
         try:
@@ -90,12 +97,13 @@ def render_chat(conversation: ChatConversation | None = None) -> None:
             async for stream_name, payload in get_chat_agent().astream(
                 {
                     "messages": messages,
-                    "current_scene": pre_stream_scene,
+                    "current_scene": start_scene.markdown,
+                    "current_scene_id": start_scene.id,
                 },
                 stream_mode=["messages", "updates"],
             ):
                 if stream_name == "updates":
-                    _write_scene_updates_from_payload(payload)
+                    _write_scene_updates_from_payload(payload, run_scene)
                     continue
                 if stream_name != "messages":
                     continue
@@ -106,7 +114,10 @@ def render_chat(conversation: ChatConversation | None = None) -> None:
                     continue
                 events = parser.feed(content)
                 if events.canvas_text:
-                    set_current_scene_text(get_current_scene_text() + events.canvas_text)
+                    # Optimistic in-memory append so the editor streams live;
+                    # the authoritative text (and disk save) comes through the
+                    # updates stream once the model turn completes.
+                    resolve_scene(run_scene["id"]).markdown += events.canvas_text
                 assistant_text = _append_streamed_chat_text(
                     assistant_text,
                     events.chat_text,
@@ -114,7 +125,7 @@ def render_chat(conversation: ChatConversation | None = None) -> None:
                 )
 
             flush_events = parser.flush()
-            if _apply_canvas_flush_events(flush_events, pre_stream_scene):
+            if _apply_canvas_flush_events(flush_events, run_scene):
                 pass
             else:
                 assistant_text = _append_streamed_chat_text(
@@ -136,6 +147,10 @@ def render_chat(conversation: ChatConversation | None = None) -> None:
             message_input.enable()
             send_button.enable()
             is_streaming = False
+
+        if run_scene["id"] != start_scene.id:
+            set_current_scene_id(run_scene["id"])
+            ui.navigate.to(f"/workspace/scenes/{run_scene['id']}")
 
     send_button.on_click(send_message)
 
@@ -197,26 +212,39 @@ def _append_streamed_chat_text(
 
 def _apply_canvas_flush_events(
     events: ParseEvents,
-    pre_stream_scene: str,
-    scene_setter: Callable[[str], None] = set_current_scene_text,
+    run_scene: dict[str, str],
+    scene_setter: Callable[[str, str], None] = set_scene_text,
 ) -> bool:
+    """Roll back an unterminated canvas block to the last authoritative text."""
+
     if not events.unterminated_canvas:
         return False
 
-    scene_setter(pre_stream_scene)
+    scene_setter(run_scene["id"], run_scene["authoritative_text"])
     return True
 
 
 def _write_scene_updates_from_payload(
     payload: Any,
-    scene_setter: Callable[[str], None] = set_current_scene_text,
+    run_scene: dict[str, str],
+    scene_setter: Callable[[str, str], None] = set_scene_text,
 ) -> None:
+    """Write graph-state scene updates through to the world.
+
+    Scene-switching tools emit ``current_scene_id`` before/with the new scene
+    text, so the id is applied first and the text targets the new scene.
+    """
+
     if not isinstance(payload, dict):
         return
 
     for node_updates in payload.values():
         if not isinstance(node_updates, dict):
             continue
+        new_id = node_updates.get("current_scene_id")
+        if isinstance(new_id, str) and new_id:
+            run_scene["id"] = new_id
         new_scene = node_updates.get("current_scene")
         if isinstance(new_scene, str):
-            scene_setter(new_scene)
+            run_scene["authoritative_text"] = new_scene
+            scene_setter(run_scene["id"], new_scene)

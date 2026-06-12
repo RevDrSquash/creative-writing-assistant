@@ -9,7 +9,7 @@ from nicegui.elements.markdown import Markdown
 from nicegui.elements.textarea import Textarea
 
 from app.ui.components import render_markdown_editor
-from app.ui.pages.workspace import DEFAULT_SCENE_MARKDOWN
+from app.world.scene import DEFAULT_SCENE_MARKDOWN
 
 ElementT = TypeVar("ElementT", bound=Element)
 

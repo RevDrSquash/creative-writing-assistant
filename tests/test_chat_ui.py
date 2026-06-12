@@ -10,7 +10,6 @@ from app.ui.components.chat import (
     _chat_configuration_error,
     _write_scene_updates_from_payload,
 )
-from app.world.scene import SCENE_CONTENT_KEY, set_current_scene_text
 
 
 def test_chat_configuration_error_is_none_for_valid_settings() -> None:
@@ -49,36 +48,70 @@ def test_chat_configuration_error_does_not_swallow_unexpected_errors() -> None:
         _chat_configuration_error(broken_settings)
 
 
-def test_chat_panel_writes_current_scene_updates_to_user_storage() -> None:
-    backing_store: dict[str, str] = {}
+def test_chat_panel_writes_current_scene_updates_to_world() -> None:
+    written: list[tuple[str, str]] = []
+    run_scene = {"id": "scene-1", "authoritative_text": "old text"}
 
     _write_scene_updates_from_payload(
         {"tools": {"current_scene": "edited scene"}},
-        lambda text: set_current_scene_text(text, backing_store),
+        run_scene,
+        lambda scene_id, text: written.append((scene_id, text)),
     )
 
-    assert backing_store[SCENE_CONTENT_KEY] == "edited scene"
+    assert written == [("scene-1", "edited scene")]
+    assert run_scene["authoritative_text"] == "edited scene"
 
 
-def test_chat_panel_writes_appended_current_scene_updates_to_user_storage() -> None:
-    backing_store: dict[str, str] = {}
+def test_chat_panel_writes_middleware_scene_updates_to_world() -> None:
+    written: list[tuple[str, str]] = []
+    run_scene = {"id": "scene-1", "authoritative_text": "existing scene"}
 
     _write_scene_updates_from_payload(
         {"CanvasAppendMiddleware": {"current_scene": "existing scene\n\nnew prose"}},
-        lambda text: set_current_scene_text(text, backing_store),
+        run_scene,
+        lambda scene_id, text: written.append((scene_id, text)),
     )
 
-    assert backing_store[SCENE_CONTENT_KEY] == "existing scene\n\nnew prose"
+    assert written == [("scene-1", "existing scene\n\nnew prose")]
 
 
-def test_canvas_flush_events_roll_back_unterminated_canvas_block() -> None:
-    restored: list[str] = []
+def test_chat_panel_applies_scene_switch_before_scene_text() -> None:
+    written: list[tuple[str, str]] = []
+    run_scene = {"id": "scene-1", "authoritative_text": "old text"}
+
+    _write_scene_updates_from_payload(
+        {"tools": {"current_scene": "new scene text", "current_scene_id": "scene-2"}},
+        run_scene,
+        lambda scene_id, text: written.append((scene_id, text)),
+    )
+
+    assert run_scene["id"] == "scene-2"
+    assert written == [("scene-2", "new scene text")]
+
+
+def test_canvas_flush_events_roll_back_to_last_authoritative_text() -> None:
+    written: list[tuple[str, str]] = []
+    run_scene = {"id": "scene-1", "authoritative_text": "last committed text"}
 
     did_roll_back = _apply_canvas_flush_events(
         ParseEvents(unterminated_canvas=True),
-        "pre-stream scene",
-        restored.append,
+        run_scene,
+        lambda scene_id, text: written.append((scene_id, text)),
     )
 
     assert did_roll_back is True
-    assert restored == ["pre-stream scene"]
+    assert written == [("scene-1", "last committed text")]
+
+
+def test_canvas_flush_events_no_rollback_when_canvas_terminated() -> None:
+    written: list[tuple[str, str]] = []
+    run_scene = {"id": "scene-1", "authoritative_text": "text"}
+
+    did_roll_back = _apply_canvas_flush_events(
+        ParseEvents(chat_text="trailing chat"),
+        run_scene,
+        lambda scene_id, text: written.append((scene_id, text)),
+    )
+
+    assert did_roll_back is False
+    assert written == []

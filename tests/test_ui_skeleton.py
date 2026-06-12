@@ -7,7 +7,7 @@ import app.ui.app as ui_app
 from app.models.config import ModelConfig
 from app.persistence import JsonFileModelConfigStore, ModelConfigRepository
 from app.ui import navigation
-from app.ui.navigation import NavigationItem, SidebarGroup
+from app.ui.navigation import NavigationItem
 from app.ui.pages import debug, models, workspace
 
 
@@ -19,10 +19,6 @@ def paths(items: Iterable[NavigationItem]) -> set[str]:
     return {item.path for item in items}
 
 
-def group_labels(groups: Iterable[SidebarGroup]) -> set[str]:
-    return {group.label for group in groups}
-
-
 def test_ui_entrypoint_is_available() -> None:
     assert callable(ui_app.main)
 
@@ -32,15 +28,16 @@ def test_header_navigation_has_phase_one_screens() -> None:
     assert paths(navigation.HEADER_NAV_ITEMS) == {"/workspace", "/models", "/settings", "/debug"}
 
 
-def test_workspace_sidebar_has_story_bible_and_scenes() -> None:
-    sidebar_labels = labels(workspace.WORKSPACE_SIDEBAR_ITEMS)
+def test_workspace_sidebar_has_story_bible_sections() -> None:
+    sidebar_labels = labels(workspace.WORKSPACE_STORY_BIBLE_ITEMS)
 
-    assert group_labels(workspace.WORKSPACE_SIDEBAR_GROUPS) == {"Story Bible", "Scenes"}
-    assert "Story Bible" not in sidebar_labels
-    assert "Scenes" not in sidebar_labels
-    assert {"Characters", "Locations", "Lore", "Narrative Style", "New Scene"}.issubset(
-        sidebar_labels
-    )
+    assert sidebar_labels == {"Narrative Style", "World", "Characters", "Timeline"}
+    assert paths(workspace.WORKSPACE_STORY_BIBLE_ITEMS) == {
+        "/workspace/narrative-style",
+        "/workspace/world",
+        "/workspace/characters",
+        "/workspace/timeline",
+    }
 
 
 def test_models_sidebar_has_selection_new_model_and_configs() -> None:

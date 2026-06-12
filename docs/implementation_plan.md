@@ -44,7 +44,7 @@
 
 ---
 
-## Phase 5: Structured Story Bible
+## Phase 5: Structured Story Bible (Completed)
 
 * Data Structure: Implement the structured story bible data structures.
 * Story Bible UI: Add structured forms for editing characters, locations, and lore.

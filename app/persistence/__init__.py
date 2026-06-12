@@ -22,6 +22,13 @@ from app.persistence.model_configs import (
     StoredModelConfigs,
     get_model_config_repository,
 )
+from app.persistence.world import (
+    JsonFileWorldStore,
+    WorldStorePort,
+    default_world,
+    get_world_store,
+    validate_world_payload,
+)
 
 __all__ = [
     "ChatConversation",
@@ -29,16 +36,21 @@ __all__ = [
     "JsonFileChatMessageStore",
     "JsonFileLLMCallLogStore",
     "JsonFileModelConfigStore",
+    "JsonFileWorldStore",
     "LLMCallLogStore",
     "LLMCallRecord",
     "ModelConfigRepository",
     "ModelConfigStore",
     "StoredChatMessage",
     "StoredModelConfigs",
+    "WorldStorePort",
+    "default_world",
     "get_chat_conversation",
     "get_chat_message_store",
     "get_llm_call_log_store",
     "get_model_config_repository",
+    "get_world_store",
     "messages_to_stored",
     "stored_to_messages",
+    "validate_world_payload",
 ]

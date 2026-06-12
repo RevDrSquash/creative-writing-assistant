@@ -23,8 +23,8 @@ Start here for deeper context:
 | `app/ui/` | NiceGUI layout, pages, components | Keep thin: no core logic in event handlers |
 | `app/graphs/` | LangGraph agent, state, middleware, context assembly | All AI behavior runs through here |
 | `app/tools/` | LangChain tools for reading/editing world content | The only way the agent mutates content |
-| `app/world/` | World/scene state | Source of truth for story content |
-| `app/persistence/` | Local JSON stores (chat, model configs, LLM logs) | No secrets in exported data |
+| `app/world/` | World models, story bible replay, in-memory world state | Source of truth for story content |
+| `app/persistence/` | Local JSON stores (world, chat, model configs, LLM logs) + world ZIP | No secrets in exported data |
 | `app/models/` | Model configs, OpenRouter client, debug logging | API key comes from `.env` |
 | `tests/` | Pytest suite; shared fixtures in `tests/conftest.py` | UI tests use the NiceGUI `user` fixture |
 

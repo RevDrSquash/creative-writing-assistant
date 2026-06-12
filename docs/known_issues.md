@@ -18,32 +18,32 @@ fix so the context is not lost between phases.
 - **Possible fix:** Cap the searchable document size, or cheaply pre-filter candidate offsets
   (e.g. anchor on a rare substring of `target`) before running `SequenceMatcher` on each window.
 
-## 2. Unterminated-canvas rollback discards mid-run tool edits
+## 2. Chat history is not yet part of the portable world
+
+- **Severity:** Low (documented deviation, not a bug)
+- **Location:** `app/persistence/chat_messages.py` (chat store) vs `app/world/models.py`
+  (`World` has no chat field)
+- **Introduced:** Phase 5
+- **Symptom:** `docs/forms_and_data_models.md` and `docs/zip_import_export.md` originally
+  described chat history as part of the portable world. The Phase 5 `World` model keeps chat
+  history in its existing app-local store (`data/chat_history.json`), so ZIP export/import
+  does not carry the collaboration record. Both docs now note this.
+- **Why it is acceptable for now:** Chat history has no structural ties to the bible or
+  scenes, and moving it mid-phase would have coupled the world refactor to the chat store.
+- **Possible fix:** Add a `chat_history` field to `World`, migrate the chat store into it,
+  and include it in `world.json` on export.
+
+## 3. Unterminated-canvas rollback can miss appends after a mid-run scene switch
 
 - **Severity:** Low (edge-case correctness)
-- **Location:** `app/ui/components/chat.py` — `_apply_canvas_flush_events` and the
-  `send_message` streaming loop
-- **Introduced:** Phase 3
-- **Symptom:** Rollback resets the scene to `pre_stream_scene`, which is captured before the
-  entire agent run. If the model commits a `replace_scene_text` edit and then emits an
-  unterminated `<canvas>` block in the same turn (for example, cut off by a token limit), the
-  committed edit is wiped from the UI even though the backend graph state still retains it.
-- **Why it usually doesn't bite:** It requires a successful tool edit followed by a truncated
-  canvas block within one turn.
-- **Possible fix:** Track the last committed scene (the most recent `updates` value) and roll
-  back to that instead of the run's starting snapshot.
-
-## 3. Scene state couples the world layer to NiceGUI
-
-- **Severity:** Low (architectural debt, not a bug)
-- **Location:** `app/world/scene.py` — `get_current_scene_text` / `set_current_scene_text`
-- **Introduced:** Phase 3
-- **Symptom:** These helpers read and write `nicegui.app.storage.user` directly, so the
-  `app/world/` layer depends on the UI framework. This is in tension with the
-  `docs/architecture.md` boundary that core logic should live outside NiceGUI and that world
-  state should be a single `World` object.
-- **Why it is acceptable for now:** There is no `World` object yet (planned for Phase 5), and
-  `docs/overview.md` permits the simpler implementation for supporting code that serves the
-  agent layer.
-- **Possible fix:** When the structured `World` model lands in Phase 5, move scene text into it
-  and have the UI bind to that object instead of `app.storage.user`.
+- **Location:** `app/ui/components/chat.py` — `_apply_canvas_flush_events`
+- **Introduced:** Phase 5 (replaces the older pre-run-snapshot rollback issue)
+- **Symptom:** Rollback now restores the run's last authoritative scene text (so committed
+  `replace_scene_text` edits survive a truncated `<canvas>` block). However, if the agent
+  switches scenes mid-run and the truncated canvas text was optimistically appended to a
+  scene other than the run's final one, that other scene keeps the partial in-memory append
+  until its next authoritative write.
+- **Why it usually doesn't bite:** It requires a scene switch and a truncated canvas block in
+  the same turn, and the partial text is in memory only (not saved to disk).
+- **Possible fix:** Track per-scene authoritative snapshots during the run instead of a single
+  `run_scene` record.

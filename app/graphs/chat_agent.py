@@ -12,7 +12,7 @@ from app.graphs.state import WritingAgentState
 from app.models import ModelConfig, ModelSettings, get_chat_model, get_chat_model_for_config
 from app.models.config import CHAT_NODE_ID
 from app.persistence import get_model_config_repository
-from app.tools import SCENE_TOOLS
+from app.tools import WRITING_TOOLS
 
 ChatAgentCacheKey = tuple[str, str, str, str, float | None, str | None, str]
 
@@ -29,7 +29,7 @@ def build_chat_agent(
     assembler = assembler or ContextAssembler()
     return create_agent(
         model=model or get_chat_model(),
-        tools=SCENE_TOOLS,
+        tools=WRITING_TOOLS,
         state_schema=WritingAgentState,
         system_prompt=assembler.system_prompt,
         middleware=[CanvasAppendMiddleware()],

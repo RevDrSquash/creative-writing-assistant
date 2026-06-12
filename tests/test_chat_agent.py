@@ -125,6 +125,42 @@ def test_get_chat_agent_uses_resolved_config_and_rebuilds_on_prefix_change(
     ]
 
 
+def test_chat_agent_with_create_scene_tool_switches_open_scene(isolated_world) -> None:
+    tool_call = {
+        "name": "create_scene",
+        "args": {"title": "Chapter 2", "summary": "A fresh start"},
+        "id": "tool-call-1",
+        "type": "tool_call",
+    }
+    fake_model = ToolAwareFakeChatModel(
+        messages=iter(
+            [
+                AIMessage(content="", tool_calls=[tool_call]),
+                AIMessage(content="Created the new scene."),
+            ]
+        )
+    )
+    agent = build_chat_agent(
+        model=fake_model,
+        assembler=ContextAssembler(system_prompt="System instructions"),
+    )
+    first_scene = isolated_world.scenes[0]
+
+    result = agent.invoke(
+        {
+            "messages": [HumanMessage(content="Start chapter two.")],
+            "current_scene": first_scene.markdown,
+            "current_scene_id": first_scene.id,
+        }
+    )
+
+    new_scene = isolated_world.scenes[1]
+    assert new_scene.title == "Chapter 2"
+    assert result["current_scene_id"] == new_scene.id
+    assert result["current_scene"] == ""
+    assert result["messages"][-1].content == "Created the new scene."
+
+
 def test_chat_agent_with_replace_scene_text_tool_updates_state() -> None:
     tool_call = {
         "name": "replace_scene_text",

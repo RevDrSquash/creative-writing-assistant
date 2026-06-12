@@ -15,21 +15,78 @@ from nicegui.testing import User
 
 async def test_index_redirects_to_workspace(user: User) -> None:
     await user.open("/")
-    await user.should_see("Editor Panel")
+    await user.should_see("Story Bible")
 
 
-async def test_workspace_renders_editor_and_chat(user: User) -> None:
+async def test_workspace_renders_scene_editor_and_chat(user: User) -> None:
     await user.open("/workspace")
-    await user.should_see("Editor Panel")
+    await user.should_see("New Scene")
+    await user.should_see("Notes")
     await user.should_see("Send")
     # Chat must be enabled because the test environment provides a valid-looking key.
     await user.should_not_see("Chat is disabled because model settings are invalid.")
 
 
-async def test_workspace_sidebar_navigates_to_placeholder(user: User) -> None:
+async def test_workspace_sidebar_navigates_to_characters(user: User) -> None:
     await user.open("/workspace")
     user.find("Characters").click()
-    await user.should_see("Character list placeholder")
+    await user.should_see("No characters yet.")
+
+
+async def test_narrative_style_page_renders_form(user: User) -> None:
+    await user.open("/workspace/narrative-style")
+    await user.should_see("The intended tone, themes, and writing style for this project.")
+
+
+async def test_world_page_renders_facts_state_and_derived_sections(user: User) -> None:
+    await user.open("/workspace/world")
+    await user.should_see("World Facts")
+    await user.should_see("Baseline World State")
+    await user.should_see("Derived World State")
+    await user.should_see("No world facts yet.")
+
+
+async def test_add_character_creates_and_opens_detail_form(
+    user: User,
+    isolated_data_dir: Path,
+) -> None:
+    await user.open("/workspace/characters")
+    user.find("Add character").click()
+    await user.should_see("Identity")
+    await user.should_see("Baseline State")
+    await user.should_see("Stance")
+    await user.should_see("Derived State")
+
+    world_path = isolated_data_dir / "world.json"
+    assert world_path.is_file()
+    stored = json.loads(world_path.read_text(encoding="utf-8"))
+    assert len(stored["story_bible"]["characters"]) == 1
+
+
+async def test_timeline_add_event_opens_event_form(
+    user: User,
+    isolated_data_dir: Path,
+) -> None:
+    await user.open("/workspace/timeline")
+    await user.should_see("No events yet.")
+    user.find("Add event").click()
+    await user.should_see("World State Effects")
+    await user.should_see("Signals")
+
+    stored = json.loads((isolated_data_dir / "world.json").read_text(encoding="utf-8"))
+    assert len(stored["story_bible"]["timeline"]) == 1
+
+
+async def test_new_scene_button_creates_second_scene(
+    user: User,
+    isolated_data_dir: Path,
+) -> None:
+    await user.open("/workspace")
+    user.find(marker="new-scene-button").click()
+    await user.should_see("Notes")
+
+    stored = json.loads((isolated_data_dir / "world.json").read_text(encoding="utf-8"))
+    assert len(stored["scenes"]) == 2
 
 
 async def test_settings_page_renders(user: User) -> None:

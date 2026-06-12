@@ -17,6 +17,11 @@ import pytest
 from nicegui.testing import User
 from nicegui.testing.user_simulation import user_simulation
 
+# Bound at collection time so the isolated_world fixture resets the same module
+# instances that test modules imported, even after UI tests purge sys.modules.
+import app.persistence.world as _world_persistence
+import app.world.store as _world_store
+
 REPO_ROOT = Path(__file__).resolve().parents[1]
 MAIN_FILE = REPO_ROOT / "app" / "ui" / "app.py"
 
@@ -39,12 +44,23 @@ def _purge_app_modules() -> None:
 
 @pytest.fixture
 def isolated_data_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    """Redirect JSON persistence (chat history, model configs, LLM logs) to a temp dir."""
+    """Redirect JSON persistence (world, chat history, model configs, LLM logs) to a temp dir."""
 
     data_dir = tmp_path / "data"
     data_dir.mkdir()
     monkeypatch.setenv("WRITING_AGENT_DATA_DIR", str(data_dir))
     return data_dir
+
+
+@pytest.fixture
+def isolated_world(isolated_data_dir: Path):
+    """Fresh in-memory World singleton backed by an isolated world.json."""
+
+    _world_persistence._WORLD_STORE = None
+    _world_store._WORLD = None
+    yield _world_store.get_world()
+    _world_persistence._WORLD_STORE = None
+    _world_store._WORLD = None
 
 
 @pytest.fixture

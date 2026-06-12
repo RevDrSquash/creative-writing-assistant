@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import re
 from collections.abc import Iterable
 
-from nicegui import ui
+from nicegui import events, ui
 
+from app.persistence.world_zip import export_world_zip, import_world_zip
 from app.ui.config import APP_TITLE
-from app.ui.navigation import HEADER_NAV_ITEMS, NavigationItem, SidebarGroup
+from app.ui.navigation import HEADER_NAV_ITEMS, NavigationItem
+from app.world.store import get_world, replace_world
 
 
 def find_item(
@@ -31,8 +34,41 @@ def render_header(active_path: str) -> None:
 
         with ui.button(icon="more_vert").props("flat round color=white"):
             with ui.menu():
-                ui.menu_item("Import", on_click=lambda: ui.notify("Import placeholder"))
-                ui.menu_item("Export", on_click=lambda: ui.notify("Export placeholder"))
+                ui.menu_item("Import World", on_click=_open_import_dialog)
+                ui.menu_item("Export World", on_click=_export_world)
+
+
+def _export_world() -> None:
+    world = get_world()
+    slug = re.sub(r"[^a-z0-9]+", "-", world.metadata.title.lower()).strip("-") or "world"
+    ui.download.content(export_world_zip(world), f"{slug}.zip")
+
+
+def _open_import_dialog() -> None:
+    async def handle_upload(event: events.UploadEventArguments) -> None:
+        data = await event.file.read()
+        try:
+            world = import_world_zip(data)
+        except ValueError as exc:
+            ui.notify(f"Import failed: {exc}", type="negative")
+            return
+        replace_world(world)
+        dialog.close()
+        ui.notify("World imported.", type="positive")
+        ui.navigate.to("/workspace")
+
+    with ui.dialog() as dialog, ui.card():
+        ui.label("Import World").classes("text-lg font-semibold")
+        ui.label(
+            "Importing a world ZIP replaces the current world entirely. "
+            "Export the current world first if you want to keep it."
+        ).classes("text-grey-7")
+        ui.upload(on_upload=handle_upload, auto_upload=True).props('accept=".zip"').classes(
+            "w-full"
+        )
+        ui.button("Cancel", on_click=dialog.close).props("flat")
+
+    dialog.open()
 
 
 def render_sidebar(
@@ -49,23 +85,6 @@ def render_sidebar(
                 button = ui.button(item.label, on_click=lambda path=item.path: ui.navigate.to(path))
                 button.classes("w-full justify-start")
                 button.props("flat" if item.path != active_path else "unelevated color=primary")
-
-
-def render_grouped_sidebar(groups: tuple[SidebarGroup, ...], active_path: str) -> None:
-    with ui.left_drawer(value=True).props("bordered").classes("bg-grey-1"):
-        with ui.column().classes("w-full gap-1"):
-            for index, group in enumerate(groups):
-                if index:
-                    ui.separator().classes("my-2")
-                ui.label(group.label).classes(
-                    "px-3 pt-2 text-xs font-semibold uppercase tracking-wide text-grey-7"
-                )
-                for item in group.items:
-                    button = ui.button(
-                        item.label, on_click=lambda path=item.path: ui.navigate.to(path)
-                    )
-                    button.classes("w-full justify-start")
-                    button.props("flat" if item.path != active_path else "unelevated color=primary")
 
 
 def render_page_shell(

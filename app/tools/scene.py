@@ -12,16 +12,151 @@ from langchain_core.tools import InjectedToolCallId, ToolException, tool
 from langgraph.prebuilt import InjectedState
 from langgraph.types import Command
 
+from app.world.scene import create_scene as world_create_scene
+from app.world.scene import delete_scene as world_delete_scene
+from app.world.scene import set_scene_text
+from app.world.store import get_world
+
 
 @tool
-def read_scene(state: Annotated[dict[str, Any], InjectedState]) -> str:
-    """Return the full Markdown text of the scene currently open in the workspace.
+def read_scene(
+    state: Annotated[dict[str, Any], InjectedState],
+    scene_id: str = "",
+) -> str:
+    """Return the full Markdown text of a scene.
 
+    Without `scene_id`, reads the scene currently open in the workspace.
     Call this before edits to anchor on the actual current wording.
     """
 
+    current_id = state.get("current_scene_id", "")
+    if scene_id and scene_id != current_id:
+        scene = get_world().get_scene(scene_id)
+        if scene is None:
+            raise ToolException(f"No scene with id {scene_id}; call list_scenes for valid ids.")
+        return scene.markdown
+
     current_scene = state.get("current_scene", "")
     return current_scene if isinstance(current_scene, str) else ""
+
+
+@tool
+def list_scenes(state: Annotated[dict[str, Any], InjectedState]) -> str:
+    """List all scenes in order with their ids, titles, and summaries.
+
+    The scene currently open in the workspace is marked with `(open)`.
+    """
+
+    current_id = state.get("current_scene_id", "")
+    lines = []
+    for position, scene in enumerate(get_world().scenes, start=1):
+        marker = " (open)" if scene.id == current_id else ""
+        summary = f" - {scene.summary}" if scene.summary else ""
+        lines.append(f"{position}. {scene.title} [id: {scene.id}]{marker}{summary}")
+    return "\n".join(lines)
+
+
+@tool
+def create_scene(
+    title: str,
+    state: Annotated[dict[str, Any], InjectedState],
+    tool_call_id: Annotated[str, InjectedToolCallId],
+    summary: str = "",
+) -> Command:
+    """Create a new empty scene at the end of the scene list and open it.
+
+    After creating, use canvas tags or replace_scene_text to write its prose.
+    """
+
+    _persist_open_scene_text(state)
+    scene = world_create_scene(title, summary)
+    return Command(
+        update={
+            "current_scene_id": scene.id,
+            "current_scene": scene.markdown,
+            "messages": [
+                ToolMessage(
+                    content=f"Created scene '{scene.title}' (id: {scene.id}) and opened it.",
+                    tool_call_id=tool_call_id,
+                )
+            ],
+        }
+    )
+
+
+@tool
+def select_scene(
+    scene_id: str,
+    state: Annotated[dict[str, Any], InjectedState],
+    tool_call_id: Annotated[str, InjectedToolCallId],
+) -> Command:
+    """Open a different scene in the workspace so subsequent edits target it."""
+
+    scene = get_world().get_scene(scene_id)
+    if scene is None:
+        raise ToolException(f"No scene with id {scene_id}; call list_scenes for valid ids.")
+
+    _persist_open_scene_text(state)
+    return Command(
+        update={
+            "current_scene_id": scene.id,
+            "current_scene": scene.markdown,
+            "messages": [
+                ToolMessage(
+                    content=f"Opened scene '{scene.title}' (id: {scene.id}).",
+                    tool_call_id=tool_call_id,
+                )
+            ],
+        }
+    )
+
+
+@tool
+def delete_scene(
+    scene_id: str,
+    state: Annotated[dict[str, Any], InjectedState],
+    tool_call_id: Annotated[str, InjectedToolCallId],
+) -> Command:
+    """Delete a scene permanently. The last remaining scene cannot be deleted.
+
+    If the deleted scene was open, the first remaining scene is opened.
+    """
+
+    world = get_world()
+    scene = world.get_scene(scene_id)
+    if scene is None:
+        raise ToolException(f"No scene with id {scene_id}; call list_scenes for valid ids.")
+
+    try:
+        world_delete_scene(scene_id)
+    except ValueError as exc:
+        raise ToolException(str(exc)) from exc
+
+    update: dict[str, Any] = {
+        "messages": [
+            ToolMessage(
+                content=f"Deleted scene '{scene.title}' (id: {scene.id}).",
+                tool_call_id=tool_call_id,
+            )
+        ]
+    }
+    if state.get("current_scene_id") == scene_id:
+        fallback = world.scenes[0]
+        update["current_scene_id"] = fallback.id
+        update["current_scene"] = fallback.markdown
+    return Command(update=update)
+
+
+def _persist_open_scene_text(state: dict[str, Any]) -> None:
+    """Write the open scene's in-run text to the world before switching scenes."""
+
+    current_id = state.get("current_scene_id", "")
+    current_text = state.get("current_scene")
+    if not isinstance(current_id, str) or not current_id or not isinstance(current_text, str):
+        return
+    scene = get_world().get_scene(current_id)
+    if scene is not None and scene.markdown != current_text:
+        set_scene_text(current_id, current_text)
 
 
 @tool
@@ -151,4 +286,11 @@ def _group_overlapping_candidates(
     return groups
 
 
-SCENE_TOOLS = [read_scene, replace_scene_text]
+SCENE_TOOLS = [
+    read_scene,
+    replace_scene_text,
+    list_scenes,
+    create_scene,
+    select_scene,
+    delete_scene,
+]

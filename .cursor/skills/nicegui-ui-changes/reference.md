@@ -14,9 +14,10 @@ package: `.venv/Lib/site-packages/nicegui/llms.md`.
   (e.g. `workspace()` calls `_workspace_page(...)`). Keep logic in the renderer or, better, in
   non-UI modules -- the architecture boundary is "UI stays thin; core logic lives outside
   NiceGUI event handlers".
-- Shared chrome lives in `app/ui/layout.py` (`render_header`, `render_grouped_sidebar`,
+- Shared chrome lives in `app/ui/layout.py` (`render_header`, `render_sidebar`,
   `render_page_shell`) with nav metadata in `app/ui/navigation.py`. Reuse these; do not
-  hand-roll headers or drawers per page.
+  hand-roll headers or drawers per page. The workspace builds its own grouped sidebar in
+  `pages/workspace.py` because its scene list is dynamic.
 - Reusable widgets live in `app/ui/components/` as `render_*` functions that build elements in
   the caller's current slot.
 
@@ -32,9 +33,12 @@ package: `.venv/Lib/site-packages/nicegui/llms.md`.
 ## Per-user state
 
 - Per-user values go through `nicegui.app.storage.user` and require the `storage_secret`
-  already passed in `app.py`. Existing keys: scene content (`SCENE_CONTENT_KEY` in
-  `app/world/scene.py`) and the workspace splitter position (`workspace_split`).
-- Prefer `element.bind_value(app.storage.user, KEY)` over manual get/set handlers (see the
+  already passed in `app.py`. Existing keys: the selected scene (`CURRENT_SCENE_KEY` in
+  `app/ui/scene_selection.py`) and the workspace splitter position (`workspace_split`).
+- Story content is NOT per-user: it lives on the process-wide `World` object
+  (`app/world/store.py`). Forms bind directly to world model objects and call `save_world()`
+  on change (see `components/story_bible_forms.py`).
+- Prefer `element.bind_value(target, field)` over manual get/set handlers (see the
   splitter in `pages/workspace.py` and `components/markdown_editor.py`).
 - Never store per-user data in module-level variables; NiceGUI is one process shared by all
   sessions.

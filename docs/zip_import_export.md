@@ -27,8 +27,9 @@ world.zip
 - world identity and metadata
 - Story Bible data
 - ordered scene records
-- chat history associated with the project
 - schema version
+
+Chat history is currently app-local and not part of the export (see `known_issues.md`).
 
 Each exported `Scene` record remains in `world.json`, but its `markdown` field is set to an empty string. Scene prose is stored in the per-scene Markdown files instead.
 
