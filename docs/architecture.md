@@ -53,7 +53,7 @@ The app is a local-first Python writing workspace built around one in-memory `Wo
   - Later workflows can compose multiple nodes for tasks like outlining, critiquing, revising, and drafting.
 
 - **Tool Layer**
-  - Tools expose explicit actions such as reading scenes, listing world data, appending prose, replacing text, and updating Story Bible fields.
+  - Tools expose explicit actions such as reading scenes, updating scene metadata, listing world data, appending prose, replacing text, and updating Story Bible fields.
   - Write tools mutate world state before returning.
   - Tools raise `ToolException` for expected domain errors (e.g. an unknown entity id). The agent is built with a `ToolRetryMiddleware(max_retries=0, on_failure="continue")` so a failing tool call produces an error `ToolMessage` for the model to recover from instead of aborting the run. Tools are local and deterministic, so retries are disabled.
   - Workflows or subagents can also be exposed as tools.

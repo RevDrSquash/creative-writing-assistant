@@ -12,9 +12,16 @@ from langchain_core.tools import InjectedToolCallId, ToolException, tool
 from langgraph.prebuilt import InjectedState
 from langgraph.types import Command
 
-from app.world.scene import create_scene as world_create_scene
-from app.world.scene import delete_scene as world_delete_scene
-from app.world.scene import set_scene_text
+from app.world.scene import (
+    create_scene as world_create_scene,
+)
+from app.world.scene import (
+    delete_scene as world_delete_scene,
+)
+from app.world.scene import (
+    set_scene_metadata,
+    set_scene_text,
+)
 from app.world.store import get_world
 
 
@@ -109,6 +116,39 @@ def select_scene(
             ],
         }
     )
+
+
+@tool
+def update_scene(
+    state: Annotated[dict[str, Any], InjectedState],
+    scene_id: str = "",
+    title: str | None = None,
+    summary: str | None = None,
+) -> str:
+    """Update an existing scene's title and/or summary.
+
+    Without ``scene_id``, updates the scene currently open in the workspace.
+    """
+
+    target_id = scene_id or state.get("current_scene_id", "")
+    if not target_id:
+        raise ToolException("No scene specified and none is open; call list_scenes.")
+
+    scene = get_world().get_scene(target_id)
+    if scene is None:
+        raise ToolException(f"No scene with id {target_id}; call list_scenes for valid ids.")
+
+    if title is None and summary is None:
+        return "No changes requested (provide title and/or summary)."
+
+    set_scene_metadata(target_id, title=title, summary=summary)
+
+    parts = []
+    if title is not None:
+        parts.append(f"title to '{title}'")
+    if summary is not None:
+        parts.append(f"summary to '{summary}'")
+    return f"Updated scene '{scene.title}' (id: {scene.id}): set {' and '.join(parts)}."
 
 
 @tool
@@ -292,5 +332,6 @@ SCENE_TOOLS = [
     list_scenes,
     create_scene,
     select_scene,
+    update_scene,
     delete_scene,
 ]

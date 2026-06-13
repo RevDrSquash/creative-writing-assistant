@@ -52,6 +52,18 @@ Scenes represent prose. Each scene contains:
 
 Scenes are ordered because narrative sequence matters.
 
+## Scene Editor Layout
+
+The workspace scene editor uses one edit/preview toggle on the title row. In edit mode
+the writer sees title, summary, and Markdown prose as inputs; in preview mode those
+fields render as read-only labels and Markdown preview. Scene notes stay editable in
+an expansion below the prose editor.
+
+Agent scene tools can read and replace prose (`read_scene`, `replace_scene_text`) and
+manage scene metadata and navigation (`list_scenes`, `create_scene`, `select_scene`,
+`update_scene`, `delete_scene`). Use `update_scene` to rename a scene or change its
+summary without editing prose.
+
 ## Chat History Model
 
 Chat history stores the ongoing conversation between the writer, assistant, and tool activity associated with the project. The long-term intent is for it to be part of the portable world so the collaboration record can travel with the project; for now it lives in an app-local store and is not exported (see `known_issues.md`).

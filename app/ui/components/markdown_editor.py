@@ -34,14 +34,21 @@ def render_markdown_editor(
     placeholder: str = "Write Markdown here...",
     edit_default: bool = True,
     on_change: Callable[[], None] | None = None,
-) -> None:
+    state: dict | None = None,
+    show_toggle: bool = True,
+) -> dict:
     """Render a textarea-backed Markdown editor bound to ``target[field]``.
 
     ``on_change`` is invoked (throttled) as the user edits, after the bound
     value has been updated; use it to write the change through to disk.
+
+    Pass ``state`` to share edit/preview mode with a parent control; set
+    ``show_toggle=False`` to hide this component's own toggle button.
+    Returns the ``state`` dict (``{"edit_mode": bool}``).
     """
 
-    state = {"edit_mode": edit_default}
+    if state is None:
+        state = {"edit_mode": edit_default}
 
     def toggle_mode() -> None:
         state["edit_mode"] = not state["edit_mode"]
@@ -49,10 +56,14 @@ def render_markdown_editor(
         toggle_tooltip.set_text(_toggle_tooltip(state["edit_mode"]))
 
     with ui.column().classes("w-full h-full min-h-0 gap-2"):
-        with ui.row().classes("w-full justify-end items-center shrink-0"):
-            toggle_button = ui.button(icon=_toggle_icon(state["edit_mode"]), on_click=toggle_mode)
-            toggle_button.props("flat round dense")
-            toggle_tooltip = ui.tooltip(_toggle_tooltip(state["edit_mode"]))
+        if show_toggle:
+            with ui.row().classes("w-full justify-end items-center shrink-0"):
+                toggle_button = ui.button(
+                    icon=_toggle_icon(state["edit_mode"]),
+                    on_click=toggle_mode,
+                )
+                toggle_button.props("flat round dense")
+                toggle_tooltip = ui.tooltip(_toggle_tooltip(state["edit_mode"]))
 
         with ui.column().classes("w-full grow min-h-0"):
             textarea = ui.textarea(placeholder=placeholder)
@@ -75,6 +86,8 @@ def render_markdown_editor(
                 "edit_mode",
                 backward=lambda edit_mode: not edit_mode,
             )
+
+    return state
 
 
 def _toggle_icon(edit_mode: bool) -> str:

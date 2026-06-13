@@ -5,6 +5,7 @@ from typing import TypeVar
 
 from nicegui import binding, ui
 from nicegui.element import Element
+from nicegui.elements.button import Button
 from nicegui.elements.markdown import Markdown
 from nicegui.elements.textarea import Textarea
 
@@ -42,6 +43,30 @@ def test_markdown_editor_binding_round_trips() -> None:
 
 def test_default_scene_markdown_is_non_empty() -> None:
     assert DEFAULT_SCENE_MARKDOWN.strip()
+
+
+def test_markdown_editor_shared_state_without_toggle() -> None:
+    target = {"body": "# Shared"}
+    edit_state = {"edit_mode": True}
+
+    elements = _render_new_elements(
+        lambda: render_markdown_editor(
+            target,
+            "body",
+            state=edit_state,
+            show_toggle=False,
+        )
+    )
+    textarea = _only_element(elements, Textarea)
+    buttons = [element for element in elements if isinstance(element, Button)]
+
+    assert buttons == []
+    assert textarea.visible is True
+
+    edit_state["edit_mode"] = False
+    binding._refresh_step()
+
+    assert textarea.visible is False
 
 
 def _render_new_elements(render: Callable[[], None]) -> list[Element]:

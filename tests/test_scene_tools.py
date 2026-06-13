@@ -14,9 +14,11 @@ from app.tools.scene import (
     read_scene,
     replace_scene_text,
     select_scene,
+    update_scene,
 )
 from app.world.models import Scene, World
 from app.world.scene import create_scene as create_scene_helper
+from app.world.scene import set_scene_metadata
 
 
 def test_fuzzy_replace_exact_single_match_replaces() -> None:
@@ -179,3 +181,42 @@ def test_delete_scene_tool_refuses_last_scene(isolated_world: World) -> None:
 
     with pytest.raises(ToolException, match="last remaining scene"):
         delete_scene.func(only_scene.id, {"current_scene_id": only_scene.id}, "tool-call-1")
+
+
+def test_set_scene_metadata_updates_only_provided_fields(isolated_world: World) -> None:
+    scene = isolated_world.scenes[0]
+    scene.title = "Original"
+    scene.summary = "Original summary"
+
+    set_scene_metadata(scene.id, title="Renamed")
+
+    assert scene.title == "Renamed"
+    assert scene.summary == "Original summary"
+
+
+def test_update_scene_tool_renames_open_scene_by_default(isolated_world: World) -> None:
+    scene = isolated_world.scenes[0]
+    state = {"current_scene_id": scene.id}
+
+    message = update_scene.func(state, title="New Title")
+
+    assert scene.title == "New Title"
+    assert "New Title" in message
+
+
+def test_update_scene_tool_targets_explicit_scene_id(isolated_world: World) -> None:
+    other = Scene(title="Other", summary="Other summary")
+    isolated_world.scenes.append(other)
+    first = isolated_world.scenes[0]
+    state = {"current_scene_id": first.id}
+
+    message = update_scene.func(state, scene_id=other.id, summary="Updated summary")
+
+    assert other.summary == "Updated summary"
+    assert other.title == "Other"
+    assert "Updated summary" in message
+
+
+def test_update_scene_tool_raises_on_unknown_id(isolated_world: World) -> None:
+    with pytest.raises(ToolException, match="No scene with id"):
+        update_scene.func({"current_scene_id": isolated_world.scenes[0].id}, scene_id="missing")

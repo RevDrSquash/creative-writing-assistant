@@ -22,7 +22,22 @@ async def test_workspace_renders_scene_editor_and_chat(user: User) -> None:
     await user.open("/workspace")
     await user.should_see("New Scene")
     await user.should_see("Notes")
+    await user.should_see("Preview Markdown")
     await user.should_see("Send")
+
+
+async def test_scene_title_is_editable_in_edit_state(user: User) -> None:
+    from nicegui.elements.input import Input
+
+    await user.open("/workspace")
+    title = next(
+        element
+        for element in user.find(Input).elements
+        if element._props.get("placeholder") == "Scene title"
+    )
+    assert title.visible is True
+    title.set_value("Renamed Scene")
+    assert title.value == "Renamed Scene"
     # Chat must be enabled because the test environment provides a valid-looking key.
     await user.should_not_see("Chat is disabled because model settings are invalid.")
 

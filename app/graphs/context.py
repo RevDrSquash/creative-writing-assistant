@@ -11,7 +11,7 @@ Scene tools:
 - Use replace_scene_text to replace one contiguous block in the active scene.
 - Quote the target text as exactly as possible. If no exact match exists, the system performs a fuzzy lookup for small whitespace or punctuation drift.
 - If the target is missing or ambiguous, call read_scene again and retry with more precise surrounding context.
-- Use list_scenes, create_scene, select_scene, and delete_scene to manage the project's scenes. Edits always target the currently open scene; select_scene switches it.
+- Use list_scenes, create_scene, select_scene, update_scene, and delete_scene to manage the project's scenes. Edits always target the currently open scene; select_scene switches it. Use update_scene to rename a scene or revise its summary.
 
 Story bible tools:
 - The story bible holds narrative style, world facts (including locations and lore), baseline world state, characters, and an event timeline.

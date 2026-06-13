@@ -4,8 +4,12 @@ from __future__ import annotations
 
 from nicegui import app, ui
 
-from app.ui.components import render_markdown_editor
 from app.ui.components.chat import render_chat
+from app.ui.components.markdown_editor import (
+    _toggle_icon,
+    _toggle_tooltip,
+    render_markdown_editor,
+)
 from app.ui.components.story_bible_forms import (
     render_characters_form,
     render_narrative_style_form,
@@ -185,17 +189,54 @@ def _render_scene_editor(scene: Scene) -> None:
     def save() -> None:
         save_world()
 
-    title_input = ui.input(placeholder="Scene title").classes("w-full text-xl font-semibold")
-    title_input.classes("shrink-0").props("borderless dense")
-    title_input.bind_value(scene, "title")
-    title_input.on_value_change(lambda _: save())
+    edit_state = {"edit_mode": True}
+
+    def toggle_mode() -> None:
+        edit_state["edit_mode"] = not edit_state["edit_mode"]
+        toggle_button.set_icon(_toggle_icon(edit_state["edit_mode"]))
+        toggle_tooltip.set_text(_toggle_tooltip(edit_state["edit_mode"]))
+
+    with ui.row().classes("w-full items-center no-wrap"):
+        title_input = ui.input(placeholder="Scene title").classes("text-xl font-semibold")
+        title_input.classes("grow").props("outlined dense")
+        title_input.bind_value(scene, "title")
+        title_input.bind_visibility_from(edit_state, "edit_mode")
+        title_input.on_value_change(lambda _: save())
+
+        title_preview = ui.label("").classes("text-xl font-semibold grow")
+        title_preview.bind_text_from(scene, "title", backward=lambda title: title or "Untitled")
+        title_preview.bind_visibility_from(
+            edit_state,
+            "edit_mode",
+            backward=lambda edit_mode: not edit_mode,
+        )
+
+        ui.space()
+        toggle_button = ui.button(icon=_toggle_icon(edit_state["edit_mode"]), on_click=toggle_mode)
+        toggle_button.props("flat round dense")
+        toggle_tooltip = ui.tooltip(_toggle_tooltip(edit_state["edit_mode"]))
 
     summary_input = ui.input(placeholder="Scene summary").classes("w-full shrink-0")
     summary_input.props("dense outlined")
     summary_input.bind_value(scene, "summary")
+    summary_input.bind_visibility_from(edit_state, "edit_mode")
     summary_input.on_value_change(lambda _: save())
 
-    render_markdown_editor(scene, "markdown", on_change=save)
+    summary_preview = ui.label("").classes("w-full shrink-0")
+    summary_preview.bind_text_from(scene, "summary")
+    summary_preview.bind_visibility_from(
+        edit_state,
+        "edit_mode",
+        backward=lambda edit_mode: not edit_mode,
+    )
+
+    render_markdown_editor(
+        scene,
+        "markdown",
+        on_change=save,
+        state=edit_state,
+        show_toggle=False,
+    )
 
     with ui.expansion("Notes", icon="sticky_note_2").classes("w-full shrink-0"):
         notes_input = ui.textarea(placeholder="Scene notes...").classes("w-full")

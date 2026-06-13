@@ -13,6 +13,7 @@ __all__ = [
     "delete_scene",
     "get_scene_text",
     "resolve_scene",
+    "set_scene_metadata",
     "set_scene_text",
 ]
 
@@ -46,6 +47,22 @@ def set_scene_text(scene_id: str | None, text: str) -> None:
 
     with world_transaction():
         resolve_scene(scene_id).markdown = text
+
+
+def set_scene_metadata(
+    scene_id: str | None,
+    *,
+    title: str | None = None,
+    summary: str | None = None,
+) -> None:
+    """Set a scene's title and/or summary and write the world through to disk."""
+
+    with world_transaction():
+        scene = resolve_scene(scene_id)
+        if title is not None:
+            scene.title = title
+        if summary is not None:
+            scene.summary = summary
 
 
 def create_scene(title: str = DEFAULT_SCENE_TITLE, summary: str = "") -> Scene:
