@@ -40,6 +40,33 @@ disagree with current state.
 
 ## Entities
 
+### Entity IDs
+
+World entities use readable slug ids assigned once at creation and frozen thereafter.
+Renaming a character (or any entity) does not change its id, because signals and effects
+reference ids across the timeline.
+
+| Entity type | Prefix | Slug source |
+| --- | --- | --- |
+| Character | `char_` | `identity.name` |
+| World fact | `fact_` | `title` |
+| World-state entry | `wse_` | `text` |
+| Event | `event_` | `title` |
+| Scene | `scene_` | `title` |
+| Intimacy | `intim_` | `text` |
+
+A named entity becomes `{prefix}{slugified_text}` (e.g. `char_the_guard`). Blank text at
+creation falls back to the bare prefix without its trailing underscore (`char`, `char_2`).
+Collisions append a numeric suffix (`char_the_guard_2`).
+
+Signal ids and model-authored inline ids (such as intimacy ids inside signal effects) are
+left as supplied. Opaque hex ids from `new_id()` remain the fallback when slug assignment
+does not run (e.g. legacy data).
+
+Agent tools validate that each signal's `character_id` resolves to an existing character
+before saving an event. Unknown ids raise a tool error listing valid characters as
+`name [id]`, so the model can self-correct.
+
 ### World Fact
 
 A stable setting fact. Fields: `id`, `title`, `text`, `tags`. World facts are not affected by

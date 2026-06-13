@@ -24,6 +24,7 @@ from app.world.models import (
     WorldStateEffect,
     WorldStateEntry,
     WorldStateKind,
+    unique_slug,
 )
 from app.world.replay import DerivedCharacterState, derive_state
 from app.world.store import get_world, world_transaction
@@ -129,6 +130,11 @@ def upsert_world_fact(
             action = "Updated"
         else:
             fact = WorldFact(title=title, text=text, tags=tags or [])
+            fact.id = unique_slug(
+                "fact_",
+                title,
+                {item.id for item in bible.world_facts},
+            )
             bible.world_facts.append(fact)
             action = "Created"
     return f"{action} world fact '{fact.title}' (id: {fact.id})."
@@ -178,6 +184,11 @@ def upsert_world_state_entry(
             action = "Updated"
         else:
             entry = WorldStateEntry(text=text, kind=kind)
+            entry.id = unique_slug(
+                "wse_",
+                text,
+                {item.id for item in bible.baseline_world_state},
+            )
             bible.baseline_world_state.append(entry)
             action = "Created"
     return f"{action} baseline world-state entry (id: {entry.id})."
@@ -274,6 +285,11 @@ def upsert_character(
             action = "Updated"
         else:
             character = Character()
+            character.id = unique_slug(
+                "char_",
+                name or "",
+                {item.id for item in bible.characters},
+            )
             bible.characters.append(character)
             action = "Created"
 
@@ -416,6 +432,12 @@ def add_event(
             world_state_effects=world_state_effects or [],
             signals=signals or [],
         )
+        _validate_signal_character_ids(bible, event.signals)
+        event.id = unique_slug(
+            "event_",
+            title,
+            {item.id for item in bible.timeline},
+        )
         index = _resolve_insert_index(bible, position)
         bible.timeline.insert(index, event)
     return f"Added event '{event.title}' (id: {event.id}) at position {index + 1}."
@@ -453,6 +475,7 @@ def update_event(
         if world_state_effects is not None:
             event.world_state_effects = world_state_effects
         if signals is not None:
+            _validate_signal_character_ids(bible, signals)
             event.signals = signals
         if position is not None:
             bible.timeline.remove(event)
@@ -504,6 +527,22 @@ def read_world_state(at_event_id: str = "") -> str:
         lines.append(f"## {character.name or 'Unnamed'} [id: {character.character_id}]")
         lines.extend(_derived_character_lines(character))
     return "\n".join(lines)
+
+
+def _validate_signal_character_ids(bible: StoryBible, signals: list[Signal]) -> None:
+    valid_characters = {
+        character.id: character.identity.name or "Unnamed" for character in bible.characters
+    }
+    for signal in signals:
+        if signal.character_id and signal.character_id not in valid_characters:
+            if valid_characters:
+                listing = ", ".join(
+                    f"{name} [{character_id}]" for character_id, name in valid_characters.items()
+                )
+                detail = f"Valid characters: {listing}"
+            else:
+                detail = "No characters exist yet; create one first."
+            raise ToolException(f"Unknown character_id '{signal.character_id}' in signal. {detail}")
 
 
 def _resolve_insert_index(bible: StoryBible, position: int | None) -> int:

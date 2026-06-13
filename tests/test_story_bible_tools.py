@@ -35,6 +35,66 @@ from app.world.models import (
 )
 
 
+def test_upsert_world_fact_creates_slug_id(isolated_world: World) -> None:
+    upsert_world_fact.func("The Reach", "A coastal region")
+
+    assert isolated_world.story_bible.world_facts[0].id == "fact_the_reach"
+
+
+def test_upsert_world_state_entry_creates_slug_id(isolated_world: World) -> None:
+    upsert_world_state_entry.func("Drought in the valley", "pressure")
+
+    assert isolated_world.story_bible.baseline_world_state[0].id == "wse_drought_in_the_valley"
+
+
+def test_upsert_character_creates_slug_id(isolated_world: World) -> None:
+    upsert_character.func(name="Mira")
+
+    assert isolated_world.story_bible.characters[0].id == "char_mira"
+
+
+def test_add_event_creates_slug_id(isolated_world: World) -> None:
+    add_event.func("The Fork in the Road")
+
+    assert isolated_world.story_bible.timeline[0].id == "event_the_fork_in_the_road"
+
+
+def test_add_event_rejects_unknown_signal_character_id(isolated_world: World) -> None:
+    with pytest.raises(ToolException, match="Unknown character_id 'char_missing'"):
+        add_event.func(
+            "Betrayal",
+            signals=[Signal(character_id="char_missing", interpretation="Ignored")],
+        )
+
+    assert isolated_world.story_bible.timeline == []
+
+
+def test_add_event_lists_valid_characters_on_unknown_signal_character_id(
+    isolated_world: World,
+) -> None:
+    upsert_character.func(name="Mira")
+
+    with pytest.raises(ToolException, match="Mira \\[char_mira\\]"):
+        add_event.func(
+            "Betrayal",
+            signals=[Signal(character_id="char_wrong", interpretation="Ignored")],
+        )
+
+
+def test_update_event_rejects_unknown_signal_character_id(isolated_world: World) -> None:
+    upsert_character.func(name="Mira")
+    add_event.func("Betrayal")
+    event = isolated_world.story_bible.timeline[0]
+
+    with pytest.raises(ToolException, match="Unknown character_id"):
+        update_event.func(
+            event.id,
+            signals=[Signal(character_id="char_missing", interpretation="Ignored")],
+        )
+
+    assert event.signals == []
+
+
 def test_read_story_bible_overview_lists_entities(isolated_world: World) -> None:
     upsert_world_fact.func("The Reach", "A coastal region")
     upsert_character.func(name="Mira", goal="Find the archive")

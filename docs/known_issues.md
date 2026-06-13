@@ -64,3 +64,31 @@ fix so the context is not lost between phases.
   the same turn, and the partial text is in memory only (not saved to disk).
 - **Possible fix:** Track per-scene authoritative snapshots during the run instead of a single
   `run_scene` record.
+
+## 5. UI-created blank entities get generic slug ids
+
+- **Severity:** Low (cosmetic)
+- **Location:** `app/ui/components/story_bible_forms.py` — `add_fact`, `add_entry`,
+  `add_character`, `add_intimacy`, `insert_event`
+- **Introduced:** Schema version 2 (readable slug ids)
+- **Symptom:** Entities created from the UI before the user types a name or title receive
+  generic slugs (`char`, `char_2`, `event`, etc.) rather than descriptive ones. Agent-created
+  entities slug from the supplied text at creation time and are usually more readable.
+- **Why it is acceptable:** The slug is frozen at creation; the user can delete and recreate if
+  they care, and the display name is independent of the id.
+- **Possible fix:** Re-slug on first non-blank save of the primary text field, or prompt for a
+  name before creating the entity.
+
+## 6. World schema version 1 is rejected; no automatic migration
+
+- **Severity:** Low (documented breaking change)
+- **Location:** `app/persistence/world.py` — `validate_world_payload`; `app/world/models.py`
+  — `SCHEMA_VERSION = 2`
+- **Introduced:** Schema version 2 (readable slug ids)
+- **Symptom:** Loading a `world.json` (or ZIP import) with `schema_version: 1` fails with a
+  clear unsupported-version error. Existing v1 worlds must be hand-converted (re-slug entity
+  ids and repair signal `character_id` references) before the app will load them.
+- **Why it is acceptable:** Automatic migration would need to rewrite every cross-reference;
+  the project has a single dev world and migration tooling is deferred.
+- **Possible fix:** Add a one-shot migration script or import-time rewriter that maps old hex
+  ids to new slugs and updates all references.

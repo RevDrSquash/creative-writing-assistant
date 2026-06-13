@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from app.persistence.world import DEFAULT_SCENE_MARKDOWN, DEFAULT_SCENE_TITLE
-from app.world.models import Scene
+from app.world.models import Scene, unique_slug
 from app.world.store import get_world, world_transaction
 
 __all__ = [
@@ -53,6 +53,11 @@ def create_scene(title: str = DEFAULT_SCENE_TITLE, summary: str = "") -> Scene:
 
     scene = Scene(title=title or DEFAULT_SCENE_TITLE, summary=summary)
     with world_transaction() as world:
+        scene.id = unique_slug(
+            "scene_",
+            scene.title,
+            {item.id for item in world.scenes},
+        )
         world.scenes.append(scene)
     return scene
 

@@ -16,6 +16,7 @@ from app.tools.scene import (
     select_scene,
 )
 from app.world.models import Scene, World
+from app.world.scene import create_scene as create_scene_helper
 
 
 def test_fuzzy_replace_exact_single_match_replaces() -> None:
@@ -111,6 +112,13 @@ def test_list_scenes_marks_open_scene(isolated_world: World) -> None:
     assert f"1. {first.title} [id: {first.id}] (open)" in listing
     assert "Chapter 2" in listing
     assert "The journey" in listing
+
+
+def test_create_scene_helper_assigns_slug_id(isolated_world: World) -> None:
+    scene = create_scene_helper("Chapter Two", summary="The journey continues")
+
+    assert scene.id == "scene_chapter_two"
+    assert isolated_world.scenes[-1].id == "scene_chapter_two"
 
 
 def test_create_scene_tool_persists_open_text_and_switches(isolated_world: World) -> None:

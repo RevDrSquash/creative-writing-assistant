@@ -8,13 +8,14 @@ model description.
 
 from __future__ import annotations
 
+import re
 from datetime import datetime, timezone
 from typing import Annotated, Literal
 from uuid import uuid4
 
 from pydantic import BaseModel, Field
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 IntimacyStrength = Literal["minor", "major", "defining"]
 WorldStateKind = Literal["pressure", "thread", "consequence"]
@@ -29,6 +30,33 @@ def new_id() -> str:
     """Return a short unique id for world entities."""
 
     return uuid4().hex[:12]
+
+
+def slugify(text: str) -> str:
+    """Convert text to a lowercase underscore slug."""
+
+    normalized = re.sub(r"[^a-z0-9]+", "_", text.lower().strip())
+    return normalized.strip("_")
+
+
+def unique_slug(prefix: str, text: str, existing: set[str]) -> str:
+    """Return a unique slug from a type prefix and source text.
+
+    Non-blank text becomes ``{prefix}{slugify(text)}`` (e.g. ``char_the_guard``).
+    Blank text falls back to the bare prefix without its trailing underscore
+    (e.g. ``char``, ``char_2``). Numeric suffixes resolve collisions.
+    """
+
+    base = slugify(text)
+    slug = f"{prefix}{base}" if base else prefix.rstrip("_")
+    if slug not in existing:
+        return slug
+    counter = 2
+    while True:
+        candidate = f"{slug}_{counter}"
+        if candidate not in existing:
+            return candidate
+        counter += 1
 
 
 def utc_now() -> datetime:

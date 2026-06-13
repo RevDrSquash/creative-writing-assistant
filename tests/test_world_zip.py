@@ -80,7 +80,7 @@ def test_import_rejects_invalid_world_payload() -> None:
     with zipfile.ZipFile(buffer, "w") as archive:
         archive.writestr(
             "world.json",
-            json.dumps({"schema_version": 1, "scenes": "not-a-list"}),
+            json.dumps({"schema_version": 2, "scenes": "not-a-list"}),
         )
 
     with pytest.raises(ValueError, match="failed validation"):

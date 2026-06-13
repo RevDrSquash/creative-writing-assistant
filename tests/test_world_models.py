@@ -5,6 +5,7 @@ from __future__ import annotations
 import pytest
 
 from app.world.models import (
+    SCHEMA_VERSION,
     AddIntimacy,
     AddWorldStateEntry,
     Character,
@@ -23,6 +24,8 @@ from app.world.models import (
     UpdateWorldStateEntry,
     World,
     WorldStateEntry,
+    slugify,
+    unique_slug,
 )
 from app.world.replay import derive_state, derive_state_at
 
@@ -44,6 +47,32 @@ def _bible_with_character() -> tuple[StoryBible, Character, Intimacy]:
         characters=[character],
     )
     return bible, character, intimacy
+
+
+def test_schema_version_is_two() -> None:
+    assert SCHEMA_VERSION == 2
+
+
+def test_slugify_normalizes_text() -> None:
+    assert slugify("The Protagonist") == "the_protagonist"
+    assert slugify("  New Scene!  ") == "new_scene"
+    assert slugify("") == ""
+
+
+def test_unique_slug_from_text_and_handles_collisions() -> None:
+    existing: set[str] = set()
+
+    assert unique_slug("char_", "The Guard", existing) == "char_the_guard"
+    existing.add("char_the_guard")
+    assert unique_slug("char_", "The Guard", existing) == "char_the_guard_2"
+
+
+def test_unique_slug_blank_text_uses_bare_prefix() -> None:
+    existing: set[str] = set()
+
+    assert unique_slug("char_", "", existing) == "char"
+    existing.add("char")
+    assert unique_slug("char_", "", existing) == "char_2"
 
 
 def test_world_serialization_round_trip_preserves_structure() -> None:

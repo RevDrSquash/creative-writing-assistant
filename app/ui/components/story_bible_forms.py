@@ -28,6 +28,7 @@ from app.world.models import (
     UpdateWorldStateEntry,
     WorldFact,
     WorldStateEntry,
+    unique_slug,
 )
 from app.world.replay import derive_state_at
 from app.world.store import get_world, save_world
@@ -141,7 +142,9 @@ def render_world_form() -> None:
     facts_section()
 
     def add_fact() -> None:
-        bible.world_facts.append(WorldFact())
+        fact = WorldFact()
+        fact.id = unique_slug("fact_", "", {item.id for item in bible.world_facts})
+        bible.world_facts.append(fact)
         save_world()
         facts_section.refresh()
 
@@ -165,7 +168,13 @@ def render_world_form() -> None:
     baseline_section()
 
     def add_entry() -> None:
-        bible.baseline_world_state.append(WorldStateEntry())
+        entry = WorldStateEntry()
+        entry.id = unique_slug(
+            "wse_",
+            "",
+            {item.id for item in bible.baseline_world_state},
+        )
+        bible.baseline_world_state.append(entry)
         save_world()
         baseline_section.refresh()
 
@@ -288,6 +297,7 @@ def _render_character_list() -> None:
 
     def add_character() -> None:
         character = Character()
+        character.id = unique_slug("char_", "", {item.id for item in bible.characters})
         bible.characters.append(character)
         save_world()
         ui.navigate.to(f"/workspace/characters/{character.id}")
@@ -340,7 +350,13 @@ def _render_character_detail(character: Character) -> None:
         intimacies_section()
 
         def add_intimacy() -> None:
-            character.baseline_state.intimacies.append(Intimacy())
+            intimacy = Intimacy()
+            intimacy.id = unique_slug(
+                "intim_",
+                "",
+                {item.id for item in character.baseline_state.intimacies},
+            )
+            character.baseline_state.intimacies.append(intimacy)
             save_world()
             intimacies_section.refresh()
 
@@ -466,6 +482,7 @@ def _render_timeline_list() -> None:
 
     def insert_event(index: int) -> None:
         event = Event()
+        event.id = unique_slug("event_", "", {item.id for item in bible.timeline})
         bible.timeline.insert(index, event)
         save_world()
         ui.navigate.to(f"/workspace/events/{event.id}")
