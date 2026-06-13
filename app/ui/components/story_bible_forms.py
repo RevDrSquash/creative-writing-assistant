@@ -39,7 +39,6 @@ _WORLD_STATE_KIND_OPTIONS = {
     "thread": "Thread",
     "consequence": "Consequence",
 }
-_EVENT_KIND_OPTIONS = {"scene": "Scene", "time_passage": "Time passage"}
 
 
 # --- shared helpers ---------------------------------------------------------
@@ -495,7 +494,6 @@ def _render_timeline_list() -> None:
             with ui.card().classes("w-full"):
                 with ui.row().classes("w-full items-center no-wrap gap-2"):
                     ui.label(f"{index + 1}.").classes("text-grey-7 font-mono")
-                    ui.badge(_EVENT_KIND_OPTIONS[event.kind]).props("outline color=primary")
                     ui.label(event.title or "Untitled event").classes("grow font-semibold")
                     insert_button = ui.button(
                         icon="north",
@@ -533,8 +531,6 @@ def _render_event_detail(event: Event) -> None:
     with ui.card().classes("w-full"):
         _field_label("Title")
         _bound_input(event, "title", placeholder="What happens, objectively...")
-        _field_label("Kind")
-        _bound_select(event, "kind", _EVENT_KIND_OPTIONS)
         _field_label("Description")
         _bound_textarea(event, "description", placeholder="The objective story beat...")
 

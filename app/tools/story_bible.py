@@ -16,7 +16,6 @@ from langchain_core.tools import ToolException, tool
 from app.world.models import (
     Character,
     Event,
-    EventKind,
     Intimacy,
     Signal,
     StoryBible,
@@ -73,8 +72,7 @@ def read_story_bible() -> str:
     for position, event in enumerate(bible.timeline, start=1):
         signal_count = len(event.signals)
         lines.append(
-            f"{position}. {event.title or 'Untitled'} [id: {event.id}] "
-            f"({event.kind}, {signal_count} signals)"
+            f"{position}. {event.title or 'Untitled'} [id: {event.id}] ({signal_count} signals)"
         )
 
     return "\n".join(lines)
@@ -356,7 +354,7 @@ def delete_character(character_id: str) -> str:
 
 @tool
 def read_timeline() -> str:
-    """Return the ordered event timeline with ids, kinds, and signal counts."""
+    """Return the ordered event timeline with ids and signal counts."""
 
     bible = get_world().story_bible
     if not bible.timeline:
@@ -366,7 +364,7 @@ def read_timeline() -> str:
         description = f" - {event.description}" if event.description else ""
         lines.append(
             f"{position}. {event.title or 'Untitled'} [id: {event.id}] "
-            f"({event.kind}, {len(event.signals)} signals){description}"
+            f"({len(event.signals)} signals){description}"
         )
     return "\n".join(lines)
 
@@ -382,7 +380,7 @@ def read_event(event_id: str) -> str:
 
     index = bible.event_index(event.id) or 0
     lines = [
-        f"# Event {index + 1}: {event.title or 'Untitled'} [id: {event.id}] ({event.kind})",
+        f"# Event {index + 1}: {event.title or 'Untitled'} [id: {event.id}]",
         "",
         event.description or "(no description)",
         "",
@@ -410,7 +408,6 @@ def read_event(event_id: str) -> str:
 def add_event(
     title: str,
     description: str = "",
-    kind: EventKind = "scene",
     position: int | None = None,
     world_state_effects: list[WorldStateEffect] | None = None,
     signals: list[Signal] | None = None,
@@ -428,7 +425,6 @@ def add_event(
         event = Event(
             title=title,
             description=description,
-            kind=kind,
             world_state_effects=world_state_effects or [],
             signals=signals or [],
         )
@@ -448,7 +444,6 @@ def update_event(
     event_id: str,
     title: str | None = None,
     description: str | None = None,
-    kind: EventKind | None = None,
     position: int | None = None,
     world_state_effects: list[WorldStateEffect] | None = None,
     signals: list[Signal] | None = None,
@@ -470,8 +465,6 @@ def update_event(
             event.title = title
         if description is not None:
             event.description = description
-        if kind is not None:
-            event.kind = kind
         if world_state_effects is not None:
             event.world_state_effects = world_state_effects
         if signals is not None:

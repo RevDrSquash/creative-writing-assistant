@@ -248,7 +248,54 @@ def test_add_event_inserts_at_position(isolated_world: World) -> None:
 
     titles = [event.title for event in isolated_world.story_bible.timeline]
     assert titles == ["First", "Second", "Third"]
-    assert "1. First" in read_timeline.func()
+    timeline = read_timeline.func()
+    assert "1. First" in timeline
+    assert "(0 signals)" in timeline
+    assert "scene" not in timeline
+    assert "time_passage" not in timeline
+
+
+def test_read_timeline_and_event_omit_kind(isolated_world: World) -> None:
+    upsert_character.func(name="Mira")
+    character = isolated_world.story_bible.characters[0]
+    add_event.func(
+        "Betrayal",
+        description="An ally turns on the party.",
+        signals=[Signal(character_id=character.id, interpretation="Shocked")],
+    )
+    event = isolated_world.story_bible.timeline[0]
+
+    timeline = read_timeline.func()
+    assert "(1 signals)" in timeline
+    assert "scene" not in timeline
+    assert "time_passage" not in timeline
+
+    detail = read_event.func(event.id)
+    assert detail.startswith(f"# Event 1: Betrayal [id: {event.id}]")
+    assert "(scene)" not in detail
+    assert "(time_passage)" not in detail
+
+
+def test_add_and_update_event_reject_kind_parameter(isolated_world: World) -> None:
+    with pytest.raises(TypeError):
+        add_event.func("First", kind="scene")
+
+    add_event.func("First")
+    event = isolated_world.story_bible.timeline[0]
+
+    with pytest.raises(TypeError):
+        update_event.func(event.id, kind="time_passage")
+
+
+def test_read_story_bible_overview_omits_event_kind(isolated_world: World) -> None:
+    add_event.func("Storm hits")
+
+    overview = read_story_bible.func()
+
+    assert "Storm hits" in overview
+    assert "(0 signals)" in overview
+    assert "scene" not in overview
+    assert "time_passage" not in overview
 
 
 def test_update_event_moves_and_replaces_effects(isolated_world: World) -> None:

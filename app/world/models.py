@@ -19,11 +19,9 @@ SCHEMA_VERSION = 2
 
 IntimacyStrength = Literal["minor", "major", "defining"]
 WorldStateKind = Literal["pressure", "thread", "consequence"]
-EventKind = Literal["scene", "time_passage"]
 
 INTIMACY_STRENGTHS: tuple[IntimacyStrength, ...] = ("minor", "major", "defining")
 WORLD_STATE_KINDS: tuple[WorldStateKind, ...] = ("pressure", "thread", "consequence")
-EVENT_KINDS: tuple[EventKind, ...] = ("scene", "time_passage")
 
 
 def new_id() -> str:
@@ -218,7 +216,6 @@ class Event(BaseModel):
     id: str = Field(default_factory=new_id)
     title: str = ""
     description: str = ""
-    kind: EventKind = "scene"
     world_state_effects: list[WorldStateEffect] = Field(default_factory=list)
     signals: list[Signal] = Field(default_factory=list)
 

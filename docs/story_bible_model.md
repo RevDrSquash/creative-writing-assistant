@@ -99,10 +99,10 @@ and are modified over time by Signal effects.
 
 ### Event
 
-An objective story beat on the timeline. Fields: `id`, `title`, `description`, `kind`
-(`scene` for normal scene events, `time_passage` for time skips), a list of world-state
-effects, and a list of Signals. Event order is the timeline order (list position); events can
-be inserted at any position. Events do not store timestamps; position is the ordering.
+An objective story beat on the timeline. Fields: `id`, `title`, `description`, a list of
+world-state effects, and a list of Signals. Event order is the timeline order (list position);
+events can be inserted at any position. Events do not store timestamps; position is the
+ordering.
 
 ### Signal
 
