@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from langchain.agents import create_agent
+from langchain.agents.middleware import ToolRetryMiddleware
 from langchain_core.language_models import BaseChatModel
 from langgraph.graph.state import CompiledStateGraph
 
@@ -32,8 +33,20 @@ def build_chat_agent(
         tools=WRITING_TOOLS,
         state_schema=WritingAgentState,
         system_prompt=assembler.system_prompt,
-        middleware=[CanvasAppendMiddleware()],
+        middleware=[CanvasAppendMiddleware(), _tool_failure_middleware()],
     )
+
+
+def _tool_failure_middleware() -> ToolRetryMiddleware:
+    """Surface tool failures to the model instead of crashing the agent run.
+
+    Our tools are local and deterministic, so retrying the same call never
+    helps; with ``max_retries=0`` a failing tool immediately produces an
+    error ToolMessage and the loop continues, letting the model correct its
+    arguments or report the problem.
+    """
+
+    return ToolRetryMiddleware(max_retries=0, on_failure="continue")
 
 
 def get_chat_agent() -> CompiledStateGraph:

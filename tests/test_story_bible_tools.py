@@ -101,6 +101,41 @@ def test_upsert_character_creates_and_partially_updates(isolated_world: World) -
     assert character.baseline_state.intimacies[0].strength == "defining"
 
 
+def test_upsert_character_rolls_back_when_save_fails(
+    isolated_world: World,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A failed save must not leave a phantom character behind.
+
+    Regression test for the duplicate-character incident: a save failure after
+    the in-memory append meant the character survived invisibly, so the
+    model's retry created it a second time.
+    """
+
+    from app.persistence.world import get_world_store
+
+    store = get_world_store()
+    original_save = store.save
+    fail_once = {"armed": True}
+
+    def flaky_save(world: World) -> None:
+        if fail_once["armed"]:
+            fail_once["armed"] = False
+            raise PermissionError("world.json is locked by another process")
+        original_save(world)
+
+    monkeypatch.setattr(store, "save", flaky_save)
+
+    with pytest.raises(PermissionError):
+        upsert_character.func(name="The Narrator")
+    assert isolated_world.story_bible.characters == []
+
+    upsert_character.func(name="The Narrator")
+
+    names = [c.identity.name for c in isolated_world.story_bible.characters]
+    assert names == ["The Narrator"]
+
+
 def test_read_character_includes_identity_baseline_and_derived_state(
     isolated_world: World,
 ) -> None:

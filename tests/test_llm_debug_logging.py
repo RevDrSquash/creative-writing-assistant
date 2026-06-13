@@ -99,6 +99,45 @@ def test_handler_finalizes_success_on_llm_end(tmp_path) -> None:
     assert record.duration_ms is not None
 
 
+def test_handler_records_response_tool_calls_on_llm_end(tmp_path) -> None:
+    store = JsonFileLLMCallLogStore(tmp_path / "llm_call_logs.json")
+    handler = LLMDebugCallbackHandler(store)
+    run_id = uuid4()
+    handler.on_chat_model_start(
+        {"kwargs": {}},
+        [[HumanMessage(content="Record the cabin.")]],
+        run_id=run_id,
+        invocation_params={"model": "example/model"},
+    )
+
+    response_message = AIMessage(
+        content="Creating the fact now.",
+        tool_calls=[
+            {
+                "name": "upsert_world_fact",
+                "args": {"title": "The Cabin", "text": "A squat cabin.", "fact_id": "cabin"},
+                "id": "call-1",
+                "type": "tool_call",
+            }
+        ],
+    )
+    handler.on_llm_end(
+        LLMResult(generations=[[ChatGeneration(message=response_message)]]),
+        run_id=run_id,
+    )
+
+    record = store.get(str(run_id))
+    assert record is not None
+    assert record.status == "success"
+    assert record.response_tool_calls == [
+        {
+            "name": "upsert_world_fact",
+            "args": {"title": "The Cabin", "text": "A squat cabin.", "fact_id": "cabin"},
+            "id": "call-1",
+        }
+    ]
+
+
 def test_handler_finalizes_error_on_llm_error(tmp_path) -> None:
     store = JsonFileLLMCallLogStore(tmp_path / "llm_call_logs.json")
     handler = LLMDebugCallbackHandler(store)

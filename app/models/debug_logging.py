@@ -82,6 +82,7 @@ class LLMDebugCallbackHandler(BaseCallbackHandler):
             status="success",
             finished_at=_format_time(_now()),
             response_text=_response_text(response),
+            response_tool_calls=_response_tool_calls(response),
             response_metadata=response_metadata,
             duration_ms=self._duration_ms(run_id_text),
         )
@@ -249,6 +250,17 @@ def _response_text(response: LLMResult) -> str | None:
     message = getattr(generation, "message", None)
     content = getattr(message, "content", None)
     return _content_to_text(content) if content is not None else None
+
+
+def _response_tool_calls(response: LLMResult) -> list[dict[str, Any]]:
+    """Extract tool calls the model requested, so attempted calls (including
+    ones that later fail validation or execution) are always debuggable."""
+
+    generation = _first_generation(response)
+    message = getattr(generation, "message", None) if generation is not None else None
+    if not isinstance(message, BaseMessage):
+        return []
+    return _normalize_tool_calls(message)
 
 
 def _response_metadata(response: LLMResult) -> dict[str, Any]:

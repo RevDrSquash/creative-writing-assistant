@@ -91,7 +91,7 @@ def _debug_call_page(run_id: str) -> None:
         if record.status == "error":
             _render_code_section("Error", record.error or "(no error captured)")
         else:
-            _render_markdown_section("Response", record.response_text or "_(no response captured)_")
+            _render_response_section(record)
             _render_mapping_section("Response Metadata", record.response_metadata, expanded=False)
 
 
@@ -127,9 +127,16 @@ def _render_code_section(title: str, value: str, *, expanded: bool = True) -> No
         ui.code(value).classes("w-full whitespace-pre-wrap")
 
 
-def _render_markdown_section(title: str, value: str, *, expanded: bool = True) -> None:
-    with _section_expansion(title, expanded=expanded):
-        ui.markdown(_escape_html(value)).classes("w-full")
+def _render_response_section(record: LLMCallRecord) -> None:
+    with _section_expansion("Response", expanded=True):
+        with ui.column().classes("w-full gap-3"):
+            ui.markdown(
+                _escape_html(record.response_text or "") or "_(no response captured)_"
+            ).classes("w-full")
+            for call in record.response_tool_calls:
+                name = str(call.get("name") or "tool")
+                with _block_expansion(f"Tool Call: {name}", expanded=True):
+                    ui.code(_tool_call_json(call), language="json").classes("w-full")
 
 
 def _render_prompt_section(record: LLMCallRecord) -> None:

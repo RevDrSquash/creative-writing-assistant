@@ -5,7 +5,13 @@ from typing import Any, ClassVar
 
 import pytest
 from langchain_core.language_models.fake_chat_models import GenericFakeChatModel
-from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
+from langchain_core.messages import (
+    AIMessage,
+    BaseMessage,
+    HumanMessage,
+    SystemMessage,
+    ToolMessage,
+)
 
 import app.graphs.chat_agent as chat_agent_module
 from app.graphs.chat_agent import build_chat_agent
@@ -159,6 +165,78 @@ def test_chat_agent_with_create_scene_tool_switches_open_scene(isolated_world) -
     assert result["current_scene_id"] == new_scene.id
     assert result["current_scene"] == ""
     assert result["messages"][-1].content == "Created the new scene."
+
+
+def test_chat_agent_surfaces_tool_failure_and_continues(isolated_world) -> None:
+    tool_call = {
+        "name": "upsert_world_fact",
+        "args": {"title": "The Cabin", "text": "A squat cabin.", "fact_id": "cabin"},
+        "id": "tool-call-1",
+        "type": "tool_call",
+    }
+    fake_model = ToolAwareFakeChatModel(
+        messages=iter(
+            [
+                AIMessage(content="", tool_calls=[tool_call]),
+                AIMessage(content="That fact id does not exist; I'll create it instead."),
+            ]
+        )
+    )
+    agent = build_chat_agent(
+        model=fake_model,
+        assembler=ContextAssembler(system_prompt="System instructions"),
+    )
+
+    result = agent.invoke({"messages": [HumanMessage(content="Record the cabin.")]})
+
+    tool_messages = [m for m in result["messages"] if isinstance(m, ToolMessage)]
+    assert len(tool_messages) == 1
+    assert tool_messages[0].status == "error"
+    assert "No world fact with id cabin" in str(tool_messages[0].content)
+    assert result["messages"][-1].content == (
+        "That fact id does not exist; I'll create it instead."
+    )
+
+
+async def test_chat_agent_surfaces_tool_failure_in_async_stream(isolated_world) -> None:
+    tool_call = {
+        "name": "read_character",
+        "args": {"character_id": "missing"},
+        "id": "tool-call-1",
+        "type": "tool_call",
+    }
+    fake_model = ToolAwareFakeChatModel(
+        messages=iter(
+            [
+                AIMessage(content="", tool_calls=[tool_call]),
+                AIMessage(content="No such character exists yet."),
+            ]
+        )
+    )
+    agent = build_chat_agent(
+        model=fake_model,
+        assembler=ContextAssembler(system_prompt="System instructions"),
+    )
+
+    updates = [
+        payload
+        async for _name, payload in agent.astream(
+            {"messages": [HumanMessage(content="Describe the princess.")]},
+            stream_mode=["updates"],
+        )
+    ]
+
+    final_messages = [
+        message
+        for payload in updates
+        for node_updates in payload.values()
+        if isinstance(node_updates, dict)
+        for message in node_updates.get("messages") or []
+    ]
+    tool_messages = [m for m in final_messages if isinstance(m, ToolMessage)]
+    assert len(tool_messages) == 1
+    assert tool_messages[0].status == "error"
+    assert final_messages[-1].content == "No such character exists yet."
 
 
 def test_chat_agent_with_replace_scene_text_tool_updates_state() -> None:

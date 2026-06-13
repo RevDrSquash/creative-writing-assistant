@@ -33,6 +33,7 @@ class LLMCallRecord(BaseModel):
     prompt: str = ""
     prompt_messages: list[dict[str, Any]] = Field(default_factory=list)
     response_text: str | None = None
+    response_tool_calls: list[dict[str, Any]] = Field(default_factory=list)
     response_metadata: dict[str, Any] = Field(default_factory=dict)
     error: str | None = None
     duration_ms: int | None = None
@@ -57,6 +58,7 @@ class LLMCallLogStore(Protocol):
         status: Literal["success", "error"],
         finished_at: str,
         response_text: str | None = None,
+        response_tool_calls: list[dict[str, Any]] | None = None,
         response_metadata: dict[str, Any] | None = None,
         error: str | None = None,
         duration_ms: int | None = None,
@@ -99,6 +101,7 @@ class JsonFileLLMCallLogStore:
         status: Literal["success", "error"],
         finished_at: str,
         response_text: str | None = None,
+        response_tool_calls: list[dict[str, Any]] | None = None,
         response_metadata: dict[str, Any] | None = None,
         error: str | None = None,
         duration_ms: int | None = None,
@@ -118,6 +121,7 @@ class JsonFileLLMCallLogStore:
                 "status": status,
                 "finished_at": finished_at,
                 "response_text": response_text,
+                "response_tool_calls": response_tool_calls or [],
                 "response_metadata": response_metadata or {},
                 "error": error,
                 "duration_ms": duration_ms,

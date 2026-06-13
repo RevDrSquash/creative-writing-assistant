@@ -33,7 +33,24 @@ fix so the context is not lost between phases.
 - **Possible fix:** Add a `chat_history` field to `World`, migrate the chat store into it,
   and include it in `world.json` on export.
 
-## 3. Unterminated-canvas rollback can miss appends after a mid-run scene switch
+## 3. UI form edits are not transactional against save failures
+
+- **Severity:** Low (rare failure path)
+- **Location:** `app/ui/components/story_bible_forms.py`, `app/ui/pages/workspace.py`
+- **Introduced:** Phase 5 (surfaced by the Phase 5 world-transaction work)
+- **Symptom:** UI inputs are bound directly to world objects, so the mutation has already
+  happened by the time the change handler calls `save_world()`. If that save fails (e.g. an
+  external process briefly locks `world.json`), the in-memory world and disk diverge until the
+  next successful save. Agent tools do not have this problem: they mutate inside
+  `world_transaction()`, which rolls the mutation back when the save fails.
+- **Why it usually doesn't bite:** The save lock in `app/world/store.py` eliminates
+  intra-process save races (the only observed failure cause); external file locks are rare and
+  the next keystroke resaves the full world anyway.
+- **Possible fix:** Route UI edits through id-based accessors instead of direct object bindings
+  so they can use `world_transaction()` too, or add a save-failure notification that prompts a
+  manual resave.
+
+## 4. Unterminated-canvas rollback can miss appends after a mid-run scene switch
 
 - **Severity:** Low (edge-case correctness)
 - **Location:** `app/ui/components/chat.py` — `_apply_canvas_flush_events`

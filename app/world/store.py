@@ -2,10 +2,19 @@
 
 from __future__ import annotations
 
+import threading
+from collections.abc import Iterator
+from contextlib import contextmanager
+
 from app.persistence.world import get_world_store
 from app.world.models import World, utc_now
 
 _WORLD: World | None = None
+
+# Serializes world writes. Agent tool calls can run concurrently in worker
+# threads, and on Windows two overlapping atomic saves of world.json collide
+# on the file lock (PermissionError WinError 32).
+_WORLD_LOCK = threading.RLock()
 
 
 def get_world() -> World:
@@ -21,9 +30,37 @@ def get_world() -> World:
 def save_world() -> None:
     """Write the in-memory world through to disk."""
 
-    world = get_world()
-    world.metadata.updated_at = utc_now()
-    get_world_store().save(world)
+    with _WORLD_LOCK:
+        world = get_world()
+        world.metadata.updated_at = utc_now()
+        get_world_store().save(world)
+
+
+@contextmanager
+def world_transaction() -> Iterator[World]:
+    """Mutate the world and persist it as a single serialized transaction.
+
+    Holds the world lock across the whole mutate+save so concurrent writers
+    cannot interleave. If the block or the save raises, the in-memory world is
+    rolled back to its pre-transaction state, keeping memory and disk
+    consistent (a failed tool call must not leave phantom mutations behind).
+
+    Rollback restores field values on the existing ``World`` instance, so
+    references to the world itself stay valid, but references to nested
+    objects (scenes, characters, ...) captured before the transaction may go
+    stale on the failure path.
+    """
+
+    with _WORLD_LOCK:
+        world = get_world()
+        snapshot = world.model_copy(deep=True)
+        try:
+            yield world
+            save_world()
+        except BaseException:
+            for name in World.model_fields:
+                setattr(world, name, getattr(snapshot, name))
+            raise
 
 
 def replace_world(world: World) -> None:
@@ -31,8 +68,9 @@ def replace_world(world: World) -> None:
 
     global _WORLD
 
-    _WORLD = world
-    get_world_store().save(world)
+    with _WORLD_LOCK:
+        _WORLD = world
+        get_world_store().save(world)
 
 
 def reset_world_cache() -> None:
@@ -40,4 +78,5 @@ def reset_world_cache() -> None:
 
     global _WORLD
 
-    _WORLD = None
+    with _WORLD_LOCK:
+        _WORLD = None

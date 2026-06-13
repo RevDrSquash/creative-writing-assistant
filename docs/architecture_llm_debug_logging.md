@@ -11,7 +11,7 @@ This keeps logging independent of individual graph nodes or agents. Current and 
 The callback captures:
 
 * `on_chat_model_start` - model invocation params, LangGraph node metadata, and serialized prompt messages.
-* `on_llm_end` - response text plus LLM response metadata such as token usage or finish details when available.
+* `on_llm_end` - response text, the tool calls requested by the model, plus LLM response metadata such as token usage or finish details when available.
 * `on_llm_error` - the exception message and terminal error state.
 
 Secret-like invocation keys such as API keys, authorization headers, tokens, and secrets are redacted before persistence.
@@ -30,6 +30,7 @@ Each record is represented by `LLMCallRecord` with:
 * `prompt` - serialized compiled prompt messages as a single text fallback.
 * `prompt_messages` - structured per-message records (`role`, `content`, normalized `tool_calls`, `name`, `tool_call_id`) used to render the prompt by section.
 * `response_text` and `response_metadata` - captured successful output details, including token usage when the provider returns it.
+* `response_tool_calls` - normalized tool calls (`name`, `args`, `id`) the model requested in its response, so attempted calls are debuggable even when the tool later fails.
 * `error` - captured failure details.
 * `duration_ms` - elapsed wall-clock duration when the start event was observed.
 
@@ -45,7 +46,7 @@ The detail route `/debug/calls/{run_id}` shows a subheader with the status, time
 
 * scrubbed invocation params (collapsed by default);
 * the compiled prompt, split into separate bordered blocks per component (system prompt, user messages, assistant messages, tool calls, and tool responses) where tool calls render as JSON and the other components render as Markdown;
-* the response, rendered as Markdown, for successful calls;
+* the response, rendered as Markdown, for successful calls, followed by one JSON block per tool call the model requested;
 * response metadata (collapsed by default) for successful calls;
 * error text for failed calls.
 

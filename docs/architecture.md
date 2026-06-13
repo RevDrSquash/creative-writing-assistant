@@ -33,6 +33,19 @@ The app is a local-first Python writing workspace built around one in-memory `Wo
   - A single in-memory `World` object is the source of truth.
   - Contains metadata, scenes, Story Bible data, and chat history.
   - User edits and AI tool calls both update this same object.
+  - All writes to `world.json` are serialized behind a process-wide lock in `app/world/store.py`.
+    Agent tool calls can run concurrently in worker threads, and on Windows two overlapping
+    atomic saves collide on the file lock.
+  - Programmatic write paths (agent tools, scene helpers) mutate and save inside
+    `world_transaction()`: the lock is held across the whole mutate+save, and the in-memory
+    mutation is rolled back if the save fails, so memory and disk never diverge. Without this, a
+    failed save left a phantom mutation in memory that the model's retry then duplicated.
+  - The transaction is per tool call. If a future workflow needs all-or-nothing semantics across
+    many edits (e.g. a subagent run), build that as a run-scoped checkpoint/commit on the store;
+    it composes with the per-call transactions and does not require copy-on-write of the
+    singleton, which would break the UI's direct object bindings.
+  - UI form edits mutate bound objects directly and then call `save_world()`; they get the save
+    lock but not rollback (see known issues).
 
 - **LangGraph Orchestration**
   - All AI behavior runs through LangGraph.
@@ -42,6 +55,7 @@ The app is a local-first Python writing workspace built around one in-memory `Wo
 - **Tool Layer**
   - Tools expose explicit actions such as reading scenes, listing world data, appending prose, replacing text, and updating Story Bible fields.
   - Write tools mutate world state before returning.
+  - Tools raise `ToolException` for expected domain errors (e.g. an unknown entity id). The agent is built with a `ToolRetryMiddleware(max_retries=0, on_failure="continue")` so a failing tool call produces an error `ToolMessage` for the model to recover from instead of aborting the run. Tools are local and deterministic, so retries are disabled.
   - Workflows or subagents can also be exposed as tools.
 
 - **Context Assembly**

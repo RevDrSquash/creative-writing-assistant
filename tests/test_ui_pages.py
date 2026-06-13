@@ -137,3 +137,29 @@ async def test_debug_page_renders_empty_state(user: User) -> None:
     await user.open("/debug")
     await user.should_see("LLM calls will appear here after the chat agent invokes a model.")
     await user.should_see("No LLM calls yet.")
+
+
+async def test_debug_call_page_renders_response_tool_calls(
+    user: User,
+    isolated_data_dir: Path,
+) -> None:
+    record = {
+        "run_id": "run-1",
+        "status": "success",
+        "started_at": "2026-06-12T00:00:00+00:00",
+        "model": "example/model",
+        "prompt": "user: Record the cabin.",
+        "response_text": "Creating the fact now.",
+        "response_tool_calls": [
+            {
+                "name": "upsert_world_fact",
+                "args": {"title": "The Cabin", "text": "A squat cabin.", "fact_id": "cabin"},
+                "id": "call-1",
+            }
+        ],
+    }
+    (isolated_data_dir / "llm_call_logs.json").write_text(json.dumps([record]), encoding="utf-8")
+
+    await user.open("/debug/calls/run-1")
+    await user.should_see("Creating the fact now.")
+    await user.should_see("Tool Call: upsert_world_fact")

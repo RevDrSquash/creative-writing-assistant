@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import threading
+import time
 from pathlib import Path
 
 import pytest
@@ -11,6 +13,7 @@ from app.persistence.world import (
     DEFAULT_SCENE_MARKDOWN,
     JsonFileWorldStore,
     default_world,
+    get_world_store,
 )
 from app.world.models import SCHEMA_VERSION, Scene, World, WorldFact
 from app.world.scene import (
@@ -20,7 +23,7 @@ from app.world.scene import (
     resolve_scene,
     set_scene_text,
 )
-from app.world.store import get_world, replace_world, save_world
+from app.world.store import get_world, replace_world, save_world, world_transaction
 
 
 def test_store_load_returns_default_world_when_missing(tmp_path: Path) -> None:
@@ -83,6 +86,83 @@ def test_replace_world_swaps_singleton_and_persists(
     assert get_world() is new_world
     raw = json.loads((isolated_data_dir / "world.json").read_text(encoding="utf-8"))
     assert raw["metadata"]["title"] == "Imported"
+
+
+def test_world_transaction_commits_mutation_to_disk(
+    isolated_world: World,
+    isolated_data_dir: Path,
+) -> None:
+    with world_transaction() as world:
+        world.story_bible.world_facts.append(WorldFact(title="The Reach", text="Coastal"))
+
+    raw = json.loads((isolated_data_dir / "world.json").read_text(encoding="utf-8"))
+    assert raw["story_bible"]["world_facts"][0]["title"] == "The Reach"
+
+
+def test_world_transaction_rolls_back_when_block_raises(isolated_world: World) -> None:
+    def mutate_then_fail() -> None:
+        with world_transaction() as world:
+            world.story_bible.world_facts.append(WorldFact(title="Phantom", text="x"))
+            raise RuntimeError("boom")
+
+    with pytest.raises(RuntimeError, match="boom"):
+        mutate_then_fail()
+
+    assert get_world().story_bible.world_facts == []
+
+
+def test_world_transaction_rolls_back_when_save_fails(
+    isolated_world: World,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def failing_save(world: World) -> None:
+        raise PermissionError("world.json is locked by another process")
+
+    monkeypatch.setattr(get_world_store(), "save", failing_save)
+
+    with pytest.raises(PermissionError):
+        with world_transaction() as world:
+            world.story_bible.world_facts.append(WorldFact(title="Phantom", text="x"))
+
+    assert get_world().story_bible.world_facts == []
+
+
+def test_concurrent_world_transactions_are_serialized(
+    isolated_world: World,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Overlapping saves caused PermissionError on Windows; the lock forbids overlap."""
+
+    store = get_world_store()
+    original_save = store.save
+    active = 0
+    overlaps: list[int] = []
+
+    def instrumented_save(world: World) -> None:
+        nonlocal active
+        active += 1
+        if active > 1:
+            overlaps.append(active)
+        time.sleep(0.005)
+        try:
+            original_save(world)
+        finally:
+            active -= 1
+
+    monkeypatch.setattr(store, "save", instrumented_save)
+
+    def add_fact(index: int) -> None:
+        with world_transaction() as world:
+            world.story_bible.world_facts.append(WorldFact(title=f"Fact {index}", text="x"))
+
+    threads = [threading.Thread(target=add_fact, args=(index,)) for index in range(5)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    assert not overlaps
+    assert len(get_world().story_bible.world_facts) == 5
 
 
 def test_scene_helpers_create_read_write(isolated_world: World) -> None:

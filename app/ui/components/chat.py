@@ -136,23 +136,37 @@ def render_chat(conversation: ChatConversation | None = None) -> None:
         except Exception as exc:
             stream_failed = True
             error_text = f"Chat agent error: {exc}"
-            assistant_markdown.set_content(error_text)
-            ui.notify(error_text, type="negative")
+            _safe_ui_update(lambda: assistant_markdown.set_content(error_text))
+            _safe_ui_update(lambda: ui.notify(error_text, type="negative"))
         finally:
-            spinner.delete()
+            _safe_ui_update(spinner.delete)
             # Only persist genuine assistant output; never store error messages
             # as assistant turns, since they would poison subsequent model context.
             if assistant_text and not stream_failed:
                 conversation.add_assistant_message(assistant_text)
-            message_input.enable()
-            send_button.enable()
+            _safe_ui_update(message_input.enable)
+            _safe_ui_update(send_button.enable)
             is_streaming = False
 
         if run_scene["id"] != start_scene.id:
             set_current_scene_id(run_scene["id"])
-            ui.navigate.to(f"/workspace/scenes/{run_scene['id']}")
+            _safe_ui_update(lambda: ui.navigate.to(f"/workspace/scenes/{run_scene['id']}"))
 
     send_button.on_click(send_message)
+
+
+def _safe_ui_update(action: Callable[[], None]) -> None:
+    """Apply a UI update that may race page teardown.
+
+    The chat stream outlives its page when the user navigates away mid-run;
+    NiceGUI raises RuntimeError when touching elements whose parent slot was
+    deleted, which must not abort message persistence or stream cleanup.
+    """
+
+    try:
+        action()
+    except RuntimeError:
+        pass
 
 
 def _chat_configuration_error(
