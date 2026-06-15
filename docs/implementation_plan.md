@@ -54,18 +54,18 @@
 
 ---
 
-## Phase 6: User Context Notes
+## Phase 6: Advanced Workflows & Sub-Agents
+
+* Sub-Agent: Create a scene writer sub-agent.
+* Sub-Agent Tools: Expose the scene writer sub-agent to the main agent as a tool.
+
+---
+
+## Phase 7: User Context Notes
 
 * Current Page Context: Add a note to each user message describing the user's currently open page or focused content.
 * Initial Story Bible Summary: Include an initial Story Bible summary in the user message note so the agent starts with basic world context.
 * Context Tests: Add tests for user message note generation.
-
----
-
-## Phase 7: Advanced Workflows & Sub-Agents
-
-* Sub-Agent: Create a scene writer sub-agent.
-* Sub-Agent Tools: Expose the scene writer sub-agent to the main agent as a tool.
 
 ---
 
