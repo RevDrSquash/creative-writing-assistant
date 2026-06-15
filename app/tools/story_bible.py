@@ -10,13 +10,16 @@ if the save fails, so memory and disk never diverge.
 from __future__ import annotations
 
 import json
+from typing import Annotated, Any
 
 from langchain_core.tools import ToolException, tool
+from langgraph.prebuilt import InjectedState
 
 from app.world.models import (
     Character,
     Event,
     Intimacy,
+    SceneCharacterStance,
     Signal,
     StoryBible,
     WorldFact,
@@ -232,8 +235,8 @@ def delete_world_state_entry(entry_id: str) -> str:
 
 @tool
 def read_character(character_id: str) -> str:
-    """Return a character's identity, baseline state, stance, and derived
-    current state (after replaying the full timeline)."""
+    """Return a character's identity, baseline state, and derived current state
+    (after replaying the full timeline)."""
 
     bible = get_world().story_bible
     character = bible.get_character(character_id)
@@ -242,7 +245,6 @@ def read_character(character_id: str) -> str:
 
     identity = character.identity
     baseline = character.baseline_state
-    stance = character.stance
     lines = [
         f"# {identity.name or 'Unnamed'} [id: {character.id}]",
         "",
@@ -255,12 +257,6 @@ def read_character(character_id: str) -> str:
         "## Baseline State (start of timeline)",
         "Intimacies:",
         *_intimacy_lines(baseline.intimacies),
-        "",
-        "## Stance (scene-level, ephemeral)",
-        f"Mood: {stance.mood or '-'}",
-        f"Intent: {stance.intent or '-'}",
-        f"Tactics: {stance.tactics or '-'}",
-        f"Stakes: {stance.stakes or '-'}",
         "",
         "## Current State (after full timeline)",
     ]
@@ -329,26 +325,49 @@ def upsert_character(
 @tool
 def update_character_stance(
     character_id: str,
-    mood: str | None = None,
+    state: Annotated[dict[str, Any], InjectedState],
+    mood: list[str] | None = None,
     intent: str | None = None,
     tactics: str | None = None,
     stakes: str | None = None,
+    scene_id: str = "",
 ) -> str:
-    """Update a character's scene-level stance (mood, intent, tactics, stakes).
+    """Update a character's scene-level stance in the open scene's blueprint.
 
     Stance is ephemeral posture for the current scene; only provided fields change.
+    Without `scene_id`, updates the scene currently open in the workspace.
     """
+
+    target_id = scene_id or state.get("current_scene_id", "")
+    if not target_id:
+        raise ToolException("No scene specified and none is open; call list_scenes.")
 
     with world_transaction() as world:
         character = world.story_bible.get_character(character_id)
         if character is None:
             raise ToolException(f"No character with id {character_id}.")
 
+        scene = world.get_scene(target_id)
+        if scene is None:
+            raise ToolException(f"No scene with id {target_id}; call list_scenes for valid ids.")
+
+        stance = next(
+            (item for item in scene.blueprint.stances if item.character_id == character_id),
+            None,
+        )
+        if stance is None:
+            stance = SceneCharacterStance(character_id=character_id)
+            scene.blueprint.stances.append(stance)
+
         updates = {"mood": mood, "intent": intent, "tactics": tactics, "stakes": stakes}
         for field, value in updates.items():
             if value is not None:
-                setattr(character.stance, field, value)
-    return f"Updated stance for '{character.identity.name or 'Unnamed'}' (id: {character.id})."
+                setattr(stance, field, value)
+
+    return (
+        f"Updated stance for '{character.identity.name or 'Unnamed'}' "
+        f"(id: {character.id}) in scene '{scene.title}' (id: {scene.id})."
+    )
 
 
 @tool

@@ -68,17 +68,32 @@ class JsonFileWorldStore:
         os.replace(tmp_path, self.path)
 
 
-def validate_world_payload(data: dict, *, source: str) -> World:
-    """Validate a world JSON payload, enforcing the schema version."""
+def migrate_world_payload(data: dict) -> dict:
+    """Upgrade a stored world payload to the current schema version."""
 
     schema_version = data.get("schema_version")
-    if schema_version != SCHEMA_VERSION:
-        msg = (
-            f"Unsupported world schema_version {schema_version!r} in {source}; "
-            f"this app supports version {SCHEMA_VERSION}. Migration is not implemented."
-        )
-        raise ValueError(msg)
-    return World.model_validate(data)
+    if schema_version == SCHEMA_VERSION:
+        return data
+    if schema_version == 3:
+        migrated = dict(data)
+        migrated["schema_version"] = 4
+        return migrated
+    msg = (
+        f"Unsupported world schema_version {schema_version!r}; "
+        f"this app supports version {SCHEMA_VERSION}."
+    )
+    raise ValueError(msg)
+
+
+def validate_world_payload(data: dict, *, source: str) -> World:
+    """Validate a world JSON payload, migrating and enforcing the schema version."""
+
+    try:
+        migrated = migrate_world_payload(data)
+    except ValueError as exc:
+        msg = f"{exc} in {source}."
+        raise ValueError(msg) from exc
+    return World.model_validate(migrated)
 
 
 def get_world_store() -> JsonFileWorldStore:

@@ -15,7 +15,7 @@ from uuid import uuid4
 
 from pydantic import BaseModel, Field
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 IntimacyStrength = Literal["minor", "major", "defining"]
 WorldStateKind = Literal["pressure", "thread", "consequence"]
@@ -167,22 +167,12 @@ class CharacterBaselineState(BaseModel):
     intimacies: list[Intimacy] = Field(default_factory=list)
 
 
-class CharacterStance(BaseModel):
-    """Ephemeral scene-level posture; freely editable and excluded from replay."""
-
-    mood: str = ""
-    intent: str = ""
-    tactics: str = ""
-    stakes: str = ""
-
-
 class Character(BaseModel):
     """A named person or entity in the story world."""
 
     id: str = Field(default_factory=new_id)
     identity: CharacterIdentity = Field(default_factory=CharacterIdentity)
     baseline_state: CharacterBaselineState = Field(default_factory=CharacterBaselineState)
-    stance: CharacterStance = Field(default_factory=CharacterStance)
 
 
 class Signal(BaseModel):
@@ -235,6 +225,25 @@ class StoryBible(BaseModel):
         return None
 
 
+class SceneCharacterStance(BaseModel):
+    """Ephemeral per-character posture for a scene; excluded from Story Bible replay."""
+
+    character_id: str = ""
+    mood: list[str] = Field(default_factory=list)
+    intent: str = ""
+    tactics: str = ""
+    stakes: str = ""
+
+
+class SceneBlueprint(BaseModel):
+    """Planning scaffold for a scene: premise, purpose, outline, and character stances."""
+
+    premise: str = ""
+    purpose: str = ""
+    stances: list[SceneCharacterStance] = Field(default_factory=list)
+    outline: list[str] = Field(default_factory=list)
+
+
 class Scene(BaseModel):
     """A prose scene; ``markdown`` holds the full scene text."""
 
@@ -243,6 +252,7 @@ class Scene(BaseModel):
     summary: str = ""
     markdown: str = ""
     notes: str = ""
+    blueprint: SceneBlueprint = Field(default_factory=SceneBlueprint)
 
 
 class WorldMetadata(BaseModel):

@@ -13,6 +13,7 @@ from app.ui.components.markdown_editor import (
 from app.ui.components.story_bible_forms import (
     render_characters_form,
     render_narrative_style_form,
+    render_scene_blueprint_form,
     render_timeline_form,
     render_world_form,
 )
@@ -240,6 +241,8 @@ def _render_scene_editor(scene: Scene) -> None:
         "edit_mode",
         backward=lambda edit_mode: not edit_mode,
     )
+
+    render_scene_blueprint_form(scene, edit_state)
 
     render_markdown_editor(
         scene,

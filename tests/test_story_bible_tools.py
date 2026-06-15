@@ -5,6 +5,7 @@ from __future__ import annotations
 import pytest
 from langchain_core.tools import ToolException
 
+from app.tools.scene import read_scene_blueprint
 from app.tools.story_bible import (
     add_event,
     delete_character,
@@ -28,6 +29,7 @@ from app.world.models import (
     AddIntimacy,
     AddWorldStateEntry,
     Intimacy,
+    SceneCharacterStance,
     Signal,
     World,
     WorldStateEntry,
@@ -228,17 +230,46 @@ def test_read_character_includes_identity_baseline_and_derived_state(
     assert "Find the archive" in detail
     assert "Current State (after full timeline)" in detail
     assert "Shaken" in detail
+    assert "## Stance" not in detail
 
 
 def test_update_character_stance_changes_only_provided_fields(isolated_world: World) -> None:
     upsert_character.func(name="Mira")
     character = isolated_world.story_bible.characters[0]
-    character.stance.mood = "Calm"
+    scene = isolated_world.scenes[0]
+    scene.blueprint.stances.append(SceneCharacterStance(character_id=character.id, mood=["Calm"]))
+    state = {"current_scene_id": scene.id}
 
-    update_character_stance.func(character.id, intent="Win the argument")
+    update_character_stance.func(character.id, state, intent="Win the argument")
 
-    assert character.stance.mood == "Calm"
-    assert character.stance.intent == "Win the argument"
+    stance = scene.blueprint.stances[0]
+    assert stance.mood == ["Calm"]
+    assert stance.intent == "Win the argument"
+
+
+def test_read_scene_blueprint_includes_premise_outline_and_stances(
+    isolated_world: World,
+) -> None:
+    upsert_character.func(name="Mira")
+    character = isolated_world.story_bible.characters[0]
+    scene = isolated_world.scenes[0]
+    scene.blueprint.premise = "A tense negotiation"
+    scene.blueprint.outline = ["Mira arrives", "Terms are refused"]
+    scene.blueprint.stances.append(
+        SceneCharacterStance(
+            character_id=character.id,
+            mood=["Wary"],
+            intent="Secure passage",
+        )
+    )
+    state = {"current_scene_id": scene.id}
+
+    detail = read_scene_blueprint.func(state)
+
+    assert "A tense negotiation" in detail
+    assert "Mira arrives" in detail
+    assert "Wary" in detail
+    assert "Secure passage" in detail
 
 
 def test_delete_character_keeps_events(isolated_world: World) -> None:

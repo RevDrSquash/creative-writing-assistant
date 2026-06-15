@@ -61,6 +61,34 @@ def test_store_load_rejects_unsupported_schema_version(tmp_path: Path) -> None:
         JsonFileWorldStore(path).load()
 
 
+def test_store_load_migrates_v3_to_v4_discarding_character_stance(tmp_path: Path) -> None:
+    path = tmp_path / "world.json"
+    payload = default_world().model_dump(mode="json")
+    payload["schema_version"] = 3
+    payload["story_bible"]["characters"] = [
+        {
+            "id": "char_mira",
+            "identity": {"name": "Mira"},
+            "baseline_state": {"intimacies": []},
+            "stance": {
+                "mood": "Calm",
+                "intent": "Find the archive",
+                "tactics": "Ask questions",
+                "stakes": "Trust",
+            },
+        }
+    ]
+    path.write_text(json.dumps(payload), encoding="utf-8")
+
+    world = JsonFileWorldStore(path).load()
+
+    assert world.schema_version == SCHEMA_VERSION
+    character = world.story_bible.characters[0]
+    assert character.identity.name == "Mira"
+    assert "stance" not in character.model_dump()
+    assert world.scenes[0].blueprint.premise == ""
+
+
 def test_get_world_singleton_loads_once_and_save_world_persists(
     isolated_world: World,
     isolated_data_dir: Path,

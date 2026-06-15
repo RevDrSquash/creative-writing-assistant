@@ -19,6 +19,8 @@ from app.world.models import (
     Intimacy,
     RemoveIntimacy,
     RemoveWorldStateEntry,
+    Scene,
+    SceneCharacterStance,
     SetIntimacyStrength,
     Signal,
     StoryBible,
@@ -370,20 +372,6 @@ def _render_character_detail(character: Character) -> None:
             intimacies_section.refresh()
 
         ui.button("Add intimacy", icon="add", on_click=add_intimacy).props("flat")
-
-    with ui.card().classes("w-full"):
-        ui.label("Stance").classes("text-lg font-semibold")
-        ui.label("Temporary scene-level posture; not affected by the timeline.").classes(
-            "text-grey-7 text-sm"
-        )
-        _field_label("Mood")
-        _bound_input(character.stance, "mood", placeholder="Emotional state...")
-        _field_label("Intent")
-        _bound_input(character.stance, "intent", placeholder="What they want in this scene...")
-        _field_label("Tactics")
-        _bound_input(character.stance, "tactics", placeholder="How they pursue it...")
-        _field_label("Stakes")
-        _bound_input(character.stance, "stakes", placeholder="What is at risk for them...")
 
     _render_derived_character_state(character)
 
@@ -792,3 +780,169 @@ def _with_current(options: dict[str, str], current: str) -> dict[str, str]:
     if current and current not in options:
         return {**options, current: f"{current} (missing)"}
     return dict(options)
+
+
+# --- scene blueprint ---------------------------------------------------------
+
+
+def render_scene_blueprint_form(scene: Scene, edit_state: dict) -> None:
+    """Render the scene blueprint editor, visible only in edit mode."""
+
+    blueprint = scene.blueprint
+    bible = get_world().story_bible
+
+    with ui.column().classes("w-full gap-4 shrink-0") as blueprint_block:
+        blueprint_block.bind_visibility_from(edit_state, "edit_mode")
+
+        with ui.card().classes("w-full"):
+            ui.label("Blueprint").classes("text-lg font-semibold")
+            ui.label(
+                "Planning scaffold for this scene: premise, purpose, outline, and character stances."
+            ).classes("text-grey-7 text-sm")
+            _field_label("Premise")
+            _bound_textarea(blueprint, "premise", placeholder="What happens in this scene?")
+            _field_label("Purpose")
+            _bound_textarea(
+                blueprint,
+                "purpose",
+                placeholder="Why this scene exists in the story...",
+            )
+
+        with ui.card().classes("w-full"):
+            ui.label("Outline").classes("text-lg font-semibold")
+            ui.label("Concise beats that structure the scene.").classes("text-grey-7 text-sm")
+
+            @ui.refreshable
+            def outline_section() -> None:
+                if not blueprint.outline:
+                    ui.label("No outline beats yet.").classes("text-grey-7")
+                for index, beat in enumerate(blueprint.outline):
+
+                    def delete_beat(index: int = index) -> None:
+                        blueprint.outline.pop(index)
+                        save_world()
+                        outline_section.refresh()
+
+                    with ui.row().classes("w-full items-center no-wrap gap-2"):
+                        text = ui.input(
+                            placeholder="Outline beat...",
+                            value=beat,
+                        ).classes("grow")
+                        text.props("dense outlined")
+
+                        def apply_beat(event, index: int = index) -> None:
+                            blueprint.outline[index] = event.value or ""
+                            save_world()
+
+                        text.on_value_change(apply_beat)
+                        _delete_button(delete_beat, "Remove beat")
+
+            outline_section()
+
+            def add_beat() -> None:
+                blueprint.outline.append("")
+                save_world()
+                outline_section.refresh()
+
+            ui.button("Add beat", icon="add", on_click=add_beat).props("flat")
+
+        with ui.card().classes("w-full"):
+            ui.label("Character Stances").classes("text-lg font-semibold")
+            ui.label("Ephemeral posture for characters in this scene.").classes(
+                "text-grey-7 text-sm"
+            )
+
+            @ui.refreshable
+            def stances_section() -> None:
+                if not blueprint.stances:
+                    ui.label("No character stances yet.").classes("text-grey-7")
+                for stance in blueprint.stances:
+                    _render_scene_stance_card(
+                        stance,
+                        blueprint.stances,
+                        bible,
+                        stances_section.refresh,
+                    )
+
+            stances_section()
+
+            def add_stance() -> None:
+                characters = bible.characters
+                character_id = characters[0].id if characters else ""
+                blueprint.stances.append(SceneCharacterStance(character_id=character_id))
+                save_world()
+                stances_section.refresh()
+
+            ui.button("Add stance", icon="add", on_click=add_stance).props("flat")
+
+
+def _render_scene_stance_card(
+    stance: SceneCharacterStance,
+    stances: list[SceneCharacterStance],
+    bible: StoryBible,
+    refresh: Callable[[], None],
+) -> None:
+    character_options = {
+        character.id: character.identity.name or "Unnamed character"
+        for character in bible.characters
+    }
+
+    with ui.card().classes("w-full bg-grey-1"):
+        with ui.row().classes("w-full items-center no-wrap gap-2"):
+            character_select = ui.select(
+                _with_current(character_options, stance.character_id),
+                label="Character",
+            ).classes("grow")
+            character_select.props("dense outlined")
+            character_select.bind_value(stance, "character_id")
+            _save_on_change(character_select)
+
+            def delete_stance(stance: SceneCharacterStance = stance) -> None:
+                stances[:] = [item for item in stances if item is not stance]
+                save_world()
+                refresh()
+
+            _delete_button(delete_stance, "Remove stance")
+
+        _field_label("Mood")
+
+        @ui.refreshable
+        def mood_section() -> None:
+            if not stance.mood:
+                ui.label("No mood statements yet.").classes("text-grey-7")
+            for index, _statement in enumerate(stance.mood):
+
+                def delete_statement(index: int = index) -> None:
+                    stance.mood.pop(index)
+                    save_world()
+                    mood_section.refresh()
+
+                with ui.row().classes("w-full items-center no-wrap gap-2"):
+                    text = ui.input(
+                        placeholder="Mood statement...",
+                        value=stance.mood[index],
+                    ).classes("grow")
+                    text.props("dense outlined")
+
+                    def apply_statement(event, index: int = index) -> None:
+                        stance.mood[index] = event.value or ""
+                        save_world()
+
+                    text.on_value_change(apply_statement)
+                    _delete_button(delete_statement, "Remove statement")
+
+        mood_section()
+
+        def add_statement() -> None:
+            stance.mood.append("")
+            save_world()
+            mood_section.refresh()
+
+        ui.button("Add mood statement", icon="add", on_click=add_statement).props("flat")
+
+        _field_label("Intent")
+        _bound_input(stance, "intent", placeholder="What they want in this scene...")
+        _field_label("Tactics")
+        _bound_input(stance, "tactics", placeholder="How they pursue it...")
+        _field_label("Stakes")
+        _bound_input(stance, "stakes", placeholder="What is at risk for them...")

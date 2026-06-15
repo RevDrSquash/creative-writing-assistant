@@ -15,6 +15,9 @@ from app.world.models import (
     Intimacy,
     RemoveIntimacy,
     RemoveWorldStateEntry,
+    Scene,
+    SceneBlueprint,
+    SceneCharacterStance,
     SetIntimacyStrength,
     Signal,
     StoryBible,
@@ -45,8 +48,32 @@ def _bible_with_character() -> tuple[StoryBible, Character, Intimacy]:
     return bible, character, intimacy
 
 
-def test_schema_version_is_three() -> None:
-    assert SCHEMA_VERSION == 3
+def test_schema_version_is_four() -> None:
+    assert SCHEMA_VERSION == 4
+
+
+def test_scene_blueprint_defaults() -> None:
+    blueprint = SceneBlueprint()
+    assert blueprint.premise == ""
+    assert blueprint.purpose == ""
+    assert blueprint.stances == []
+    assert blueprint.outline == []
+
+
+def test_scene_character_stance_mood_is_list() -> None:
+    stance = SceneCharacterStance(character_id="char-1", mood=["Wary", "Exhausted"])
+    assert stance.mood == ["Wary", "Exhausted"]
+    assert stance.intent == ""
+
+
+def test_scene_has_blueprint_default_factory() -> None:
+    scene = Scene()
+    assert isinstance(scene.blueprint, SceneBlueprint)
+    assert scene.blueprint.stances == []
+
+
+def test_character_has_no_stance_field() -> None:
+    assert "stance" not in Character.model_fields
 
 
 def test_slugify_normalizes_text() -> None:

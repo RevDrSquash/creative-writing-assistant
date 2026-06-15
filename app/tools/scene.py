@@ -326,8 +326,70 @@ def _group_overlapping_candidates(
     return groups
 
 
+@tool
+def read_scene_blueprint(
+    state: Annotated[dict[str, Any], InjectedState],
+    scene_id: str = "",
+) -> str:
+    """Return a scene's blueprint: premise, purpose, outline beats, and per-character stances.
+
+    Without `scene_id`, reads the scene currently open in the workspace.
+    """
+
+    target_id = scene_id or state.get("current_scene_id", "")
+    if not target_id:
+        raise ToolException("No scene specified and none is open; call list_scenes.")
+
+    world = get_world()
+    scene = world.get_scene(target_id)
+    if scene is None:
+        raise ToolException(f"No scene with id {target_id}; call list_scenes for valid ids.")
+
+    blueprint = scene.blueprint
+    bible = world.story_bible
+    lines = [
+        f"# Blueprint: {scene.title or 'Untitled'} [scene id: {scene.id}]",
+        "",
+        "## Premise",
+        blueprint.premise.strip() or "(not set)",
+        "",
+        "## Purpose",
+        blueprint.purpose.strip() or "(not set)",
+        "",
+        "## Outline",
+    ]
+    if not blueprint.outline:
+        lines.append("(none)")
+    else:
+        for position, beat in enumerate(blueprint.outline, start=1):
+            text = beat.strip() or "(empty)"
+            lines.append(f"{position}. {text}")
+
+    lines.append("")
+    lines.append("## Character Stances")
+    if not blueprint.stances:
+        lines.append("(none)")
+    for stance in blueprint.stances:
+        character = bible.get_character(stance.character_id)
+        name = character.identity.name if character else f"unknown ({stance.character_id})"
+        lines.append(f"### {name} [character id: {stance.character_id}]")
+        if stance.mood:
+            lines.append("Mood:")
+            for statement in stance.mood:
+                lines.append(f"- {statement}")
+        else:
+            lines.append("Mood: (none)")
+        lines.append(f"Intent: {stance.intent or '-'}")
+        lines.append(f"Tactics: {stance.tactics or '-'}")
+        lines.append(f"Stakes: {stance.stakes or '-'}")
+        lines.append("")
+
+    return "\n".join(lines).rstrip()
+
+
 SCENE_TOOLS = [
     read_scene,
+    read_scene_blueprint,
     replace_scene_text,
     list_scenes,
     create_scene,

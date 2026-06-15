@@ -31,12 +31,20 @@ async def test_scene_title_is_editable_in_edit_state(user: User) -> None:
     await user.open("/workspace")
     user.find(marker="scene-editor-toggle-button").click()
     await user.should_see("Preview Markdown")
+    await user.should_see("Blueprint")
+    await user.should_see("Character Stances")
     title = next(iter(user.find(marker="scene-title-input").elements))
     assert title.visible is True
     title.set_value("Renamed Scene")
     assert title.value == "Renamed Scene"
     # Chat must be enabled because the test environment provides a valid-looking key.
     await user.should_not_see("Chat is disabled because model settings are invalid.")
+
+
+async def test_scene_blueprint_hidden_in_preview_mode(user: User) -> None:
+    await user.open("/workspace")
+    await user.should_not_see("Blueprint")
+    await user.should_not_see("Character Stances")
 
 
 async def test_workspace_sidebar_navigates_to_characters(user: User) -> None:
@@ -68,8 +76,8 @@ async def test_add_character_creates_and_opens_detail_form(
     user.find("Add character").click()
     await user.should_see("Identity")
     await user.should_see("Baseline State")
-    await user.should_see("Stance")
     await user.should_see("Derived State")
+    await user.should_not_see("Stance")
 
     world_path = isolated_data_dir / "world.json"
     assert world_path.is_file()
