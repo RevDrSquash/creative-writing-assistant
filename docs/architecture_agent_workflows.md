@@ -38,8 +38,8 @@ outline) and prose. Exposed to the main agent as the `draft_scene` tool.
 ### Inputs
 
 The main agent passes a brief: premise, purpose, POV, participating characters, and any
-constraints. The workflow targets an existing scene or creates a new one. The brief expresses
-intent; the workflow owns craft.
+constraints. `draft_scene` always creates a new scene; revising an existing scene via a
+workflow (`revise_scene`) is deferred. The brief expresses intent; the workflow owns craft.
 
 ### Nodes (enforced order)
 

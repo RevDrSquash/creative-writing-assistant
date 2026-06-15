@@ -8,6 +8,18 @@ from app.models.debug_logging import get_llm_debug_handler
 from app.models.settings import OPENROUTER_BASE_URL, ModelSettings
 
 
+def get_chat_model_for_node(
+    node_id: str,
+    settings: ModelSettings | None = None,
+) -> BaseChatModel:
+    """Create an OpenRouter chat model for a registered graph node."""
+
+    from app.persistence.model_configs import get_model_config_repository
+
+    config = get_model_config_repository().resolve_model_config(node_id)
+    return get_chat_model_for_config(config, settings)
+
+
 def get_chat_model(settings: ModelSettings | None = None) -> BaseChatModel:
     """Create the resolved chat-node OpenRouter model."""
 

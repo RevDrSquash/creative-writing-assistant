@@ -15,6 +15,13 @@ SMALL_CONFIG_ID = "small"
 STANDARD_CONFIG_ID = "standard"
 LARGE_CONFIG_ID = "large"
 CHAT_NODE_ID = "chat"
+SCENE_FORMALIZE_NODE_ID = "scene_formalize"
+SCENE_STANCES_NODE_ID = "scene_stances"
+SCENE_OUTLINE_NODE_ID = "scene_outline"
+SCENE_OUTLINE_REVIEW_NODE_ID = "scene_outline_review"
+SCENE_OUTLINE_REVISE_NODE_ID = "scene_outline_revise"
+SCENE_DRAFT_NODE_ID = "scene_draft"
+SCENE_TITLE_SUMMARY_NODE_ID = "scene_title_summary"
 
 
 class ModelConfig(BaseModel):
@@ -60,6 +67,27 @@ DEFAULT_MODEL_CONFIG_MAP = {config.id: config for config in DEFAULT_MODEL_CONFIG
 
 GRAPH_NODES: tuple[GraphNode, ...] = (
     GraphNode(CHAT_NODE_ID, "Chat Agent", default_config_id=STANDARD_CONFIG_ID),
+    GraphNode(
+        SCENE_FORMALIZE_NODE_ID, "Scene: Formalize Details", default_config_id=STANDARD_CONFIG_ID
+    ),
+    GraphNode(SCENE_STANCES_NODE_ID, "Scene: Author Stances", default_config_id=STANDARD_CONFIG_ID),
+    GraphNode(SCENE_OUTLINE_NODE_ID, "Scene: Outline", default_config_id=STANDARD_CONFIG_ID),
+    GraphNode(
+        SCENE_OUTLINE_REVIEW_NODE_ID,
+        "Scene: Review Outline",
+        default_config_id=SMALL_CONFIG_ID,
+    ),
+    GraphNode(
+        SCENE_OUTLINE_REVISE_NODE_ID,
+        "Scene: Revise Outline",
+        default_config_id=STANDARD_CONFIG_ID,
+    ),
+    GraphNode(SCENE_DRAFT_NODE_ID, "Scene: Draft Prose", default_config_id=LARGE_CONFIG_ID),
+    GraphNode(
+        SCENE_TITLE_SUMMARY_NODE_ID,
+        "Scene: Title & Summary",
+        default_config_id=SMALL_CONFIG_ID,
+    ),
 )
 GRAPH_NODE_MAP = {node.node_id: node for node in GRAPH_NODES}
 

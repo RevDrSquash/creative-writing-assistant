@@ -2,6 +2,7 @@
 
 from app.models.config import CHAT_NODE_ID, STANDARD_CONFIG_ID, ModelConfig
 from app.persistence import JsonFileModelConfigStore, ModelConfigRepository
+from app.persistence.model_configs import _default_selections
 
 
 def test_load_missing_model_config_file_returns_defaults(tmp_path) -> None:
@@ -10,7 +11,7 @@ def test_load_missing_model_config_file_returns_defaults(tmp_path) -> None:
     state = store.load()
 
     assert {config.id for config in state.configs} == {"small", "standard", "large"}
-    assert state.selections == {CHAT_NODE_ID: STANDARD_CONFIG_ID}
+    assert state.selections == _default_selections()
 
 
 def test_model_config_store_round_trips_configs_and_selections(tmp_path) -> None:

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from app.persistence.world import DEFAULT_SCENE_MARKDOWN, DEFAULT_SCENE_TITLE
-from app.world.models import Scene, unique_slug
+from app.world.models import Scene, SceneCharacterStance, unique_slug
 from app.world.store import get_world, world_transaction
 
 __all__ = [
@@ -15,6 +15,7 @@ __all__ = [
     "resolve_scene",
     "set_scene_metadata",
     "set_scene_text",
+    "update_scene_blueprint",
 ]
 
 
@@ -47,6 +48,28 @@ def set_scene_text(scene_id: str | None, text: str) -> None:
 
     with world_transaction():
         resolve_scene(scene_id).markdown = text
+
+
+def update_scene_blueprint(
+    scene_id: str,
+    *,
+    premise: str | None = None,
+    purpose: str | None = None,
+    stances: list[SceneCharacterStance] | None = None,
+    outline: list[str] | None = None,
+) -> None:
+    """Partially update a scene blueprint and write the world through to disk."""
+
+    with world_transaction():
+        blueprint = resolve_scene(scene_id).blueprint
+        if premise is not None:
+            blueprint.premise = premise
+        if purpose is not None:
+            blueprint.purpose = purpose
+        if stances is not None:
+            blueprint.stances = stances
+        if outline is not None:
+            blueprint.outline = outline
 
 
 def set_scene_metadata(

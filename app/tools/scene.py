@@ -387,6 +387,56 @@ def read_scene_blueprint(
     return "\n".join(lines).rstrip()
 
 
+@tool
+def draft_scene(
+    premise: str,
+    purpose: str,
+    pov: str,
+    character_ids: list[str],
+    state: Annotated[dict[str, Any], InjectedState],
+    tool_call_id: Annotated[str, InjectedToolCallId],
+    constraints: str = "",
+) -> Command:
+    """Run the full scene-writing workflow and open the resulting new scene.
+
+    Always creates a new scene, formalizes the brief into blueprint fields,
+    outlines, drafts prose, and sets title and summary.
+    """
+
+    _persist_open_scene_text(state)
+    scene = world_create_scene()
+    from app.graphs.registry import get_workflow
+
+    workflow = get_workflow("draft_scene")
+    workflow.invoke(
+        {
+            "premise": premise,
+            "purpose": purpose,
+            "pov": pov,
+            "character_ids": character_ids,
+            "constraints": constraints,
+            "scene_id": scene.id,
+            "revision_count": 0,
+            "max_revisions": 1,
+        }
+    )
+    drafted_scene = get_world().get_scene(scene.id)
+    prose = drafted_scene.markdown if drafted_scene is not None else scene.markdown
+    title = drafted_scene.title if drafted_scene is not None else scene.title
+    return Command(
+        update={
+            "current_scene_id": scene.id,
+            "current_scene": prose,
+            "messages": [
+                ToolMessage(
+                    content=(f"Drafted scene '{title}' (id: {scene.id}) and opened it."),
+                    tool_call_id=tool_call_id,
+                )
+            ],
+        }
+    )
+
+
 SCENE_TOOLS = [
     read_scene,
     read_scene_blueprint,
@@ -396,4 +446,5 @@ SCENE_TOOLS = [
     select_scene,
     update_scene,
     delete_scene,
+    draft_scene,
 ]

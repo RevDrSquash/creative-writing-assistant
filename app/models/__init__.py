@@ -5,7 +5,7 @@ from app.models.catalog import (
     clear_openrouter_models_cache,
     fetch_openrouter_models,
 )
-from app.models.client import get_chat_model, get_chat_model_for_config
+from app.models.client import get_chat_model, get_chat_model_for_config, get_chat_model_for_node
 from app.models.config import (
     CHAT_NODE_ID,
     DEFAULT_MODEL_CONFIGS,
@@ -32,4 +32,5 @@ __all__ = [
     "fetch_openrouter_models",
     "get_chat_model",
     "get_chat_model_for_config",
+    "get_chat_model_for_node",
 ]

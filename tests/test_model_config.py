@@ -4,6 +4,14 @@ from app.models.config import (
     CHAT_NODE_ID,
     DEFAULT_MODEL_CONFIGS,
     GRAPH_NODES,
+    SCENE_DRAFT_NODE_ID,
+    SCENE_FORMALIZE_NODE_ID,
+    SCENE_OUTLINE_NODE_ID,
+    SCENE_OUTLINE_REVIEW_NODE_ID,
+    SCENE_OUTLINE_REVISE_NODE_ID,
+    SCENE_STANCES_NODE_ID,
+    SCENE_TITLE_SUMMARY_NODE_ID,
+    SMALL_CONFIG_ID,
     STANDARD_CONFIG_ID,
     resolve_default_model_config,
 )
@@ -22,6 +30,23 @@ def test_graph_nodes_register_chat_node_default() -> None:
 
     assert chat_node.label == "Chat Agent"
     assert chat_node.default_config_id == STANDARD_CONFIG_ID
+
+
+def test_graph_nodes_register_scene_workflow_nodes() -> None:
+    scene_nodes = {
+        SCENE_FORMALIZE_NODE_ID,
+        SCENE_STANCES_NODE_ID,
+        SCENE_OUTLINE_NODE_ID,
+        SCENE_OUTLINE_REVIEW_NODE_ID,
+        SCENE_OUTLINE_REVISE_NODE_ID,
+        SCENE_DRAFT_NODE_ID,
+        SCENE_TITLE_SUMMARY_NODE_ID,
+    }
+    node_map = {node.node_id: node for node in GRAPH_NODES}
+    assert scene_nodes <= set(node_map)
+    assert node_map[SCENE_FORMALIZE_NODE_ID].default_config_id == STANDARD_CONFIG_ID
+    assert node_map[SCENE_OUTLINE_REVIEW_NODE_ID].default_config_id == SMALL_CONFIG_ID
+    assert node_map[SCENE_DRAFT_NODE_ID].default_config_id == "large"
 
 
 def test_resolve_default_model_config_uses_standard_for_unknown_nodes() -> None:

@@ -95,8 +95,8 @@ Foundational data-model changes that the scene writer (6b) builds on.
   bible and scene tools so they can pull extra Story Bible detail on demand while staying inside
   the enforced flow.
 * Inputs From Main Agent: The main agent passes a brief (premise, purpose, POV, participating
-  characters, constraints); the first node formalizes it into the stored essential details. The
-  workflow targets an existing scene or creates a new one.
+  characters, constraints); the first node formalizes it into the stored essential details.
+  `draft_scene` always creates a new scene; a `revise_scene` workflow is deferred.
 * Bounded Review Loop: Cap the outline review/revise loop at a configurable maximum (default 1)
   rather than looping until satisfied.
 * Write-Through Persistence: Persist each generated piece to the `Scene` as its step completes
