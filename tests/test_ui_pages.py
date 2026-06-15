@@ -136,6 +136,8 @@ async def test_new_model_page_renders_with_catalog(
     await user.open("/models/new")
     await user.should_see("Create a custom reusable model configuration.")
     await user.should_see("Config ID")
+    await user.should_see("Provider")
+    await user.should_see("Model")
 
 
 async def test_standard_model_config_page_renders(
@@ -145,6 +147,35 @@ async def test_standard_model_config_page_renders(
     await user.open("/models/configs/standard")
     await user.should_see("Standard model configuration")
     await user.should_see("System prompt prefix")
+    await user.should_see("Provider")
+    await user.should_see("Model")
+
+
+def test_catalog_by_provider_groups_and_sorts() -> None:
+    from app.models.catalog import OpenRouterModel
+    from app.ui.pages.models import _catalog_by_provider, _provider_display_name
+
+    assert (
+        _provider_display_name(
+            OpenRouterModel(id="anthropic/claude-3.5-sonnet", name="Anthropic: Claude 3.5 Sonnet")
+        )
+        == "Anthropic"
+    )
+    assert _provider_display_name(OpenRouterModel(id="openai/gpt-4o", name="GPT-4o")) == "Openai"
+    assert (
+        _provider_display_name(OpenRouterModel(id="standalone", name="Standalone Model")) == "Other"
+    )
+
+    catalog = [
+        OpenRouterModel(id="test/model-large", name="Test Model Large"),
+        OpenRouterModel(id="test/model-small", name="Test Model Small"),
+        OpenRouterModel(id="anthropic/claude-3.5-sonnet", name="Anthropic: Claude 3.5 Sonnet"),
+    ]
+    grouped = _catalog_by_provider(catalog)
+
+    assert list(grouped) == ["Anthropic", "Test"]
+    assert list(grouped["Test"]) == ["test/model-large", "test/model-small"]
+    assert grouped["Test"]["test/model-small"] == "Test Model Small"
 
 
 async def test_debug_page_renders_empty_state(user: User) -> None:

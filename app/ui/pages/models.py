@@ -138,8 +138,7 @@ def _model_configuration_page(active_path: str) -> None:
 
 def _render_config_form(config: ModelConfig, *, is_new: bool) -> None:
     repo = get_model_config_repository()
-    catalog = _fetch_catalog()
-    model_options = _model_options(catalog)
+    catalog_by_provider: dict[str, dict[str, str]] = _catalog_by_provider(_fetch_catalog())
 
     with ui.card().classes("w-full gap-4"):
         config_id = ui.input("Config ID", value=config.id).classes("w-full")
@@ -149,17 +148,48 @@ def _render_config_form(config: ModelConfig, *, is_new: bool) -> None:
         name = ui.input("Name", value=config.name).classes("w-full")
 
         model_id = ui.input("Model ID", value=config.model).classes("w-full")
-        if model_options:
+        if catalog_by_provider:
+            initial_provider: str | None = None
+            initial_model: str | None = None
+            if config.model:
+                for provider, models in catalog_by_provider.items():
+                    if config.model in models:
+                        initial_provider = provider
+                        initial_model = config.model
+                        break
+
+            catalog_state: list[dict[str, dict[str, str]]] = [catalog_by_provider]
+
             with ui.row().classes("w-full items-end gap-3"):
-                model_select = ui.select(
-                    model_options,
-                    value=config.model if config.model in model_options else None,
-                    label="OpenRouter catalog",
+                provider_select = ui.select(
+                    list(catalog_by_provider),
+                    value=initial_provider,
+                    label="Provider",
                 ).classes("grow")
+                initial_model_options = (
+                    catalog_by_provider[initial_provider] if initial_provider else {}
+                )
+                model_select = ui.select(
+                    initial_model_options,
+                    value=initial_model if initial_model in initial_model_options else None,
+                    label="Model",
+                ).classes("grow")
+
+                def on_provider_change(event) -> None:
+                    options = catalog_state[0].get(event.value, {})
+                    model_select.set_options(options)
+                    model_select.set_value(None)
+
+                provider_select.on_value_change(on_provider_change)
                 model_select.on_value_change(lambda event: model_id.set_value(event.value))
                 ui.button(
                     "Refresh",
-                    on_click=_catalog_refresh_handler(model_select),
+                    on_click=_catalog_refresh_handler(
+                        catalog_state,
+                        provider_select,
+                        model_select,
+                        model_id,
+                    ),
                 ).props("outline")
         else:
             with ui.row().classes("w-full items-center gap-3"):
@@ -191,7 +221,7 @@ def _render_config_form(config: ModelConfig, *, is_new: bool) -> None:
             value=config.system_prompt_prefix,
             placeholder="Optional text prepended before the base writing-assistant prompt.",
         ).classes("w-full")
-        prefix.props("autogrow")
+        prefix.props("rows=6")
 
         with ui.row().classes("gap-3"):
             ui.button(
@@ -279,14 +309,39 @@ def _config_delete_handler(repo: ModelConfigRepository, config_id: str) -> Calla
     return delete_config
 
 
-def _catalog_refresh_handler(model_select: ui.select) -> Callable[[], None]:
+def _catalog_refresh_handler(
+    catalog_state: list[dict[str, dict[str, str]]],
+    provider_select: ui.select,
+    model_select: ui.select,
+    model_id: ui.input,
+) -> Callable[[], None]:
     def refresh_catalog() -> None:
-        model_options = _model_options(_fetch_catalog(refresh=True))
-        if model_options:
-            model_select.set_options(model_options)
-            ui.notify("OpenRouter catalog refreshed.", color="positive")
-        else:
+        grouped = _catalog_by_provider(_fetch_catalog(refresh=True))
+        if not grouped:
             ui.notify("OpenRouter catalog is unavailable.", color="warning")
+            return
+
+        catalog_state[0] = grouped
+        provider_select.set_options(list(grouped))
+
+        current_model = model_id.value
+        matched_provider: str | None = None
+        if current_model:
+            for provider, models in grouped.items():
+                if current_model in models:
+                    matched_provider = provider
+                    break
+
+        if matched_provider is not None:
+            provider_select.set_value(matched_provider)
+            model_select.set_options(grouped[matched_provider])
+            model_select.set_value(current_model)
+        else:
+            provider_select.set_value(None)
+            model_select.set_options({})
+            model_select.set_value(None)
+
+        ui.notify("OpenRouter catalog refreshed.", color="positive")
 
     return refresh_catalog
 
@@ -299,8 +354,28 @@ def _fetch_catalog(*, refresh: bool = False) -> list[OpenRouterModel]:
     return fetch_openrouter_models(api_key, refresh=refresh)
 
 
-def _model_options(catalog: list[OpenRouterModel]) -> dict[str, str]:
-    return {model.id: f"{model.name} ({model.id})" for model in catalog}
+def _provider_display_name(model: OpenRouterModel) -> str:
+    if ":" in model.name:
+        return model.name.split(":", 1)[0].strip()
+    if "/" in model.id:
+        prefix = model.id.split("/", 1)[0]
+        return prefix.replace("-", " ").title()
+    return "Other"
+
+
+def _catalog_by_provider(catalog: list[OpenRouterModel]) -> dict[str, dict[str, str]]:
+    grouped: dict[str, dict[str, str]] = {}
+    for model in catalog:
+        provider = _provider_display_name(model)
+        grouped.setdefault(provider, {})[model.id] = model.name
+
+    result: dict[str, dict[str, str]] = {}
+    for provider in sorted(grouped, key=str.lower):
+        models = grouped[provider]
+        result[provider] = dict(
+            sorted(models.items(), key=lambda item: (item[1].lower(), item[0].lower()))
+        )
+    return result
 
 
 def _reasoning_effort(value: str | None) -> ReasoningEffort | None:
