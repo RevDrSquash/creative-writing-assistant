@@ -49,14 +49,29 @@ The app is a local-first Python writing workspace built around one in-memory `Wo
 
 - **LangGraph Orchestration**
   - All AI behavior runs through LangGraph.
-  - V1 default workflow is a single ReAct loop for free-form chat.
-  - Later workflows can compose multiple nodes for tasks like outlining, critiquing, revising, and drafting.
+  - The default workflow is a single ReAct loop for free-form chat.
+  - Named multi-step workflows compose several nodes for tasks like outlining, critiquing,
+    revising, and drafting. Each is an enforced LangGraph workflow graph (graph edges fix the
+    step order), individual nodes may themselves be tool-enabled ReAct sub-loops, and the
+    compiled graph is exposed to the main agent as a single tool. A workflow registry in
+    `app/graphs/` builds and looks up these named workflows.
+  - Phase 6 adds two such workflows: the scene-writing workflow (`draft_scene`) and the intimacy
+    review workflow. Both are described in
+    [architecture_agent_workflows.md](architecture_agent_workflows.md).
+  - Workflow nodes resolve their model the same way the chat node does — through the per-node
+    model-config override system — so cheaper roles can drive cheap steps while drafting uses a
+    larger model.
 
 - **Tool Layer**
   - Tools expose explicit actions such as reading scenes, updating scene metadata, listing world data, appending prose, replacing text, and updating Story Bible fields.
   - Write tools mutate world state before returning.
   - Tools raise `ToolException` for expected domain errors (e.g. an unknown entity id). The agent is built with a `ToolRetryMiddleware(max_retries=0, on_failure="continue")` so a failing tool call produces an error `ToolMessage` for the model to recover from instead of aborting the run. Tools are local and deterministic, so retries are disabled.
   - Workflows or subagents can also be exposed as tools.
+  - Intimacy edits are not authored directly by the agent. From Phase 6c the agent describes the
+    intended change in natural language and the intimacy review workflow proposes, reviews, and
+    applies the concrete effects, returning a diff. The structured effect operations remain the
+    data model and stay directly editable in the UI; only the agent's authoring path changes.
+    World-state effects keep their direct CRUD authoring.
 
 - **Context Assembly**
   - Builds each model call from the system prompt, chat history, current UI context, and workflow-specific context.
@@ -76,6 +91,7 @@ The app is a local-first Python writing workspace built around one in-memory `Wo
 
 ## Related Docs
 
+- Multi-step agent workflows (scene writing and intimacy review): see [architecture_agent_workflows.md](architecture_agent_workflows.md).
 - LLM call logging and the Debug page: see [architecture_llm_debug_logging.md](architecture_llm_debug_logging.md).
 - Model configuration and per-node model selection: see [model_configuration.md](model_configuration.md).
 - Known / open issues and architectural debt: see [known_issues.md](known_issues.md).

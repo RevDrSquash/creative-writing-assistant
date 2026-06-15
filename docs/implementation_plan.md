@@ -56,8 +56,75 @@
 
 ## Phase 6: Advanced Workflows & Sub-Agents
 
-* Sub-Agent: Create a scene writer sub-agent.
-* Sub-Agent Tools: Expose the scene writer sub-agent to the main agent as a tool.
+Phase 6 introduces the first multi-step LangGraph workflows. Both the scene writer and the
+intimacy reviewer are built as enforced LangGraph workflow graphs whose nodes may themselves be
+tool-enabled, and each compiled graph is exposed to the main agent as a single tool. The
+cross-cutting pattern (enforced sequence, tool-using nodes, per-node model config, write-through
+persistence, workflow registry) is described in
+[architecture_agent_workflows.md](architecture_agent_workflows.md). The phase is split into three
+independently verifiable sub-phases.
+
+### Phase 6a: Scene-Level Stance & Stance/Mood Model Changes
+
+Foundational data-model changes that the scene writer (6b) builds on.
+
+* Move Stance: Move `CharacterStance` off `Character` and onto `Scene` as a sparse, per-character
+  list (`SceneCharacterStance` carrying `character_id` plus the stance fields). Stance is ephemeral
+  scene posture, so it belongs to the scene, not the globally-shared character.
+* Mood As Statements: Change stance `mood` from a single string to a list of short statements
+  (no strength, unlike intimacies). Keep `intent`, `tactics`, and `stakes` as single string fields.
+* Scene Blueprint: Add a `SceneBlueprint` to `Scene` grouping the generated craft scaffolding
+  (scene `premise`, `purpose`, outline beats, and the per-character stances) so it can be rendered
+  in one place and hidden outside edit mode. `title`, `summary`, `markdown`, and `notes` stay
+  top-level on `Scene`.
+* Schema Migration: Bump `SCHEMA_VERSION`; discard any legacy `Character.stance` values on load
+  (stance is disposable scratch with nowhere meaningful to migrate to).
+* Tools: Make `update_character_stance` scene-scoped (target the open/selected scene); update
+  `read_character` to drop stance; add reading of a scene's blueprint.
+* UI: Remove the Stance card from the character detail form; render the `SceneBlueprint`
+  (including stances) in the scene editor, visible only in edit mode (hidden in preview).
+* Testing: Update world-model, story-bible-tool, and UI-page tests for the relocated stance and
+  list-valued mood.
+
+### Phase 6b: Scene-Writing Workflow (`draft_scene`)
+
+* Workflow Graph: Build a LangGraph workflow with an enforced node sequence: formalize essential
+  details -> author initial stances -> outline as concise beats -> review outline -> revise
+  outline -> draft prose -> generate title and summary. Graph edges enforce the sequence.
+* Tool-Enabled Nodes: Give the drafting node (and optionally the stance/outline nodes) read-only
+  bible and scene tools so they can pull extra Story Bible detail on demand while staying inside
+  the enforced flow.
+* Inputs From Main Agent: The main agent passes a brief (premise, purpose, POV, participating
+  characters, constraints); the first node formalizes it into the stored essential details. The
+  workflow targets an existing scene or creates a new one.
+* Bounded Review Loop: Cap the outline review/revise loop at a configurable maximum (default 1)
+  rather than looping until satisfied.
+* Write-Through Persistence: Persist each generated piece to the `Scene` as its step completes
+  (blueprint fields, then prose, then title/summary) so the UI reflects progress. No token-level
+  streaming from the subgraph in this phase.
+* Per-Node Model Config: Register the workflow's nodes with the existing per-node model-config
+  override system (the Phase 4 `CHAT_NODE_ID` pattern) so cheaper roles can drive outlining and
+  review while drafting uses a larger model.
+* Workflow Registry: Add a workflow registry in `app/graphs/` to build and look up named
+  workflows.
+* Expose As Tool: Expose the compiled graph to the main agent as a `draft_scene` tool.
+* Testing: Unit tests for the workflow nodes and the `draft_scene` tool.
+
+### Phase 6c: Intimacy Review Workflow
+
+* Workflow Graph: Build a LangGraph workflow: retrieve (the character's current intimacies at the
+  relevant timeline position plus relevant world facts) -> propose specific structured effects
+  from a natural-language change description -> review (enforce simple first-person statements,
+  merge duplicates, prefer strengthening over duplicating, prefer small cumulative changes) ->
+  apply -> return a human-readable diff.
+* Description-Based Tool Surface: Replace the agent's direct intimacy-effect authoring with
+  description-based, reviewed entry points. For event signals the agent supplies an interpretation
+  plus a change description; for baseline intimacies the agent describes the desired baseline. The
+  structured effect data model and the manual UI editing of effects are unchanged; only the
+  agent's tool surface changes. World-state effects keep their current direct authoring.
+* Auto-Apply With Logging: The workflow applies reviewed changes and returns the diff; human
+  approval of the diff is deferred to Phase 8 (tool confirmations).
+* Testing: Unit tests for the workflow nodes and the description-based intimacy tool(s).
 
 ---
 

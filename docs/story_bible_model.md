@@ -21,7 +21,9 @@ The Story Bible lives on the `World` object and contains:
   facts; there are no separate Location or Lore entity types.
 - **Baseline World State**: the world-state entries (pressures, open threads, consequences)
   in effect at the start of the timeline.
-- **Characters**: identity, baseline state (including intimacies), and scene-level stance.
+- **Characters**: identity and baseline state (including intimacies). Scene-level stance is not
+  stored on the character; it lives on the scene (see the Scene model in
+  [forms_and_data_models.md](forms_and_data_models.md)).
 - **Timeline**: an ordered list of Events.
 
 ## Baselines Versus Derived State
@@ -29,8 +31,8 @@ The Story Bible lives on the `World` object and contains:
 The model distinguishes editable source data from derived views:
 
 - **Editable (stored)**: narrative style fields (premise, tone, themes, writing style), world facts, baseline world state, character
-  identity, character baseline state, character stance, events (with their effects and
-  signals).
+  identity, character baseline state, events (with their effects and signals). Scene-level stance
+  is editable too but is stored on the scene, not the character.
 - **Derived (computed, never stored)**: the world state and each character's state at any
   timeline position. These are produced by the replay engine and are read-only.
 
@@ -84,10 +86,14 @@ start of the timeline; events add, update, or remove entries as the story progre
 - **Identity** (stable): `name`, `traits`, `appearance`, `background`, `voice`. Identity is
   not affected by replay.
 - **Baseline State**: a list of Intimacies as they stand at the start of the timeline.
-- **Stance** (ephemeral): `mood`, `intent`, `tactics`, `stakes`. Stance is a scene-level
-  scratch field describing the character's current posture. It is freely editable, is not
-  event-sourced, and is excluded from replay. Deriving stance from identity, state, signals,
-  and world state is an agent workflow concern (Phase 7), not a data-model concern.
+
+A character no longer carries a stance. Stance is ephemeral, per-scene posture and is stored on
+the scene as a sparse per-character list (`SceneCharacterStance`: `character_id`, `mood`,
+`intent`, `tactics`, `stakes`), where `mood` is a list of short statements and the rest are single
+strings. It is freely editable, is not event-sourced, and is excluded from replay. Authoring
+stance is an agent workflow concern (the scene-writing workflow, Phase 6b); see the Scene model in
+[forms_and_data_models.md](forms_and_data_models.md) and
+[architecture_agent_workflows.md](architecture_agent_workflows.md).
 
 ### Intimacy
 
@@ -153,11 +159,20 @@ and surfacing such conflicts is planned future work, not a replay error.
   replay skips signals whose `character_id` no longer resolves.
 - Intimacy review behavior (merging duplicates, strengthening instead of duplicating, pruning
   stale intimacies, preferring small cumulative changes) is an agent workflow layered on top
-  of these primitives in Phase 7. The data model only provides the primitive operations.
+  of these primitives in Phase 6c. The data model only provides the primitive operations; the
+  intimacy review workflow proposes and reviews effects before they are applied (see
+  [architecture_agent_workflows.md](architecture_agent_workflows.md)).
 
 ## Agent Access
 
 Agent tools provide simple CRUD over the editable entities (narrative style fields, world facts,
-baseline world state, characters, events with effects and signals) plus read access to
+baseline world state, characters, events with world-state effects and signals) plus read access to
 derived state at any timeline position. Tools mutate the in-memory `World` and write through
 to disk, the same as user edits via forms.
+
+Intimacy effects are the exception: from Phase 6c the agent does not author intimacy effects
+directly. It describes the intended change in natural language and the intimacy review workflow
+proposes, reviews, and applies the concrete effects, returning a diff. The structured effect
+operations below remain the underlying data model and stay directly editable in the UI; only the
+agent's authoring path changes (see
+[architecture_agent_workflows.md](architecture_agent_workflows.md)).

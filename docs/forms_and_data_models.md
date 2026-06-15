@@ -33,7 +33,8 @@ summary it contains:
 - Narrative Style: premise, tone, themes, and writing style for the project.
 - World Facts: stable setting facts. Locations and lore are world facts, not separate types.
 - Baseline World State: pressures, open threads, and consequences at the start of the timeline.
-- Characters: stable identity, baseline state with intimacies, and ephemeral scene stance.
+- Characters: stable identity and baseline state with intimacies. Ephemeral scene stance is not
+  stored on the character; it lives on the scene (see the Scene Model below).
 - Timeline: an ordered list of Events carrying world-state effects and character Signals.
 
 World state and character state at any timeline position are derived by replaying event
@@ -49,8 +50,25 @@ Scenes represent prose. Each scene contains:
 - a short summary
 - Markdown prose
 - optional notes
+- a scene blueprint: the generated craft scaffolding for the scene
 
 Scenes are ordered because narrative sequence matters.
+
+### Scene Blueprint
+
+The scene blueprint groups the planning artifacts produced (or hand-edited) before and during
+drafting:
+
+- **Premise** and **Purpose**: the scene's essential details (what happens and why it exists in
+  the story).
+- **Stances**: a sparse per-character list (`SceneCharacterStance`) of ephemeral scene posture —
+  `character_id`, `mood` (a list of short statements), and `intent`, `tactics`, and `stakes`
+  (single strings). Only characters with a defined stance in this scene appear.
+- **Outline**: the scene's beats as a list of short, concise statements.
+
+The scene-writing workflow (Phase 6b) generates the blueprint, but every field is freely editable.
+The blueprint is excluded from Story Bible replay; like the old character stance, it is scene-local
+scratch, not event-sourced.
 
 ## Scene Editor Layout
 
@@ -59,6 +77,10 @@ The workspace scene editor uses one edit/preview toggle on the title row. It ope
 inputs; in preview mode those fields render as read-only labels and Markdown preview. Scene
 notes stay editable in an expansion below the prose editor. Delete scene lives in the editor
 header (next to the edit/preview toggle), not in the sidebar scene list.
+
+The scene blueprint (premise, purpose, stances, outline) is shown only in edit mode and hidden in
+preview, so the reading view stays focused on the prose while the planning scaffolding remains
+available while writing.
 
 Agent scene tools can read and replace prose (`read_scene`, `replace_scene_text`) and
 manage scene metadata and navigation (`list_scenes`, `create_scene`, `select_scene`,
