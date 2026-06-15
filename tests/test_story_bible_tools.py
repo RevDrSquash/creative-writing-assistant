@@ -28,7 +28,6 @@ from app.world.models import (
     AddIntimacy,
     AddWorldStateEntry,
     Intimacy,
-    SetStatus,
     Signal,
     World,
     WorldStateEntry,
@@ -97,7 +96,7 @@ def test_update_event_rejects_unknown_signal_character_id(isolated_world: World)
 
 def test_read_story_bible_overview_lists_entities(isolated_world: World) -> None:
     upsert_world_fact.func("The Reach", "A coastal region")
-    upsert_character.func(name="Mira", goal="Find the archive")
+    upsert_character.func(name="Mira")
     add_event.func("Storm hits")
 
     overview = read_story_bible.func()
@@ -109,9 +108,13 @@ def test_read_story_bible_overview_lists_entities(isolated_world: World) -> None
 
 
 def test_update_narrative_style_persists(isolated_world: World) -> None:
-    update_narrative_style.func("Lyrical, slow-burn fantasy.")
+    update_narrative_style.func(tone="Lyrical, slow-burn fantasy.", themes="Loss and renewal")
 
-    assert isolated_world.story_bible.narrative_style == "Lyrical, slow-burn fantasy."
+    bible = isolated_world.story_bible
+    assert bible.tone == "Lyrical, slow-burn fantasy."
+    assert bible.themes == "Loss and renewal"
+    assert bible.premise == ""
+    assert bible.writing_style == ""
 
 
 def test_world_fact_crud(isolated_world: World) -> None:
@@ -148,15 +151,20 @@ def test_upsert_character_creates_and_partially_updates(isolated_world: World) -
     upsert_character.func(
         name="Mira",
         traits="Curious, guarded",
-        goal="Find the archive",
         intimacies=[Intimacy(text="Hungry for knowledge", strength="defining")],
     )
     character = isolated_world.story_bible.characters[0]
     assert character.identity.name == "Mira"
 
-    upsert_character.func(character_id=character.id, status="Wounded")
+    upsert_character.func(
+        character_id=character.id,
+        intimacies=[
+            Intimacy(text="Hungry for knowledge", strength="defining"),
+            Intimacy(text="Wary of strangers", strength="minor"),
+        ],
+    )
 
-    assert character.baseline_state.status == "Wounded"
+    assert len(character.baseline_state.intimacies) == 2
     assert character.identity.traits == "Curious, guarded"
     assert character.baseline_state.intimacies[0].strength == "defining"
 
@@ -199,19 +207,27 @@ def test_upsert_character_rolls_back_when_save_fails(
 def test_read_character_includes_identity_baseline_and_derived_state(
     isolated_world: World,
 ) -> None:
-    upsert_character.func(name="Mira", goal="Find the archive")
+    upsert_character.func(
+        name="Mira",
+        intimacies=[Intimacy(text="Find the archive", strength="major")],
+    )
     character = isolated_world.story_bible.characters[0]
     add_event.func(
         "Betrayal",
-        signals=[Signal(character_id=character.id, effects=[SetStatus(status="Shaken")])],
+        signals=[
+            Signal(
+                character_id=character.id,
+                effects=[AddIntimacy(intimacy=Intimacy(text="Shaken", strength="minor"))],
+            )
+        ],
     )
 
     detail = read_character.func(character.id)
 
     assert "Mira" in detail
-    assert "Goal: Find the archive" in detail
+    assert "Find the archive" in detail
     assert "Current State (after full timeline)" in detail
-    assert "Status: Shaken" in detail
+    assert "Shaken" in detail
 
 
 def test_update_character_stance_changes_only_provided_fields(isolated_world: World) -> None:
@@ -230,7 +246,12 @@ def test_delete_character_keeps_events(isolated_world: World) -> None:
     character = isolated_world.story_bible.characters[0]
     add_event.func(
         "Betrayal",
-        signals=[Signal(character_id=character.id, effects=[SetStatus(status="Shaken")])],
+        signals=[
+            Signal(
+                character_id=character.id,
+                effects=[AddIntimacy(intimacy=Intimacy(text="Shaken", strength="minor"))],
+            )
+        ],
     )
 
     delete_character.func(character.id)

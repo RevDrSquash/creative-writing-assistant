@@ -145,19 +145,12 @@ def _render_scenes_section(active_scene_id: str | None) -> None:
 
 def _render_scene_row(scene: Scene, active_scene_id: str | None) -> None:
     path = f"/workspace/scenes/{scene.id}"
-    with ui.row().classes("w-full items-center no-wrap gap-0"):
-        button = ui.button(
-            scene.title or "Untitled",
-            on_click=lambda path=path: ui.navigate.to(path),
-        )
-        button.classes("grow justify-start")
-        button.props("unelevated color=primary" if scene.id == active_scene_id else "flat")
-        delete_button = ui.button(
-            icon="delete",
-            on_click=lambda scene=scene: _confirm_delete_scene(scene),
-        )
-        delete_button.props("flat round dense size=sm color=grey-7")
-        delete_button.tooltip("Delete scene")
+    button = ui.button(
+        scene.title or "Untitled",
+        on_click=lambda path=path: ui.navigate.to(path),
+    )
+    button.classes("w-full justify-start")
+    button.props("unelevated color=primary" if scene.id == active_scene_id else "flat")
 
 
 async def _confirm_delete_scene(scene: Scene) -> None:
@@ -189,16 +182,26 @@ def _render_scene_editor(scene: Scene) -> None:
     def save() -> None:
         save_world()
 
-    edit_state = {"edit_mode": True}
+    edit_state = {"edit_mode": False}
+
+    def sync_edit_mode_visibility() -> None:
+        edit_mode = edit_state["edit_mode"]
+        title_input.set_visibility(edit_mode)
+        title_preview.set_visibility(not edit_mode)
+        summary_input.set_visibility(edit_mode)
+        summary_preview.set_visibility(not edit_mode)
+        edit_state["sync_visibility"]()
 
     def toggle_mode() -> None:
         edit_state["edit_mode"] = not edit_state["edit_mode"]
         toggle_button.set_icon(_toggle_icon(edit_state["edit_mode"]))
         toggle_tooltip.set_text(_toggle_tooltip(edit_state["edit_mode"]))
+        sync_edit_mode_visibility()
 
     with ui.row().classes("w-full items-center no-wrap"):
         title_input = ui.input(placeholder="Scene title").classes("text-xl font-semibold")
         title_input.classes("grow").props("outlined dense")
+        title_input.mark("scene-title-input")
         title_input.bind_value(scene, "title")
         title_input.bind_visibility_from(edit_state, "edit_mode")
         title_input.on_value_change(lambda _: save())
@@ -214,7 +217,15 @@ def _render_scene_editor(scene: Scene) -> None:
         ui.space()
         toggle_button = ui.button(icon=_toggle_icon(edit_state["edit_mode"]), on_click=toggle_mode)
         toggle_button.props("flat round dense")
+        toggle_button.mark("scene-editor-toggle-button")
         toggle_tooltip = ui.tooltip(_toggle_tooltip(edit_state["edit_mode"]))
+        delete_button = ui.button(
+            icon="delete",
+            on_click=lambda scene=scene: _confirm_delete_scene(scene),
+        )
+        delete_button.props("flat round dense size=sm color=grey-7")
+        delete_button.tooltip("Delete scene")
+        delete_button.mark("scene-editor-delete-button")
 
     summary_input = ui.input(placeholder="Scene summary").classes("w-full shrink-0")
     summary_input.props("dense outlined")
@@ -237,6 +248,8 @@ def _render_scene_editor(scene: Scene) -> None:
         state=edit_state,
         show_toggle=False,
     )
+
+    sync_edit_mode_visibility()
 
     with ui.expansion("Notes", icon="sticky_note_2").classes("w-full shrink-0"):
         notes_input = ui.textarea(placeholder="Scene notes...").classes("w-full")

@@ -30,7 +30,7 @@ The Story Bible holds structured reference material for the story world. It is e
 the authoritative model description lives in [story_bible_model.md](story_bible_model.md). In
 summary it contains:
 
-- Narrative Style: the intended tone, themes, writing style, etc.
+- Narrative Style: premise, tone, themes, and writing style for the project.
 - World Facts: stable setting facts. Locations and lore are world facts, not separate types.
 - Baseline World State: pressures, open threads, and consequences at the start of the timeline.
 - Characters: stable identity, baseline state with intimacies, and ephemeral scene stance.
@@ -54,10 +54,11 @@ Scenes are ordered because narrative sequence matters.
 
 ## Scene Editor Layout
 
-The workspace scene editor uses one edit/preview toggle on the title row. In edit mode
-the writer sees title, summary, and Markdown prose as inputs; in preview mode those
-fields render as read-only labels and Markdown preview. Scene notes stay editable in
-an expansion below the prose editor.
+The workspace scene editor uses one edit/preview toggle on the title row. It opens in preview
+(view) mode by default. In edit mode the writer sees title, summary, and Markdown prose as
+inputs; in preview mode those fields render as read-only labels and Markdown preview. Scene
+notes stay editable in an expansion below the prose editor. Delete scene lives in the editor
+header (next to the edit/preview toggle), not in the sidebar scene list.
 
 Agent scene tools can read and replace prose (`read_scene`, `replace_scene_text`) and
 manage scene metadata and navigation (`list_scenes`, `create_scene`, `select_scene`,

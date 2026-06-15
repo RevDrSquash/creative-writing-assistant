@@ -17,9 +17,7 @@ from app.world.models import (
     Intimacy,
     RemoveIntimacy,
     RemoveWorldStateEntry,
-    SetGoal,
     SetIntimacyStrength,
-    SetStatus,
     Signal,
     StoryBible,
     UpdateIntimacy,
@@ -34,8 +32,6 @@ class DerivedCharacterState(BaseModel):
 
     character_id: str
     name: str = ""
-    goal: str = ""
-    status: str = ""
     intimacies: list[Intimacy] = Field(default_factory=list)
 
 
@@ -77,8 +73,6 @@ def derive_state_at(bible: StoryBible, event_count: int) -> DerivedState:
         character.id: DerivedCharacterState(
             character_id=character.id,
             name=character.identity.name,
-            goal=character.baseline_state.goal,
-            status=character.baseline_state.status,
             intimacies=[
                 intimacy.model_copy(deep=True) for intimacy in character.baseline_state.intimacies
             ],
@@ -126,11 +120,7 @@ def _apply_world_state_effect(
 
 def _apply_signal(character: DerivedCharacterState, signal: Signal) -> None:
     for effect in signal.effects:
-        if isinstance(effect, SetGoal):
-            character.goal = effect.goal
-        elif isinstance(effect, SetStatus):
-            character.status = effect.status
-        elif isinstance(effect, AddIntimacy):
+        if isinstance(effect, AddIntimacy):
             character.intimacies.append(effect.intimacy.model_copy(deep=True))
         elif isinstance(effect, SetIntimacyStrength):
             intimacy = _find_intimacy(character.intimacies, effect.intimacy_id)

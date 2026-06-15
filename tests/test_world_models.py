@@ -15,9 +15,7 @@ from app.world.models import (
     Intimacy,
     RemoveIntimacy,
     RemoveWorldStateEntry,
-    SetGoal,
     SetIntimacyStrength,
-    SetStatus,
     Signal,
     StoryBible,
     UpdateIntimacy,
@@ -35,8 +33,6 @@ def _bible_with_character() -> tuple[StoryBible, Character, Intimacy]:
     character = Character(
         identity=CharacterIdentity(name="Mira"),
         baseline_state=CharacterBaselineState(
-            goal="Find the archive",
-            status="Healthy",
             intimacies=[intimacy],
         ),
     )
@@ -49,8 +45,8 @@ def _bible_with_character() -> tuple[StoryBible, Character, Intimacy]:
     return bible, character, intimacy
 
 
-def test_schema_version_is_two() -> None:
-    assert SCHEMA_VERSION == 2
+def test_schema_version_is_three() -> None:
+    assert SCHEMA_VERSION == 3
 
 
 def test_slugify_normalizes_text() -> None:
@@ -109,7 +105,6 @@ def test_derive_state_baseline_only() -> None:
     assert derived.events_applied == 0
     assert [entry.text for entry in derived.world_state] == ["Drought in the valley"]
     derived_character = derived.characters[character.id]
-    assert derived_character.goal == "Find the archive"
     assert derived_character.intimacies[0].text == intimacy.text
 
 
@@ -150,8 +145,6 @@ def test_derive_state_applies_signal_effects_to_character() -> None:
                 Signal(
                     character_id=character.id,
                     effects=[
-                        SetGoal(goal="Escape the city"),
-                        SetStatus(status="Wounded"),
                         AddIntimacy(intimacy=added),
                         SetIntimacyStrength(intimacy_id=intimacy.id, strength="defining"),
                     ],
@@ -175,8 +168,6 @@ def test_derive_state_applies_signal_effects_to_character() -> None:
     midpoint = derive_state_at(bible, 1).characters[character.id]
     final = derive_state(bible).characters[character.id]
 
-    assert midpoint.goal == "Escape the city"
-    assert midpoint.status == "Wounded"
     assert {item.id: item.strength for item in midpoint.intimacies} == {
         intimacy.id: "defining",
         "int-2": "major",
@@ -186,20 +177,26 @@ def test_derive_state_applies_signal_effects_to_character() -> None:
 
 def test_derive_state_up_to_event_id_includes_that_event() -> None:
     bible, character, _intimacy = _bible_with_character()
+    added = Intimacy(id="int-2", text="Shaken by the news", strength="minor")
     first = Event(
         title="First",
-        signals=[Signal(character_id=character.id, effects=[SetStatus(status="Shaken")])],
+        signals=[Signal(character_id=character.id, effects=[AddIntimacy(intimacy=added)])],
     )
     second = Event(
         title="Second",
-        signals=[Signal(character_id=character.id, effects=[SetStatus(status="Resolved")])],
+        signals=[
+            Signal(
+                character_id=character.id,
+                effects=[UpdateIntimacy(intimacy_id="int-2", text="Resolved the crisis")],
+            )
+        ],
     )
     bible.timeline = [first, second]
 
     derived = derive_state(bible, up_to_event_id=first.id)
 
     assert derived.events_applied == 1
-    assert derived.characters[character.id].status == "Shaken"
+    assert derived.characters[character.id].intimacies[-1].text == "Shaken by the news"
 
 
 def test_derive_state_unknown_event_id_raises() -> None:
@@ -221,7 +218,7 @@ def test_derive_state_skips_dangling_references() -> None:
             signals=[
                 Signal(
                     character_id="missing-character",
-                    effects=[SetGoal(goal="ignored")],
+                    effects=[AddIntimacy(intimacy=Intimacy(text="ignored"))],
                 ),
                 Signal(
                     character_id=character.id,
@@ -239,7 +236,6 @@ def test_derive_state_skips_dangling_references() -> None:
 
     assert [entry.text for entry in derived.world_state] == ["Drought in the valley"]
     derived_character = derived.characters[character.id]
-    assert derived_character.goal == "Find the archive"
     assert [item.strength for item in derived_character.intimacies] == ["minor"]
 
 

@@ -22,19 +22,16 @@ async def test_workspace_renders_scene_editor_and_chat(user: User) -> None:
     await user.open("/workspace")
     await user.should_see("New Scene")
     await user.should_see("Notes")
-    await user.should_see("Preview Markdown")
+    await user.should_see("Edit Markdown")
     await user.should_see("Send")
+    user.find(marker="scene-editor-delete-button")
 
 
 async def test_scene_title_is_editable_in_edit_state(user: User) -> None:
-    from nicegui.elements.input import Input
-
     await user.open("/workspace")
-    title = next(
-        element
-        for element in user.find(Input).elements
-        if element._props.get("placeholder") == "Scene title"
-    )
+    user.find(marker="scene-editor-toggle-button").click()
+    await user.should_see("Preview Markdown")
+    title = next(iter(user.find(marker="scene-title-input").elements))
     assert title.visible is True
     title.set_value("Renamed Scene")
     assert title.value == "Renamed Scene"
@@ -50,7 +47,9 @@ async def test_workspace_sidebar_navigates_to_characters(user: User) -> None:
 
 async def test_narrative_style_page_renders_form(user: User) -> None:
     await user.open("/workspace/narrative-style")
-    await user.should_see("The intended tone, themes, and writing style for this project.")
+    await user.should_see("The intended premise, tone, themes, and writing style for this project.")
+    await user.should_see("Premise")
+    await user.should_see("Writing style")
 
 
 async def test_world_page_renders_facts_state_and_derived_sections(user: User) -> None:

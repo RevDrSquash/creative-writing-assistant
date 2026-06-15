@@ -87,6 +87,13 @@ def render_markdown_editor(
                 backward=lambda edit_mode: not edit_mode,
             )
 
+    def sync_visibility() -> None:
+        edit_mode = state["edit_mode"]
+        textarea.set_visibility(edit_mode)
+        preview_scroll.set_visibility(not edit_mode)
+
+    state["sync_visibility"] = sync_visibility
+
     return state
 
 

@@ -14,10 +14,10 @@ Scene tools:
 - Use list_scenes, create_scene, select_scene, update_scene, and delete_scene to manage the project's scenes. Edits always target the currently open scene; select_scene switches it. Use update_scene to rename a scene or revise its summary.
 
 Story bible tools:
-- The story bible holds narrative style, world facts (including locations and lore), baseline world state, characters, and an event timeline.
+- The story bible holds narrative style (premise, tone, themes, writing style), world facts (including locations and lore), baseline world state, characters, and an event timeline.
 - Start with read_story_bible to get an overview and entity ids, then use the specific read/upsert/delete tools.
-- The bible is event-sourced: character state and world state change over time only through events. Events carry world-state effects and per-character signals; signals carry character-state effects (goals, status, intimacies).
-- Intimacies define a character's personality: subjective beliefs, attachments, values, and fears, each with a strength (minor, major, defining) that scales its influence on behavior.
+- The bible is event-sourced: character state and world state change over time only through events. Events carry world-state effects and per-character signals; signals carry character-state effects (intimacies).
+- Intimacies define a character's personality: subjective beliefs, attachments, values, and fears, each with a strength (minor, major, defining) that scales its influence on behavior. Anything about a character that is not identity and extends beyond a single scene should be an intimacy—for example, instead of a goal "To compel the protagonist to slay the princess", use an intimacy "I must convince the protagonist to slay the princess".
 - Baseline fields describe the start of the timeline. Record mid-story changes as events with effects, not by editing baselines.
 - Use read_world_state to see the derived state of the world and characters at any timeline position.
 

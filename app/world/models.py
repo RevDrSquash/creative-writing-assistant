@@ -15,7 +15,7 @@ from uuid import uuid4
 
 from pydantic import BaseModel, Field
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 IntimacyStrength = Literal["minor", "major", "defining"]
 WorldStateKind = Literal["pressure", "thread", "consequence"]
@@ -115,20 +115,6 @@ WorldStateEffect = Annotated[
 ]
 
 
-class SetGoal(BaseModel):
-    """Set the character's current goal."""
-
-    op: Literal["set_goal"] = "set_goal"
-    goal: str = ""
-
-
-class SetStatus(BaseModel):
-    """Set the character's current status."""
-
-    op: Literal["set_status"] = "set_status"
-    status: str = ""
-
-
 class AddIntimacy(BaseModel):
     """Add an intimacy to the character."""
 
@@ -160,7 +146,7 @@ class RemoveIntimacy(BaseModel):
 
 
 CharacterStateEffect = Annotated[
-    SetGoal | SetStatus | AddIntimacy | SetIntimacyStrength | UpdateIntimacy | RemoveIntimacy,
+    AddIntimacy | SetIntimacyStrength | UpdateIntimacy | RemoveIntimacy,
     Field(discriminator="op"),
 ]
 
@@ -178,8 +164,6 @@ class CharacterIdentity(BaseModel):
 class CharacterBaselineState(BaseModel):
     """The character's state at the start of the timeline."""
 
-    goal: str = ""
-    status: str = ""
     intimacies: list[Intimacy] = Field(default_factory=list)
 
 
@@ -223,7 +207,10 @@ class Event(BaseModel):
 class StoryBible(BaseModel):
     """Structured reference material for the story world."""
 
-    narrative_style: str = ""
+    premise: str = ""
+    tone: str = ""
+    themes: str = ""
+    writing_style: str = ""
     world_facts: list[WorldFact] = Field(default_factory=list)
     baseline_world_state: list[WorldStateEntry] = Field(default_factory=list)
     characters: list[Character] = Field(default_factory=list)

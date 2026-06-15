@@ -19,9 +19,7 @@ from app.world.models import (
     Intimacy,
     RemoveIntimacy,
     RemoveWorldStateEntry,
-    SetGoal,
     SetIntimacyStrength,
-    SetStatus,
     Signal,
     StoryBible,
     UpdateIntimacy,
@@ -113,10 +111,17 @@ def _timeline_position_options(bible: StoryBible) -> dict[int, str]:
 def render_narrative_style_form() -> None:
     bible = get_world().story_bible
     ui.label("Narrative Style").classes("text-xl font-semibold")
-    ui.label("The intended tone, themes, and writing style for this project.").classes(
+    ui.label("The intended premise, tone, themes, and writing style for this project.").classes(
         "text-grey-7"
     )
-    _bound_textarea(bible, "narrative_style", placeholder="Describe tone, themes, style...")
+    _field_label("Premise")
+    _bound_textarea(bible, "premise", placeholder="What is the story about?")
+    _field_label("Tone")
+    _bound_textarea(bible, "tone", placeholder="Mood, atmosphere, narrative voice...")
+    _field_label("Themes")
+    _bound_textarea(bible, "themes", placeholder="Recurring ideas and motifs...")
+    _field_label("Writing style")
+    _bound_textarea(bible, "writing_style", placeholder="Prose rhythm, sentence style, POV...")
 
 
 # --- world facts and world state --------------------------------------------
@@ -268,6 +273,14 @@ def render_characters_form(active_path: str) -> None:
     _render_character_detail(character)
 
 
+def _character_list_subtitle(character: Character) -> str | None:
+    intimacies = character.baseline_state.intimacies
+    if intimacies and intimacies[0].text.strip():
+        return intimacies[0].text.strip()
+    traits = character.identity.traits.strip()
+    return traits or None
+
+
 def _render_character_list() -> None:
     bible = get_world().story_bible
     ui.label("Characters").classes("text-xl font-semibold")
@@ -283,8 +296,9 @@ def _render_character_list() -> None:
                         ui.label(character.identity.name or "Unnamed character").classes(
                             "font-semibold"
                         )
-                        if character.baseline_state.goal:
-                            ui.label(character.baseline_state.goal).classes("text-grey-7 text-sm")
+                        subtitle = _character_list_subtitle(character)
+                        if subtitle:
+                            ui.label(subtitle).classes("text-grey-7 text-sm")
                     ui.button(
                         "Open",
                         on_click=lambda character=character: ui.navigate.to(
@@ -332,10 +346,6 @@ def _render_character_detail(character: Character) -> None:
         ui.label("The character's state at the start of the timeline.").classes(
             "text-grey-7 text-sm"
         )
-        _field_label("Goal")
-        _bound_input(character.baseline_state, "goal", placeholder="Current goal...")
-        _field_label("Status")
-        _bound_input(character.baseline_state, "status", placeholder="Current status...")
         _field_label("Intimacies")
 
         @ui.refreshable
@@ -420,8 +430,6 @@ def _render_derived_character_state(character: Character) -> None:
             if derived is None:
                 ui.label("Character not present in derived state.").classes("text-grey-7")
                 return
-            ui.label(f"Goal: {derived.goal or '-'}")
-            ui.label(f"Status: {derived.status or '-'}")
             if not derived.intimacies:
                 ui.label("No intimacies.").classes("text-grey-7")
             for intimacy in derived.intimacies:
@@ -692,8 +700,6 @@ def _render_signal_card(
 
         with ui.button("Add state effect", icon="add").props("flat"):
             with ui.menu():
-                ui.menu_item("Set goal", on_click=lambda: add_effect(SetGoal()))
-                ui.menu_item("Set status", on_click=lambda: add_effect(SetStatus()))
                 ui.menu_item("Add intimacy", on_click=lambda: add_effect(AddIntimacy()))
                 ui.menu_item(
                     "Set intimacy strength",
@@ -710,17 +716,7 @@ def _render_character_effect_row(
     refresh: Callable[[], None],
 ) -> None:
     with ui.row().classes("w-full items-center no-wrap gap-2"):
-        if isinstance(effect, SetGoal):
-            ui.badge("Set goal").props("outline color=primary")
-            goal = ui.input(placeholder="New goal...").classes("grow").props("dense outlined")
-            goal.bind_value(effect, "goal")
-            _save_on_change(goal)
-        elif isinstance(effect, SetStatus):
-            ui.badge("Set status").props("outline color=primary")
-            status = ui.input(placeholder="New status...").classes("grow").props("dense outlined")
-            status.bind_value(effect, "status")
-            _save_on_change(status)
-        elif isinstance(effect, AddIntimacy):
+        if isinstance(effect, AddIntimacy):
             ui.badge("Add intimacy").props("outline color=positive")
             text = ui.input(placeholder="e.g. Wary of outsiders").classes("grow")
             text.props("dense outlined")

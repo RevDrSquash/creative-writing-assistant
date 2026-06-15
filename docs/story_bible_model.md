@@ -16,7 +16,7 @@ semantics. The form rendering and save behavior for this data is described in
 
 The Story Bible lives on the `World` object and contains:
 
-- **Narrative Style**: markdown text describing the intended tone, themes, and writing style.
+- **Narrative Style**: four flat fields — `premise`, `tone`, `themes`, and `writing_style` — describing the intended story voice and craft.
 - **World Facts**: stable setting facts. Locations, lore, history, and concepts are all world
   facts; there are no separate Location or Lore entity types.
 - **Baseline World State**: the world-state entries (pressures, open threads, consequences)
@@ -28,7 +28,7 @@ The Story Bible lives on the `World` object and contains:
 
 The model distinguishes editable source data from derived views:
 
-- **Editable (stored)**: narrative style, world facts, baseline world state, character
+- **Editable (stored)**: narrative style fields (premise, tone, themes, writing style), world facts, baseline world state, character
   identity, character baseline state, character stance, events (with their effects and
   signals).
 - **Derived (computed, never stored)**: the world state and each character's state at any
@@ -83,8 +83,7 @@ start of the timeline; events add, update, or remove entries as the story progre
 
 - **Identity** (stable): `name`, `traits`, `appearance`, `background`, `voice`. Identity is
   not affected by replay.
-- **Baseline State**: `goal`, `status`, and a list of Intimacies as they stand at the start
-  of the timeline.
+- **Baseline State**: a list of Intimacies as they stand at the start of the timeline.
 - **Stance** (ephemeral): `mood`, `intent`, `tactics`, `stakes`. Stance is a scene-level
   scratch field describing the character's current posture. It is freely editable, is not
   event-sourced, and is excluded from replay. Deriving stance from identity, state, signals,
@@ -124,8 +123,6 @@ explicit operations rather than free text.
 
 ### Character-State Effects (on Signals)
 
-- `set_goal`: set the character's current goal.
-- `set_status`: set the character's current status.
 - `add_intimacy`: add an intimacy (carries the new intimacy).
 - `set_intimacy_strength`: change an existing intimacy's strength by `intimacy_id`
   (strengthen or weaken).
@@ -139,7 +136,7 @@ The replay engine is a pure function over the Story Bible:
 - Input: the bible plus an optional timeline position (an event id, meaning "after this event
   has been applied"; absent means "after the full timeline").
 - Output: the derived world state (list of world-state entries) and the derived state of each
-  character (goal, status, intimacies).
+  character (intimacies).
 - Replay starts from the baselines and applies each event's world-state effects, then each of
   its signals' character-state effects, in timeline order, up to and including the requested
   position.
@@ -160,7 +157,7 @@ and surfacing such conflicts is planned future work, not a replay error.
 
 ## Agent Access
 
-Agent tools provide simple CRUD over the editable entities (narrative style, world facts,
+Agent tools provide simple CRUD over the editable entities (narrative style fields, world facts,
 baseline world state, characters, events with effects and signals) plus read access to
 derived state at any timeline position. Tools mutate the in-memory `World` and write through
 to disk, the same as user edits via forms.
