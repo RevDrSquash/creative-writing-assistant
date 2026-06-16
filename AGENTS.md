@@ -49,6 +49,9 @@ Before declaring any task complete:
 2. Run the full verify chain: `poetry run ruff check . && poetry run pytest`.
 3. New behavior gets new tests. UI pages and components are testable in-process via the NiceGUI
    `user` fixture (see `tests/test_ui_pages.py`); there is no excuse for unverified UI changes.
+   Agent tools additionally need tests that exercise hallucinated or malformed inputs (e.g. an
+   unknown or drifted id), asserting the tool rejects or normalizes them instead of persisting bad
+   data.
 4. If behavior or architecture changed, update the relevant doc in `docs/`. If you discovered a
    limitation you are not fixing, record it in `docs/known_issues.md` (severity, location,
    symptom, possible fix - follow the existing format).
@@ -57,6 +60,10 @@ Before declaring any task complete:
 
 - Python 3.10+, line length 100, Ruff for lint and format (config in `pyproject.toml`).
 - Pydantic v2 models for structured data.
+- Agent tools must validate every parameter with strict requirements (ids, references, enums, etc.)
+  against the world before acting. The model can hallucinate values, so resolve or reject them up
+  front (raise `ToolException` with the valid options) rather than writing dangling references. See
+  `_resolve_scene_character_ids` in `app/tools/scene.py` for the pattern.
 - Persistence is plain JSON files under `data/`; tests must use `tmp_path`, never `data/`.
 - Before editing anything under `app/ui/`, follow the `nicegui-ui-changes` skill
   (`.cursor/skills/nicegui-ui-changes/`).
