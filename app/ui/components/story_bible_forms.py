@@ -55,10 +55,17 @@ def _bound_input(target: object, field: str, *, placeholder: str = "") -> ui.inp
     return element
 
 
-def _bound_textarea(target: object, field: str, *, placeholder: str = "") -> ui.textarea:
-    element = (
-        ui.textarea(placeholder=placeholder).classes("w-full").props("dense outlined autogrow")
-    )
+def _bound_textarea(
+    target: object,
+    field: str,
+    *,
+    placeholder: str = "",
+    rows: int | None = None,
+) -> ui.textarea:
+    props = "dense outlined autogrow"
+    if rows is not None:
+        props = f"{props} rows={rows}"
+    element = ui.textarea(placeholder=placeholder).classes("w-full").props(props)
     element.bind_value(target, field)
     _save_on_change(element)
     return element
@@ -794,22 +801,26 @@ def render_scene_blueprint_form(scene: Scene, edit_state: dict) -> None:
     with ui.column().classes("w-full gap-4 shrink-0") as blueprint_block:
         blueprint_block.bind_visibility_from(edit_state, "edit_mode")
 
-        with ui.card().classes("w-full"):
-            ui.label("Blueprint").classes("text-lg font-semibold")
+        with ui.expansion("Blueprint", icon="description", value=False).classes("w-full"):
             ui.label(
                 "Planning scaffold for this scene: premise, purpose, outline, and character stances."
             ).classes("text-grey-7 text-sm")
             _field_label("Premise")
-            _bound_textarea(blueprint, "premise", placeholder="What happens in this scene?")
+            _bound_textarea(
+                blueprint,
+                "premise",
+                placeholder="What happens in this scene?",
+                rows=3,
+            )
             _field_label("Purpose")
             _bound_textarea(
                 blueprint,
                 "purpose",
                 placeholder="Why this scene exists in the story...",
+                rows=3,
             )
 
-        with ui.card().classes("w-full"):
-            ui.label("Outline").classes("text-lg font-semibold")
+        with ui.expansion("Outline", icon="format_list_numbered", value=False).classes("w-full"):
             ui.label("Concise beats that structure the scene.").classes("text-grey-7 text-sm")
 
             @ui.refreshable
@@ -846,8 +857,7 @@ def render_scene_blueprint_form(scene: Scene, edit_state: dict) -> None:
 
             ui.button("Add beat", icon="add", on_click=add_beat).props("flat")
 
-        with ui.card().classes("w-full"):
-            ui.label("Character Stances").classes("text-lg font-semibold")
+        with ui.expansion("Character Stances", icon="groups", value=False).classes("w-full"):
             ui.label("Ephemeral posture for characters in this scene.").classes(
                 "text-grey-7 text-sm"
             )

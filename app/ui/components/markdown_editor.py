@@ -36,6 +36,7 @@ def render_markdown_editor(
     on_change: Callable[[], None] | None = None,
     state: dict | None = None,
     show_toggle: bool = True,
+    min_height: str | None = None,
 ) -> dict:
     """Render a textarea-backed Markdown editor bound to ``target[field]``.
 
@@ -55,7 +56,12 @@ def render_markdown_editor(
         toggle_button.set_icon(_toggle_icon(state["edit_mode"]))
         toggle_tooltip.set_text(_toggle_tooltip(state["edit_mode"]))
 
-    with ui.column().classes("w-full h-full min-h-0 gap-2"):
+    root_classes = (
+        f"w-full grow {min_height} gap-2"
+        if min_height is not None
+        else "w-full h-full min-h-0 gap-2"
+    )
+    with ui.column().classes(root_classes):
         if show_toggle:
             with ui.row().classes("w-full justify-end items-center shrink-0"):
                 toggle_button = ui.button(

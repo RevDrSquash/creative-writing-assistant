@@ -68,7 +68,7 @@ def _workspace_page(active_path: str, scene_id: str | None = None) -> None:
         splitter.bind_value(app.storage.user, WORKSPACE_SPLIT_KEY)
         with splitter.classes("w-full h-full min-h-0"):
             with splitter.before:
-                with ui.column().classes("w-full h-full min-h-0 gap-4 pr-4"):
+                with ui.column().classes("w-full h-full min-h-0 gap-4 pr-4 overflow-y-auto"):
                     if active_scene is not None:
                         _render_scene_editor(active_scene)
                     else:
@@ -199,7 +199,7 @@ def _render_scene_editor(scene: Scene) -> None:
         toggle_tooltip.set_text(_toggle_tooltip(edit_state["edit_mode"]))
         sync_edit_mode_visibility()
 
-    with ui.row().classes("w-full items-center no-wrap"):
+    with ui.row().classes("w-full items-center no-wrap shrink-0"):
         title_input = ui.input(placeholder="Scene title").classes("text-xl font-semibold")
         title_input.classes("grow").props("outlined dense")
         title_input.mark("scene-title-input")
@@ -250,6 +250,7 @@ def _render_scene_editor(scene: Scene) -> None:
         on_change=save,
         state=edit_state,
         show_toggle=False,
+        min_height="min-h-[24rem]",
     )
 
     sync_edit_mode_visibility()

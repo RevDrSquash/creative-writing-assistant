@@ -6,11 +6,14 @@ from typing import TypeVar
 from nicegui import binding, ui
 from nicegui.element import Element
 from nicegui.elements.button import Button
+from nicegui.elements.column import Column
+from nicegui.elements.expansion import Expansion
 from nicegui.elements.markdown import Markdown
 from nicegui.elements.textarea import Textarea
 
 from app.ui.components import render_markdown_editor
-from app.world.scene import DEFAULT_SCENE_MARKDOWN
+from app.ui.components.story_bible_forms import render_scene_blueprint_form
+from app.world.scene import DEFAULT_SCENE_MARKDOWN, create_scene
 
 ElementT = TypeVar("ElementT", bound=Element)
 
@@ -67,6 +70,27 @@ def test_markdown_editor_shared_state_without_toggle() -> None:
     binding._refresh_step()
 
     assert textarea.visible is False
+
+
+def test_markdown_editor_min_height_class() -> None:
+    target = {"body": "# Initial"}
+
+    elements = _render_new_elements(
+        lambda: render_markdown_editor(target, "body", min_height="min-h-[24rem]")
+    )
+    columns = [element for element in elements if isinstance(element, Column)]
+    assert any("min-h-[24rem]" in column.classes for column in columns)
+
+
+def test_scene_blueprint_expansions_collapsed_by_default(isolated_world) -> None:
+    scene = create_scene()
+    edit_state = {"edit_mode": True}
+
+    elements = _render_new_elements(lambda: render_scene_blueprint_form(scene, edit_state))
+    expansions = [element for element in elements if isinstance(element, Expansion)]
+    titles = {expansion.text for expansion in expansions}
+    assert titles == {"Blueprint", "Outline", "Character Stances"}
+    assert all(expansion.value is False for expansion in expansions)
 
 
 def _render_new_elements(render: Callable[[], None]) -> list[Element]:
