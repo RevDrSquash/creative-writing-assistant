@@ -10,15 +10,16 @@ deterministic and never touch the developer's `data/` folder or the network.
 from __future__ import annotations
 
 import sys
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Iterator
 from pathlib import Path
 
 import pytest
 from nicegui.testing import User
 from nicegui.testing.user_simulation import user_simulation
 
-# Bound at collection time so the isolated_world fixture resets the same module
+# Bound at collection time so the isolation fixtures reset the same module
 # instances that test modules imported, even after UI tests purge sys.modules.
+import app.persistence.model_configs as _model_configs
 import app.persistence.world as _world_persistence
 import app.world.store as _world_store
 
@@ -43,13 +44,20 @@ def _purge_app_modules() -> None:
 
 
 @pytest.fixture
-def isolated_data_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    """Redirect JSON persistence (world, chat history, model configs, LLM logs) to a temp dir."""
+def isolated_data_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Path]:
+    """Redirect JSON persistence (world, chat history, model configs, LLM logs) to a temp dir.
+
+    The model config repository is a process-wide singleton bound to a data
+    dir; reset it around the test so it rebinds to the temp dir instead of the
+    developer's real ``data/`` (otherwise tests read real model selections).
+    """
 
     data_dir = tmp_path / "data"
     data_dir.mkdir()
     monkeypatch.setenv("WRITING_AGENT_DATA_DIR", str(data_dir))
-    return data_dir
+    _model_configs.reset_model_config_repository()
+    yield data_dir
+    _model_configs.reset_model_config_repository()
 
 
 @pytest.fixture

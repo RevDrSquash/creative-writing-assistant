@@ -10,7 +10,7 @@ from nicegui import events, ui
 from app.persistence.world_zip import export_world_zip, import_world_zip
 from app.ui.config import APP_TITLE
 from app.ui.navigation import HEADER_NAV_ITEMS, NavigationItem
-from app.world.store import get_world, replace_world
+from app.world.store import clear_world, get_world, replace_world
 
 
 def find_item(
@@ -32,10 +32,14 @@ def render_header(active_path: str) -> None:
                 else:
                     button.props("flat color=white")
 
-        with ui.button(icon="more_vert").props("flat round color=white"):
+        overflow_button = ui.button(icon="more_vert").props("flat round color=white")
+        overflow_button.mark("header-overflow-menu")
+        with overflow_button:
             with ui.menu():
                 ui.menu_item("Import World", on_click=_open_import_dialog)
                 ui.menu_item("Export World", on_click=_export_world)
+                clear_item = ui.menu_item("Clear State...", on_click=_open_clear_dialog)
+                clear_item.mark("clear-state-menu-item")
 
 
 def _export_world() -> None:
@@ -67,6 +71,41 @@ def _open_import_dialog() -> None:
             "w-full"
         )
         ui.button("Cancel", on_click=dialog.close).props("flat")
+
+    dialog.open()
+
+
+def _open_clear_dialog() -> None:
+    with ui.dialog() as dialog, ui.card():
+        ui.label("Clear State").classes("text-lg font-semibold")
+        ui.label(
+            "This permanently removes selected story content. "
+            "Export the current world first if you want to keep it."
+        ).classes("text-grey-7")
+
+        everything = ui.checkbox("Everything", value=False)
+        story_bible = ui.checkbox("Story Bible", value=False)
+        scenes = ui.checkbox("Scenes", value=False)
+
+        def sync_everything(event: events.ValueChangeEventArguments) -> None:
+            story_bible.value = event.value
+            scenes.value = event.value
+
+        everything.on_value_change(sync_everything)
+
+        def handle_clear() -> None:
+            if not story_bible.value and not scenes.value:
+                ui.notify("Select at least one item to clear.", type="warning")
+                return
+            clear_world(story_bible=story_bible.value, scenes=scenes.value)
+            dialog.close()
+            ui.notify("State cleared.", type="positive")
+            ui.navigate.to("/workspace")
+
+        with ui.row().classes("w-full justify-end gap-2"):
+            ui.button("Cancel", on_click=dialog.close).props("flat")
+            clear_button = ui.button("Clear", on_click=handle_clear).props("color=negative")
+            clear_button.mark("clear-state-confirm-button")
 
     dialog.open()
 

@@ -6,8 +6,8 @@ import threading
 from collections.abc import Iterator
 from contextlib import contextmanager
 
-from app.persistence.world import get_world_store
-from app.world.models import World, utc_now
+from app.persistence.world import default_world, get_world_store
+from app.world.models import StoryBible, World, utc_now
 
 _WORLD: World | None = None
 
@@ -61,6 +61,16 @@ def world_transaction() -> Iterator[World]:
             for name in World.model_fields:
                 setattr(world, name, getattr(snapshot, name))
             raise
+
+
+def clear_world(*, story_bible: bool, scenes: bool) -> None:
+    """Reset selected parts of the world to their empty/default forms."""
+
+    with world_transaction() as world:
+        if story_bible:
+            world.story_bible = StoryBible()
+        if scenes:
+            world.scenes = default_world().scenes
 
 
 def replace_world(world: World) -> None:

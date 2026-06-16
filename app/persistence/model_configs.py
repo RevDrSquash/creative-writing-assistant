@@ -28,7 +28,7 @@ from app.models.config import (
 )
 from app.persistence.paths import get_data_dir
 
-DEFAULT_MODEL_CONFIG_PATH = get_data_dir() / "model_configs.json"
+MODEL_CONFIG_FILENAME = "model_configs.json"
 
 _MODEL_CONFIG_REPOSITORY: ModelConfigRepository | None = None
 
@@ -71,7 +71,7 @@ class JsonFileModelConfigStore:
     """JSON-file-backed model config store."""
 
     def __init__(self, path: Path | None = None) -> None:
-        self.path = path or DEFAULT_MODEL_CONFIG_PATH
+        self.path = path or get_data_dir() / MODEL_CONFIG_FILENAME
 
     def load(self) -> StoredModelConfigs:
         """Load model config state from disk, with defaults always present."""
@@ -191,6 +191,14 @@ def get_model_config_repository() -> ModelConfigRepository:
     if _MODEL_CONFIG_REPOSITORY is None:
         _MODEL_CONFIG_REPOSITORY = ModelConfigRepository()
     return _MODEL_CONFIG_REPOSITORY
+
+
+def reset_model_config_repository() -> None:
+    """Drop the cached repository so the next access rebinds to the data dir (tests)."""
+
+    global _MODEL_CONFIG_REPOSITORY
+
+    _MODEL_CONFIG_REPOSITORY = None
 
 
 def _with_defaults(data: StoredModelConfigs) -> StoredModelConfigs:

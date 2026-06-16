@@ -15,7 +15,7 @@ from app.persistence.world import (
     default_world,
     get_world_store,
 )
-from app.world.models import SCHEMA_VERSION, Scene, World, WorldFact
+from app.world.models import SCHEMA_VERSION, Character, CharacterIdentity, Scene, World, WorldFact
 from app.world.scene import (
     create_scene,
     delete_scene,
@@ -23,7 +23,7 @@ from app.world.scene import (
     resolve_scene,
     set_scene_text,
 )
-from app.world.store import get_world, replace_world, save_world, world_transaction
+from app.world.store import clear_world, get_world, replace_world, save_world, world_transaction
 
 
 def test_store_load_returns_default_world_when_missing(tmp_path: Path) -> None:
@@ -223,3 +223,62 @@ def test_delete_scene_removes_scene(isolated_world: World) -> None:
     assert extra not in isolated_world.scenes
     with pytest.raises(ValueError, match="Scene not found"):
         delete_scene(extra.id)
+
+
+def test_clear_world_story_bible_only(isolated_world: World) -> None:
+    isolated_world.story_bible.premise = "A dark tale"
+    isolated_world.story_bible.world_facts.append(WorldFact(title="The Reach", text="Coastal"))
+    isolated_world.story_bible.characters.append(Character(identity=CharacterIdentity(name="Mira")))
+    create_scene("Extra")
+
+    clear_world(story_bible=True, scenes=False)
+
+    world = get_world()
+    assert world.story_bible.premise == ""
+    assert world.story_bible.world_facts == []
+    assert world.story_bible.characters == []
+    assert len(world.scenes) == 2
+
+
+def test_clear_world_scenes_only(isolated_world: World) -> None:
+    isolated_world.story_bible.premise = "Keep me"
+    create_scene("Extra")
+
+    clear_world(story_bible=False, scenes=True)
+
+    world = get_world()
+    assert world.story_bible.premise == "Keep me"
+    assert len(world.scenes) == 1
+    assert world.scenes[0].title == "New Scene"
+    assert world.scenes[0].markdown == DEFAULT_SCENE_MARKDOWN
+
+
+def test_clear_world_both(isolated_world: World) -> None:
+    isolated_world.story_bible.premise = "Gone"
+    create_scene("Extra")
+
+    clear_world(story_bible=True, scenes=True)
+
+    world = get_world()
+    assert world.story_bible.premise == ""
+    assert len(world.scenes) == 1
+
+
+def test_clear_world_preserves_metadata(isolated_world: World) -> None:
+    isolated_world.metadata.title = "My Novel"
+    isolated_world.metadata.description = "Epic fantasy"
+
+    clear_world(story_bible=True, scenes=True)
+
+    world = get_world()
+    assert world.metadata.title == "My Novel"
+    assert world.metadata.description == "Epic fantasy"
+
+
+def test_clear_world_persists_to_disk(isolated_world: World, isolated_data_dir: Path) -> None:
+    isolated_world.story_bible.premise = "Gone"
+
+    clear_world(story_bible=True, scenes=False)
+
+    raw = json.loads((isolated_data_dir / "world.json").read_text(encoding="utf-8"))
+    assert raw["story_bible"]["premise"] == ""

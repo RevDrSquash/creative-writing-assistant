@@ -186,6 +186,41 @@ def test_catalog_by_provider_groups_and_sorts() -> None:
     assert grouped["Test"]["test/model-small"] == "Test Model Small"
 
 
+async def test_header_menu_includes_clear_state(user: User) -> None:
+    await user.open("/workspace")
+    user.find(marker="header-overflow-menu").click()
+    await user.should_see("Clear State...")
+
+
+async def test_clear_state_dialog_clears_everything(
+    user: User,
+    isolated_data_dir: Path,
+) -> None:
+    from app.persistence.world import JsonFileWorldStore, default_world
+    from app.world.models import Character, CharacterIdentity, Scene, WorldFact
+
+    world = default_world()
+    world.story_bible.premise = "Epic tale"
+    world.story_bible.world_facts.append(WorldFact(title="The Reach", text="Coastal"))
+    world.story_bible.characters.append(Character(identity=CharacterIdentity(name="Mira")))
+    world.scenes.append(Scene(title="Chapter 2", markdown="# Two"))
+    JsonFileWorldStore(isolated_data_dir / "world.json").save(world)
+
+    await user.open("/workspace")
+    user.find(marker="header-overflow-menu").click()
+    user.find(marker="clear-state-menu-item").click()
+    await user.should_see("Clear State")
+    user.find("Everything").click()
+    user.find(marker="clear-state-confirm-button").click()
+
+    stored = json.loads((isolated_data_dir / "world.json").read_text(encoding="utf-8"))
+    assert stored["story_bible"]["premise"] == ""
+    assert stored["story_bible"]["world_facts"] == []
+    assert stored["story_bible"]["characters"] == []
+    assert len(stored["scenes"]) == 1
+    assert stored["scenes"][0]["title"] == "New Scene"
+
+
 async def test_debug_page_renders_empty_state(user: User) -> None:
     await user.open("/debug")
     await user.should_see("LLM calls will appear here after the chat agent invokes a model.")
