@@ -11,13 +11,15 @@ from app.models.settings import OPENROUTER_BASE_URL, ModelSettings
 def get_chat_model_for_node(
     node_id: str,
     settings: ModelSettings | None = None,
+    *,
+    streaming: bool = True,
 ) -> BaseChatModel:
     """Create an OpenRouter chat model for a registered graph node."""
 
     from app.persistence.model_configs import get_model_config_repository
 
     config = get_model_config_repository().resolve_model_config(node_id)
-    return get_chat_model_for_config(config, settings)
+    return get_chat_model_for_config(config, settings, streaming=streaming)
 
 
 def get_chat_model(settings: ModelSettings | None = None) -> BaseChatModel:
@@ -32,8 +34,15 @@ def get_chat_model(settings: ModelSettings | None = None) -> BaseChatModel:
 def get_chat_model_for_config(
     config: ModelConfig,
     settings: ModelSettings | None = None,
+    *,
+    streaming: bool = True,
 ) -> BaseChatModel:
-    """Create an OpenRouter chat model from a persisted model config."""
+    """Create an OpenRouter chat model from a persisted model config.
+
+    Pass ``streaming=False`` for one-shot structured-output calls: streaming
+    aggregation serializes the structured ``parsed`` payload and emits noisy
+    Pydantic serializer warnings, while the non-streaming path excludes it.
+    """
 
     model_settings = settings or ModelSettings()
     if not model_settings.openrouter_api_key:
@@ -45,7 +54,7 @@ def get_chat_model_for_config(
         "base_url": OPENROUTER_BASE_URL,
         "callbacks": [get_llm_debug_handler()],
         "model": config.model,
-        "streaming": True,
+        "streaming": streaming,
     }
     if config.temperature is not None:
         model_kwargs["temperature"] = config.temperature

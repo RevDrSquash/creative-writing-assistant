@@ -9,6 +9,7 @@ from langgraph.graph.state import CompiledStateGraph
 
 from app.graphs.canvas_middleware import CanvasAppendMiddleware
 from app.graphs.context import ContextAssembler
+from app.graphs.serialize_tools_middleware import SerializeToolCallsMiddleware
 from app.graphs.state import WritingAgentState
 from app.models import ModelConfig, ModelSettings, get_chat_model, get_chat_model_for_config
 from app.models.config import CHAT_NODE_ID
@@ -33,7 +34,11 @@ def build_chat_agent(
         tools=WRITING_TOOLS,
         state_schema=WritingAgentState,
         system_prompt=assembler.system_prompt,
-        middleware=[CanvasAppendMiddleware(), _tool_failure_middleware()],
+        middleware=[
+            CanvasAppendMiddleware(),
+            SerializeToolCallsMiddleware(),
+            _tool_failure_middleware(),
+        ],
     )
 
 

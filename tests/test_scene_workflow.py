@@ -7,6 +7,7 @@ from typing import Any
 import pytest
 from langchain_core.language_models.fake_chat_models import GenericFakeChatModel
 from langchain_core.messages import AIMessage, ToolMessage
+from langchain_core.tools import ToolException
 from langgraph.types import Command
 
 from app.graphs.scene_workflow import (
@@ -127,13 +128,14 @@ def test_formalize_node_persists_blueprint(isolated_world: World) -> None:
 
 
 def test_stances_node_persists_blueprint(isolated_world: World) -> None:
+    character_id = _seed_character()
     scene = create_scene()
     models = {
         SCENE_STANCES_NODE_ID: structured_fake_model(
             StanceList(
                 stances=[
                     StanceOutput(
-                        character_id="char_a",
+                        character_id=character_id,
                         mood=["Uneasy"],
                         intent="Escape",
                         tactics="Lie",
@@ -144,14 +146,53 @@ def test_stances_node_persists_blueprint(isolated_world: World) -> None:
         )
     }
     state = _workflow_input(scene.id)
+    state["character_ids"] = [character_id]
     state["premise"] = "Premise"
     state["purpose"] = "Purpose"
     _author_stances_node(models)(state)
 
     stances = get_world().get_scene(scene.id).blueprint.stances
     assert len(stances) == 1
-    assert stances[0].character_id == "char_a"
+    assert stances[0].character_id == character_id
     assert stances[0].mood == ["Uneasy"]
+
+
+def test_stances_node_resolves_drifted_character_id(isolated_world: World) -> None:
+    upsert_character.invoke({"name": "The Narrator"})
+    character_id = get_world().story_bible.characters[-1].id
+    scene = create_scene()
+    models = {
+        SCENE_STANCES_NODE_ID: structured_fake_model(
+            StanceList(stances=[StanceOutput(character_id="char_narrator", mood=["Cold"])])
+        )
+    }
+    state = _workflow_input(scene.id)
+    state["character_ids"] = [character_id]
+    _author_stances_node(models)(state)
+
+    stances = get_world().get_scene(scene.id).blueprint.stances
+    assert [stance.character_id for stance in stances] == [character_id]
+
+
+def test_stances_node_drops_unknown_character(isolated_world: World) -> None:
+    character_id = _seed_character()
+    scene = create_scene()
+    models = {
+        SCENE_STANCES_NODE_ID: structured_fake_model(
+            StanceList(
+                stances=[
+                    StanceOutput(character_id=character_id, mood=["Wary"]),
+                    StanceOutput(character_id="char_ghost", mood=["Absent"]),
+                ]
+            )
+        )
+    }
+    state = _workflow_input(scene.id)
+    state["character_ids"] = [character_id]
+    _author_stances_node(models)(state)
+
+    stances = get_world().get_scene(scene.id).blueprint.stances
+    assert [stance.character_id for stance in stances] == [character_id]
 
 
 def test_outline_node_persists_beats(isolated_world: World) -> None:
@@ -312,6 +353,65 @@ def test_draft_scene_tool_creates_and_opens_scene(
     assert isinstance(command.update["messages"][0], ToolMessage)
 
 
+def test_draft_scene_tool_normalizes_drifted_character_ids(
+    isolated_world: World,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    upsert_character.invoke({"name": "The Narrator"})
+    character_id = get_world().story_bible.characters[-1].id
+    captured: dict[str, Any] = {}
+
+    def fake_build(**_kwargs: Any) -> Any:
+        graph = build_scene_writer_graph(models=_workflow_models())
+        original_invoke = graph.invoke
+
+        def invoke(input_state: dict[str, Any], *args: Any, **kwargs: Any) -> Any:
+            captured["character_ids"] = input_state["character_ids"]
+            return original_invoke(input_state, *args, **kwargs)
+
+        monkeypatch.setattr(graph, "invoke", invoke)
+        return graph
+
+    monkeypatch.setattr("app.graphs.registry.WORKFLOWS", {"draft_scene": fake_build})
+
+    state = {
+        "current_scene_id": get_world().scenes[0].id,
+        "current_scene": get_world().scenes[0].markdown,
+    }
+    draft_scene.func(
+        "Brief premise.",
+        "Brief purpose.",
+        "Second person",
+        ["char_narrator"],
+        state,
+        "draft-call",
+    )
+
+    assert captured["character_ids"] == [character_id]
+
+
+def test_draft_scene_tool_rejects_unknown_character_ids(isolated_world: World) -> None:
+    _seed_character()
+    state = {
+        "current_scene_id": get_world().scenes[0].id,
+        "current_scene": get_world().scenes[0].markdown,
+    }
+    scene_count = len(get_world().scenes)
+
+    with pytest.raises(ToolException, match="Unknown character_id"):
+        draft_scene.func(
+            "Brief premise.",
+            "Brief purpose.",
+            "Third person",
+            ["char_villain"],
+            state,
+            "draft-call",
+        )
+
+    # The bogus call must not have created an orphan scene.
+    assert len(get_world().scenes) == scene_count
+
+
 def test_graph_nodes_register_scene_workflow_nodes() -> None:
     node_ids = {node.node_id for node in GRAPH_NODES}
     expected = {
@@ -333,7 +433,9 @@ def test_get_chat_model_for_node_resolves_registered_nodes(
     monkeypatch.setenv("OPENROUTER_API_KEY", "sk-or-v1-test")
     created: list[str] = []
 
-    def fake_get_chat_model_for_config(config: Any, settings: Any = None) -> str:
+    def fake_get_chat_model_for_config(
+        config: Any, settings: Any = None, *, streaming: bool = True
+    ) -> str:
         created.append(config.id)
         return f"model-{config.id}"
 

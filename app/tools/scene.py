@@ -401,7 +401,11 @@ def draft_scene(
 
     Always creates a new scene, formalizes the brief into blueprint fields,
     outlines, drafts prose, and sets title and summary.
+
+    `character_ids` must come from read_story_bible; unknown ids are rejected.
     """
+
+    character_ids = _resolve_scene_character_ids(character_ids)
 
     _persist_open_scene_text(state)
     scene = world_create_scene()
@@ -435,6 +439,43 @@ def draft_scene(
             ],
         }
     )
+
+
+def _resolve_scene_character_ids(character_ids: list[str]) -> list[str]:
+    """Resolve provided ids to real character ids, rejecting unknown ones.
+
+    Tolerates minor drift (e.g. a dropped article) so the workflow always
+    receives canonical ids and never writes dangling stance references.
+    """
+
+    bible = get_world().story_bible
+    resolved: list[str] = []
+    unknown: list[str] = []
+    seen: set[str] = set()
+    for raw_id in character_ids:
+        match = bible.resolve_character_id(raw_id)
+        if match is None:
+            unknown.append(raw_id)
+        elif match not in seen:
+            seen.add(match)
+            resolved.append(match)
+    if unknown:
+        raise ToolException(_unknown_character_detail(unknown))
+    return resolved
+
+
+def _unknown_character_detail(unknown_ids: list[str]) -> str:
+    bible = get_world().story_bible
+    unknown = ", ".join(unknown_ids)
+    if bible.characters:
+        listing = ", ".join(
+            f"{character.identity.name or 'Unnamed'} [{character.id}]"
+            for character in bible.characters
+        )
+        detail = f"Valid characters: {listing}"
+    else:
+        detail = "No characters exist yet; create one first."
+    return f"Unknown character_id(s): {unknown}. {detail}"
 
 
 SCENE_TOOLS = [

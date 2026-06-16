@@ -9,6 +9,7 @@ model description.
 from __future__ import annotations
 
 import re
+from collections.abc import Iterable
 from datetime import datetime, timezone
 from typing import Annotated, Literal
 from uuid import uuid4
@@ -22,6 +23,21 @@ WorldStateKind = Literal["pressure", "thread", "consequence"]
 
 INTIMACY_STRENGTHS: tuple[IntimacyStrength, ...] = ("minor", "major", "defining")
 WORLD_STATE_KINDS: tuple[WorldStateKind, ...] = ("pressure", "thread", "consequence")
+
+# Articles dropped when comparing character ids, so a model that emits
+# ``char_narrator`` still resolves to the real ``char_the_narrator``.
+_CHARACTER_ID_STOPWORDS = frozenset({"the", "a", "an"})
+
+
+def _character_id_tokens(value: str) -> frozenset[str]:
+    """Return the significant tokens of a character id for fuzzy matching."""
+
+    cleaned = value.strip().lower()
+    if cleaned.startswith("char_"):
+        cleaned = cleaned[len("char_") :]
+    return frozenset(
+        token for token in cleaned.split("_") if token and token not in _CHARACTER_ID_STOPWORDS
+    )
 
 
 def new_id() -> str:
@@ -211,6 +227,37 @@ class StoryBible(BaseModel):
             (character for character in self.characters if character.id == character_id),
             None,
         )
+
+    def resolve_character_id(
+        self,
+        character_id: str,
+        allowed: Iterable[str] | None = None,
+    ) -> str | None:
+        """Resolve a possibly-imprecise character id to a real character id.
+
+        Models occasionally emit a slightly different id than the canonical
+        one (for example ``char_narrator`` instead of ``char_the_narrator``).
+        This matches exactly first, then tolerates minor drift by comparing the
+        significant id tokens (ignoring dropped articles). When ``allowed`` is
+        given, only those ids are considered. Returns ``None`` if there is no
+        unique match.
+        """
+
+        candidate_ids = [character.id for character in self.characters]
+        if allowed is not None:
+            allowed_set = set(allowed)
+            candidate_ids = [cid for cid in candidate_ids if cid in allowed_set]
+
+        if character_id in candidate_ids:
+            return character_id
+
+        target = _character_id_tokens(character_id)
+        if not target:
+            return None
+        matches = [cid for cid in candidate_ids if target <= _character_id_tokens(cid)]
+        if len(matches) == 1:
+            return matches[0]
+        return None
 
     def get_world_fact(self, fact_id: str) -> WorldFact | None:
         return next((fact for fact in self.world_facts if fact.id == fact_id), None)

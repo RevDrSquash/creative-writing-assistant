@@ -41,6 +41,16 @@ The main agent passes a brief: premise, purpose, POV, participating characters, 
 constraints. `draft_scene` always creates a new scene; revising an existing scene via a
 workflow (`revise_scene`) is deferred. The brief expresses intent; the workflow owns craft.
 
+`character_ids` are validated and normalized at the tool boundary before the workflow runs.
+The agent sometimes emits a slightly-off id (for example `char_narrator` for the real
+`char_the_narrator`), so `draft_scene` resolves each id against the Story Bible via
+`StoryBible.resolve_character_id` (exact match, then a forgiving match on significant id tokens
+that ignores dropped articles). Unresolvable ids raise a `ToolException` listing the valid
+characters — mirroring the signal-tool validation — so the agent retries with correct ids rather
+than seeding the scene with dangling stance references. The stance node applies the same
+resolution against the scene's character set and drops any stance it cannot resolve, so a
+persisted blueprint never references a character that does not exist.
+
 ### Nodes (enforced order)
 
 1. **Formalize essential details** — turn the brief into the stored scene `premise` and `purpose`.
@@ -60,6 +70,12 @@ Each piece writes through to the `Scene` as its step completes: blueprint fields
 then title and summary. The blueprint is shown only in edit mode in the scene editor (hidden in
 preview); see [forms_and_data_models.md](forms_and_data_models.md). This phase does not stream the
 draft token-by-token into the editor; the finished prose is written on step completion.
+
+The structured-output nodes (formalize, stances, outline, review, revise, title/summary) build
+their model with `streaming=False`. They are one-shot `with_structured_output(...).invoke()` calls
+that do not need token streaming, and streaming aggregation serializes the structured `parsed`
+payload, which emits noisy Pydantic serializer warnings; the non-streaming path excludes that field.
+The drafting node keeps the default streaming model.
 
 ## Intimacy Review Workflow
 

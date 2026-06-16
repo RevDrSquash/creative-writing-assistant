@@ -114,10 +114,15 @@ def build_scene_writer_graph(
     return graph.compile()
 
 
-def _resolve_model(node_id: str, models: dict[str, BaseChatModel] | None) -> BaseChatModel:
+def _resolve_model(
+    node_id: str,
+    models: dict[str, BaseChatModel] | None,
+    *,
+    streaming: bool = True,
+) -> BaseChatModel:
     if models is not None and node_id in models:
         return models[node_id]
-    return get_chat_model_for_node(node_id)
+    return get_chat_model_for_node(node_id, streaming=streaming)
 
 
 def _structured_invoke(
@@ -126,7 +131,9 @@ def _structured_invoke(
     schema: type[BaseModel],
     prompt: str,
 ) -> BaseModel:
-    model = _resolve_model(node_id, models).with_structured_output(schema)
+    # Structured output is a one-shot call; streaming aggregation would emit
+    # noisy Pydantic serializer warnings for the parsed payload.
+    model = _resolve_model(node_id, models, streaming=False).with_structured_output(schema)
     return model.invoke([HumanMessage(content=prompt)])
 
 
@@ -158,16 +165,24 @@ def _author_stances_node(models: dict[str, BaseChatModel] | None) -> Any:
             f"Constraints: {state.get('constraints', '') or '(none)'}"
         )
         result = _structured_invoke(SCENE_STANCES_NODE_ID, models, StanceList, prompt)
-        stances = [
-            SceneCharacterStance(
-                character_id=item.character_id,
-                mood=list(item.mood),
-                intent=item.intent,
-                tactics=item.tactics,
-                stakes=item.stakes,
+        bible = get_world().story_bible
+        character_ids = state.get("character_ids", [])
+        stances: list[SceneCharacterStance] = []
+        seen: set[str] = set()
+        for item in result.stances:
+            resolved_id = bible.resolve_character_id(item.character_id, allowed=character_ids)
+            if resolved_id is None or resolved_id in seen:
+                continue
+            seen.add(resolved_id)
+            stances.append(
+                SceneCharacterStance(
+                    character_id=resolved_id,
+                    mood=list(item.mood),
+                    intent=item.intent,
+                    tactics=item.tactics,
+                    stakes=item.stakes,
+                )
             )
-            for item in result.stances
-        ]
         update_scene_blueprint(state["scene_id"], stances=stances)
         return {"stances": stances}
 

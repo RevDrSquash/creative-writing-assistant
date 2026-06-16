@@ -297,3 +297,51 @@ def test_event_index_and_lookups() -> None:
     assert bible.get_event(event.id) is event
     assert bible.get_character(character.id) is character
     assert bible.get_character("missing") is None
+
+
+def _bible_with_named_characters(*names: str) -> StoryBible:
+    existing: set[str] = set()
+    characters: list[Character] = []
+    for name in names:
+        char_id = unique_slug("char_", name, existing)
+        existing.add(char_id)
+        characters.append(Character(id=char_id, identity=CharacterIdentity(name=name)))
+    return StoryBible(characters=characters)
+
+
+def test_resolve_character_id_exact_match() -> None:
+    bible = _bible_with_named_characters("The Narrator")
+
+    assert bible.resolve_character_id("char_the_narrator") == "char_the_narrator"
+
+
+def test_resolve_character_id_tolerates_dropped_article() -> None:
+    bible = _bible_with_named_characters("The Narrator", "The Protagonist", "The Princess")
+
+    assert bible.resolve_character_id("char_narrator") == "char_the_narrator"
+    assert bible.resolve_character_id("char_protagonist") == "char_the_protagonist"
+    assert bible.resolve_character_id("char_princess") == "char_the_princess"
+
+
+def test_resolve_character_id_returns_none_for_unknown() -> None:
+    bible = _bible_with_named_characters("The Narrator")
+
+    assert bible.resolve_character_id("char_villain") is None
+    assert bible.resolve_character_id("") is None
+
+
+def test_resolve_character_id_returns_none_when_ambiguous() -> None:
+    bible = _bible_with_named_characters("The Guard", "The Guard")
+
+    # Both ids reduce to the same significant token, so there is no unique match.
+    assert bible.resolve_character_id("char_guard") is None
+
+
+def test_resolve_character_id_respects_allowed_set() -> None:
+    bible = _bible_with_named_characters("The Narrator", "The Protagonist")
+
+    assert bible.resolve_character_id("char_narrator", allowed=["char_the_protagonist"]) is None
+    assert (
+        bible.resolve_character_id("char_narrator", allowed=["char_the_narrator"])
+        == "char_the_narrator"
+    )

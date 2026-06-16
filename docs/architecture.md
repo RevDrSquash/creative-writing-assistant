@@ -34,8 +34,13 @@ The app is a local-first Python writing workspace built around one in-memory `Wo
   - Contains metadata, scenes, Story Bible data, and chat history.
   - User edits and AI tool calls both update this same object.
   - All writes to `world.json` are serialized behind a process-wide lock in `app/world/store.py`.
-    Agent tool calls can run concurrently in worker threads, and on Windows two overlapping
-    atomic saves collide on the file lock.
+    The lock alone only prevents overlapping saves from colliding (on Windows two overlapping
+    atomic saves collide on the file lock); it does not fix ordering. The tool node runs a single
+    AI message's batched tool calls concurrently (`asyncio.gather` async, a thread pool sync), so
+    order-sensitive mutations (`add_event` append, `update_event` insert) could be persisted in a
+    different order than the model emitted. `SerializeToolCallsMiddleware`
+    (`app/graphs/serialize_tools_middleware.py`) gates each call on its index within the emitting
+    message and runs the batch one at a time, in emission order, on both execution paths.
   - Programmatic write paths (agent tools, scene helpers) mutate and save inside
     `world_transaction()`: the lock is held across the whole mutate+save, and the in-memory
     mutation is rolled back if the save fails, so memory and disk never diverge. Without this, a

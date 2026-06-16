@@ -55,3 +55,21 @@ def test_get_chat_model_for_config_omits_optional_parameters(
 
     assert "temperature" not in captured
     assert "extra_body" not in captured
+
+
+def test_get_chat_model_for_config_can_disable_streaming(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, object] = {}
+
+    def fake_chat_openai(**kwargs: object) -> dict[str, object]:
+        captured.update(kwargs)
+        return captured
+
+    monkeypatch.setattr(client, "ChatOpenAI", fake_chat_openai)
+    settings = ModelSettings(OPENROUTER_API_KEY="sk-or-v1-test")
+    config = ModelConfig(id="custom", name="Custom", model="example/custom")
+
+    client.get_chat_model_for_config(config, settings, streaming=False)
+
+    assert captured["streaming"] is False

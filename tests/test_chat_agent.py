@@ -239,6 +239,60 @@ async def test_chat_agent_surfaces_tool_failure_in_async_stream(isolated_world) 
     assert final_messages[-1].content == "No such character exists yet."
 
 
+def _batched_add_event_message(titles: list[str]) -> AIMessage:
+    tool_calls = [
+        {
+            "name": "add_event",
+            "args": {"title": title},
+            "id": f"add-event-{index}",
+            "type": "tool_call",
+        }
+        for index, title in enumerate(titles)
+    ]
+    return AIMessage(content="", tool_calls=tool_calls)
+
+
+def test_chat_agent_applies_batched_tool_calls_in_emission_order_sync(isolated_world) -> None:
+    titles = ["Alpha", "Bravo", "Charlie", "Delta", "Echo"]
+    fake_model = ToolAwareFakeChatModel(
+        messages=iter(
+            [_batched_add_event_message(titles), AIMessage(content="Added the timeline.")]
+        )
+    )
+    agent = build_chat_agent(
+        model=fake_model,
+        assembler=ContextAssembler(system_prompt="System instructions"),
+    )
+
+    agent.invoke({"messages": [HumanMessage(content="Add the events.")]})
+
+    assert [event.title for event in isolated_world.story_bible.timeline] == titles
+
+
+async def test_chat_agent_applies_batched_tool_calls_in_emission_order_async(
+    isolated_world,
+) -> None:
+    titles = ["Alpha", "Bravo", "Charlie", "Delta", "Echo"]
+
+    # The tool node runs a batch concurrently, so a single pass can pass by
+    # luck; repeat to make the ordering guarantee a reliable regression guard.
+    for _ in range(10):
+        isolated_world.story_bible.timeline = []
+        fake_model = ToolAwareFakeChatModel(
+            messages=iter(
+                [_batched_add_event_message(titles), AIMessage(content="Added the timeline.")]
+            )
+        )
+        agent = build_chat_agent(
+            model=fake_model,
+            assembler=ContextAssembler(system_prompt="System instructions"),
+        )
+
+        await agent.ainvoke({"messages": [HumanMessage(content="Add the events.")]})
+
+        assert [event.title for event in isolated_world.story_bible.timeline] == titles
+
+
 def test_chat_agent_with_replace_scene_text_tool_updates_state() -> None:
     tool_call = {
         "name": "replace_scene_text",
