@@ -23,13 +23,15 @@ We were doing the second when we only needed the first. The observable symptom w
 
 ## 4. Phase 4: system prompt prefixes
 
-The implementation plan calls for per-node model configs that each carry a system-prompt prefix. The prefix and the base writing-assistant prompt should be composed into a single string at agent-build time:
+Per-node model configs carry a `system_prompt_prefix`. The prefix is bound to the resolved model at construction time and injected on every LLM call, so it is impossible to use a config without also applying its prefix.
 
-* `ContextAssembler` grows a `prefixes: Sequence[str]` (or analogous) input and a `system_prompt` property that joins prefixes + base prompt.
-* `build_chat_agent` reads the resolved model config for the current node, constructs `ContextAssembler(prefixes=..., base_prompt=...)`, and passes `assembler.system_prompt` to `create_agent(system_prompt=...)`.
-* The cached agent (`_CHAT_AGENT` in `app/graphs/chat_agent.py`) needs its cache key extended beyond the OpenRouter API key to include whatever inputs feed `assembler.system_prompt`, so a config change triggers a rebuild.
+* `get_chat_model_for_config` in `app/models/client.py` returns a `PrefixedChatOpenAI` that stores `system_prompt_prefix` from the resolved `ModelConfig`.
+* Prefix injection runs in the public `generate` / `agenerate` / `stream` / `astream` entry points (before `on_chat_model_start`), so the merged prompt is what both the model API and the local debug log see. If the request already has a leading `SystemMessage` (for example from `create_agent(system_prompt=...)`), the prefix is merged into it; otherwise a new leading `SystemMessage` is inserted (structured-output workflow nodes that send only a `HumanMessage`). `_apply_prefix` is idempotent so the `stream` -> `invoke` fallback cannot double-apply the prefix.
+* `ContextAssembler` holds only the node-specific base prompt (for the chat agent, `DEFAULT_SYSTEM_PROMPT`). It does not compose prefixes.
+* `build_chat_agent` passes `assembler.system_prompt` to `create_agent(system_prompt=...)` and resolves the model through `get_chat_model_for_config`, which applies the prefix transparently.
+* The cached agent (`_CHAT_AGENT` in `app/graphs/chat_agent.py`) cache key includes `system_prompt_prefix` so a config change triggers a rebuild.
 
-This stays purely a string-composition problem. No middleware required. If we later need per-call dynamism (e.g., the prefix depends on per-invocation runtime config), `create_agent`'s `system_prompt=` accepts a callable form, which is still strictly simpler than writing to the messages channel.
+This stays out of message-channel middleware. If we later need per-call dynamism (e.g., the prefix depends on per-invocation runtime config), we can extend `PrefixedChatOpenAI` or use `create_agent`'s callable `system_prompt=` form.
 
 ## 5. Phase 6: user context notes
 

@@ -55,7 +55,7 @@ Model resolution is centralized in the repository facade. For a given `node_id`,
 2. The node registry default, when it points to an existing config.
 3. The `standard` default config as a final fallback.
 
-Callers should resolve once for the node they are building, then pass the resolved config to the LLM client and context assembler.
+Callers should resolve once for the node they are building, then pass the resolved config to `get_chat_model_for_config`. The returned model carries the prefix; node-specific base prompts (where needed) are supplied separately by each graph node.
 
 ## Persistence
 
@@ -97,6 +97,8 @@ Catalog fetch failure should not block editing saved configs. When the live list
 
 ## Prompt Prefixes
 
-`system_prompt_prefix` is static prompt text for a resolved config. It is composed with the base writing-assistant prompt by the context assembler and passed to `create_agent(system_prompt=...)` when the agent is built.
+`system_prompt_prefix` is static prompt text for a resolved config. It is bound to the model returned by `get_chat_model_for_config` (`PrefixedChatOpenAI`) and injected on every LLM call for that config: chat agent, workflow structured nodes, and workflow drafting nodes all receive it automatically when they resolve a model through the repository.
+
+When a node also supplies a base system prompt (for example the chat agent's `DEFAULT_SYSTEM_PROMPT` or the scene draft node's prose instructions), the prefix is merged into that leading system message. Nodes that send only a user message get a standalone system message containing the prefix. The merged prompt is observable in `data/llm_call_logs.json` (`prompt` / `prompt_messages` on each record).
 
 Do not inject these prefixes through message-channel middleware. The prompt assembly details and rationale are documented in [architecture_prompt_assembly.md](architecture_prompt_assembly.md).

@@ -1,11 +1,123 @@
 """Chat model factory for the LangGraph chat agent."""
 
-from langchain_core.language_models import BaseChatModel
+from __future__ import annotations
+
+from collections.abc import AsyncIterator, Iterator, Sequence
+from typing import Any
+
+from langchain_core.callbacks import Callbacks
+from langchain_core.language_models import BaseChatModel, LanguageModelInput
+from langchain_core.messages import BaseMessage, SystemMessage
+from langchain_core.outputs import LLMResult
 from langchain_openai import ChatOpenAI
 
 from app.models.config import CHAT_NODE_ID, ModelConfig
 from app.models.debug_logging import get_llm_debug_handler
 from app.models.settings import OPENROUTER_BASE_URL, ModelSettings
+
+
+class PrefixedChatOpenAI(ChatOpenAI):
+    """OpenRouter chat model that always applies a config-bound system prompt prefix."""
+
+    system_prompt_prefix: str = ""
+
+    def _apply_prefix(self, messages: Sequence[BaseMessage]) -> list[BaseMessage]:
+        if not self.system_prompt_prefix:
+            return list(messages)
+
+        normalized = list(messages)
+        for index, message in enumerate(normalized):
+            if isinstance(message, SystemMessage):
+                content = message.content
+                if content == self.system_prompt_prefix or (
+                    isinstance(content, str)
+                    and content.startswith(f"{self.system_prompt_prefix}\n\n")
+                ):
+                    return normalized
+                merged = f"{self.system_prompt_prefix}\n\n{content}".strip()
+                normalized[index] = SystemMessage(content=merged)
+                return normalized
+        return [SystemMessage(content=self.system_prompt_prefix), *normalized]
+
+    def _prefix_input(self, input: LanguageModelInput) -> LanguageModelInput:
+        if not self.system_prompt_prefix:
+            return input
+        messages = self._convert_input(input).to_messages()
+        return self._apply_prefix(messages)
+
+    def generate(
+        self,
+        messages: list[list[BaseMessage]],
+        stop: list[str] | None = None,
+        callbacks: Callbacks = None,
+        *,
+        tags: list[str] | None = None,
+        metadata: dict[str, Any] | None = None,
+        run_name: str | None = None,
+        run_id: Any = None,
+        **kwargs: Any,
+    ) -> LLMResult:
+        prefixed = [self._apply_prefix(message_list) for message_list in messages]
+        return super().generate(
+            prefixed,
+            stop,
+            callbacks,
+            tags=tags,
+            metadata=metadata,
+            run_name=run_name,
+            run_id=run_id,
+            **kwargs,
+        )
+
+    async def agenerate(
+        self,
+        messages: list[list[BaseMessage]],
+        stop: list[str] | None = None,
+        callbacks: Callbacks = None,
+        *,
+        tags: list[str] | None = None,
+        metadata: dict[str, Any] | None = None,
+        run_name: str | None = None,
+        run_id: Any = None,
+        **kwargs: Any,
+    ) -> LLMResult:
+        prefixed = [self._apply_prefix(message_list) for message_list in messages]
+        return await super().agenerate(
+            prefixed,
+            stop,
+            callbacks,
+            tags=tags,
+            metadata=metadata,
+            run_name=run_name,
+            run_id=run_id,
+            **kwargs,
+        )
+
+    def stream(
+        self,
+        input: LanguageModelInput,
+        config: Any = None,
+        *,
+        stop: list[str] | None = None,
+        **kwargs: Any,
+    ) -> Iterator[Any]:
+        yield from super().stream(self._prefix_input(input), config=config, stop=stop, **kwargs)
+
+    async def astream(
+        self,
+        input: LanguageModelInput,
+        config: Any = None,
+        *,
+        stop: list[str] | None = None,
+        **kwargs: Any,
+    ) -> AsyncIterator[Any]:
+        async for chunk in super().astream(
+            self._prefix_input(input),
+            config=config,
+            stop=stop,
+            **kwargs,
+        ):
+            yield chunk
 
 
 def get_chat_model_for_node(
@@ -61,4 +173,4 @@ def get_chat_model_for_config(
     if config.reasoning_effort is not None:
         model_kwargs["extra_body"] = {"reasoning": {"effort": config.reasoning_effort}}
 
-    return ChatOpenAI(**model_kwargs)
+    return PrefixedChatOpenAI(**model_kwargs, system_prompt_prefix=config.system_prompt_prefix)

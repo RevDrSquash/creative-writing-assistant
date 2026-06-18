@@ -65,7 +65,7 @@ def get_chat_agent() -> CompiledStateGraph:
     if _CHAT_AGENT is None or _CHAT_AGENT_CACHE_KEY != cache_key:
         _CHAT_AGENT = build_chat_agent(
             model=get_chat_model_for_config(config, settings),
-            assembler=ContextAssembler(prefix=config.system_prompt_prefix),
+            assembler=ContextAssembler(),
         )
         _CHAT_AGENT_CACHE_KEY = cache_key
     return _CHAT_AGENT

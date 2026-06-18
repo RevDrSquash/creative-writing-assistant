@@ -23,7 +23,8 @@ A workflow is an enforced LangGraph workflow graph exposed to the main agent as 
 - **Per-node model config**: each node resolves its model through the per-node model-config
   override system (the same mechanism the chat node uses; see
   [model_configuration.md](model_configuration.md)). Cheap steps (outline, review) can use a
-  smaller role while drafting uses a larger one.
+  smaller role while drafting uses a larger one. The resolved config's `system_prompt_prefix`
+  is applied transparently on every LLM call via `PrefixedChatOpenAI` in `app/models/client.py`.
 - **Persistence**: workflows write through to the `World` incrementally — each completed piece is
   saved as its step finishes, using the existing per-tool-call `world_transaction()` on the store.
   This makes progress visible in the UI and leaves partial-but-usable results if a later step

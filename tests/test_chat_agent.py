@@ -71,21 +71,6 @@ def test_build_chat_agent_prepends_system_prompt_to_model_input() -> None:
     assert not any(isinstance(message, SystemMessage) for message in result["messages"])
 
 
-def test_build_chat_agent_composes_config_prefix_into_model_input() -> None:
-    RecordingFakeChatModel.recorded_messages = []
-    fake_model = RecordingFakeChatModel(messages=iter([AIMessage(content="ok")]))
-    agent = build_chat_agent(
-        model=fake_model,
-        assembler=ContextAssembler(prefix="Respond with lyrical restraint."),
-    )
-
-    agent.invoke({"messages": [HumanMessage(content="Hi")]})
-    recorded = RecordingFakeChatModel.recorded_messages
-
-    assert isinstance(recorded[0], SystemMessage)
-    assert recorded[0].content == ("Respond with lyrical restraint.\n\n" + DEFAULT_SYSTEM_PROMPT)
-
-
 def test_get_chat_agent_uses_resolved_config_and_rebuilds_on_prefix_change(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -103,10 +88,17 @@ def test_get_chat_agent_uses_resolved_config_and_rebuilds_on_prefix_change(
 
     repo = FakeRepository()
     prompts: list[str] = []
+    captured_configs: list[ModelConfig] = []
 
     def fake_create_agent(**kwargs: Any) -> str:
         prompts.append(kwargs["system_prompt"])
         return f"agent-{len(prompts)}"
+
+    def fake_get_chat_model_for_config(
+        config: ModelConfig, settings: Any = None, *, streaming: bool = True
+    ) -> object:
+        captured_configs.append(config)
+        return object()
 
     monkeypatch.setattr(chat_agent_module, "_CHAT_AGENT", None)
     monkeypatch.setattr(chat_agent_module, "_CHAT_AGENT_CACHE_KEY", None)
@@ -116,7 +108,9 @@ def test_get_chat_agent_uses_resolved_config_and_rebuilds_on_prefix_change(
         lambda: SimpleNamespace(openrouter_api_key="sk-or-v1-test"),
     )
     monkeypatch.setattr(chat_agent_module, "get_model_config_repository", lambda: repo)
-    monkeypatch.setattr(chat_agent_module, "get_chat_model_for_config", lambda *args: object())
+    monkeypatch.setattr(
+        chat_agent_module, "get_chat_model_for_config", fake_get_chat_model_for_config
+    )
     monkeypatch.setattr(chat_agent_module, "create_agent", fake_create_agent)
 
     first_agent = chat_agent_module.get_chat_agent()
@@ -125,10 +119,9 @@ def test_get_chat_agent_uses_resolved_config_and_rebuilds_on_prefix_change(
 
     assert first_agent == "agent-1"
     assert second_agent == "agent-2"
-    assert prompts == [
-        "First prefix.\n\n" + DEFAULT_SYSTEM_PROMPT,
-        "Second prefix.\n\n" + DEFAULT_SYSTEM_PROMPT,
-    ]
+    assert prompts == [DEFAULT_SYSTEM_PROMPT, DEFAULT_SYSTEM_PROMPT]
+    assert captured_configs[0].system_prompt_prefix == "First prefix."
+    assert captured_configs[1].system_prompt_prefix == "Second prefix."
 
 
 def test_chat_agent_with_create_scene_tool_switches_open_scene(isolated_world) -> None:

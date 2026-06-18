@@ -34,11 +34,9 @@ class ContextAssembler:
 
     def __init__(
         self,
-        prefix: str = "",
         base_prompt: str = DEFAULT_SYSTEM_PROMPT,
         system_prompt: str | None = None,
     ) -> None:
-        self.prefix = prefix
         self.base_prompt = base_prompt
         self._system_prompt = system_prompt
 
@@ -48,4 +46,4 @@ class ContextAssembler:
 
         if self._system_prompt is not None:
             return self._system_prompt
-        return "\n\n".join(part.strip() for part in (self.prefix, self.base_prompt) if part.strip())
+        return self.base_prompt.strip()

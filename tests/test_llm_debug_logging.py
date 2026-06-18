@@ -1,12 +1,51 @@
 """Unit tests for LLM debug callback logging."""
 
+from typing import Any
 from uuid import uuid4
 
-from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
-from langchain_core.outputs import ChatGeneration, LLMResult
+from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage, ToolMessage
+from langchain_core.outputs import ChatGeneration, ChatResult, LLMResult
 
+from app.models.client import PrefixedChatOpenAI
 from app.models.debug_logging import LLMDebugCallbackHandler
 from app.persistence import JsonFileLLMCallLogStore
+
+PREFIX = "Use a noir voice."
+BASE_SYSTEM = "Base instructions."
+
+
+class _LoggingPrefixed(PrefixedChatOpenAI):
+    def _generate(
+        self,
+        messages: list[BaseMessage],
+        stop: list[str] | None = None,
+        run_manager: Any = None,
+        **kwargs: Any,
+    ) -> ChatResult:
+        return ChatResult(generations=[ChatGeneration(message=AIMessage(content="ok"))])
+
+
+def test_handler_logs_prefixed_prompt_messages_from_model_invoke(tmp_path) -> None:
+    store = JsonFileLLMCallLogStore(tmp_path / "llm_call_logs.json")
+    handler = LLMDebugCallbackHandler(store)
+    model = _LoggingPrefixed(
+        api_key="sk-or-v1-test",
+        model="example/custom",
+        system_prompt_prefix=PREFIX,
+        streaming=False,
+        callbacks=[handler],
+    )
+
+    model.invoke([SystemMessage(content=BASE_SYSTEM), HumanMessage(content="Hi")])
+
+    records = store.list()
+    assert len(records) == 1
+    record = records[0]
+    assert record.status == "success"
+    assert record.prompt_messages[0]["role"] == "system"
+    assert record.prompt_messages[0]["content"] == f"{PREFIX}\n\n{BASE_SYSTEM}"
+    assert record.prompt_messages[1]["content"] == "Hi"
+    assert PREFIX in record.prompt
 
 
 def test_handler_creates_running_record_on_chat_model_start(tmp_path) -> None:
