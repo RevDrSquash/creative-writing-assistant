@@ -92,3 +92,22 @@ fix so the context is not lost between phases.
   the project has a single dev world and migration tooling is deferred.
 - **Possible fix:** Add a one-shot migration script or import-time rewriter that maps old hex
   ids to new slugs and updates all references.
+
+## 7. Scene workflow has no cross-scene context, so adjacent scenes drift
+
+- **Severity:** Medium (correctness of generated content)
+- **Location:** `app/graphs/scene_workflow.py`, `app/graphs/context.py`, `app/tools/scene.py`
+  — `draft_scene`
+- **Introduced:** Phase 3 (scene workflow)
+- **Symptom:** The scene-writing workflow only sees the brief (premise, purpose, POV,
+  characters, constraints) for the scene it is generating. It receives no context from
+  surrounding scenes, so two scenes that take place close together (e.g. two parts of the same
+  conversation) can drift on shared details like location, time of day, who is present, and
+  ongoing action.
+- **Why it usually doesn't bite:** Scenes far apart in the story rarely share fine-grained
+  state, so the gaps are only obvious when scenes are tightly coupled.
+- **Possible fix:** Simple first iteration — always pass the previous scene as context to the
+  workflow. A fuller fix depends on the scene/event linking and event-relationship work tracked
+  in `docs/future_work.md` (scenes linked to events, events related by causality), which would
+  let the workflow select genuinely relevant neighboring scenes rather than always the previous
+  one.

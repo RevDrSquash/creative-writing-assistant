@@ -1,8 +1,9 @@
 # Agent Workflows
 
-Phase 6 introduces multi-step agent workflows built on LangGraph. This doc is the authoritative
-description of the workflow pattern and of the two concrete workflows: the scene-writing workflow
-(`draft_scene`) and the intimacy review workflow. For the surrounding system see
+Multi-step agent workflows are built on LangGraph. This doc is the authoritative description of the
+workflow pattern and of the built workflows; currently that is the scene-writing workflow
+(`draft_scene`). Planned-but-unbuilt workflows (such as the intimacy review workflow) are designed
+in [future_work.md](future_work.md). For the surrounding system see
 [architecture.md](architecture.md); for the data these workflows read and write see
 [story_bible_model.md](story_bible_model.md) and [forms_and_data_models.md](forms_and_data_models.md).
 
@@ -77,53 +78,11 @@ that do not need token streaming, and streaming aggregation serializes the struc
 payload, which emits noisy Pydantic serializer warnings; the non-streaming path excludes that field.
 The drafting node keeps the default streaming model.
 
-## Intimacy Review Workflow
+## Planned Workflows
 
-Gates every agent-driven intimacy change behind a retrieval-and-review pipeline so new intimacies
-stay well-formed and continuity-safe. This is the highest-leverage continuity guard: intimacy
-edits are where a careless change silently corrupts a character.
-
-### Why a workflow, not a subagent
-
-The Story Bible is small, so retrieval is a direct lookup (the character's current intimacies at
-the relevant timeline position plus relevant world facts) rather than a vector store, and review
-is a single deterministic LLM step. A focused workflow graph is cheaper and more predictable than
-a full subagent, and it composes with the existing per-call transaction.
-
-### Description-based tool surface
-
-The agent does not author intimacy effects directly. It describes the intended change in natural
-language; the workflow produces the concrete structured effects. This flips the failure mode from
-"I asked for X but the agent emitted effects Y" to "I asked for X, and here is the diff (Y) that
-implements it."
-
-- **Event signals** (mid-story changes): the agent supplies an interpretation plus a change
-  description for the signal; the workflow fills in that signal's effects.
-- **Baseline intimacies**: the agent describes the desired baseline; the workflow authors/edits
-  the baseline intimacy list.
-- The structured effect operations (`add_intimacy`, `set_intimacy_strength`, `update_intimacy`,
-  `remove_intimacy`) remain the underlying data model and stay directly editable in the Story
-  Bible forms. Only the agent's authoring path changes. World-state effects keep their direct CRUD
-  authoring.
-
-### Nodes (enforced order)
-
-1. **Retrieve** — gather the character's current intimacies at the relevant timeline position plus
-   relevant world facts, to ground the proposal and review.
-2. **Propose** — convert the natural-language change description into specific structured effects.
-3. **Review** — enforce simple first-person statements, merge duplicates, prefer strengthening an
-   existing intimacy over adding a near-duplicate, and prefer small cumulative changes. Review may
-   rewrite a proposed effect (for example, turn a duplicate `add_intimacy` into a
-   `set_intimacy_strength` or drop it), so the applied effects can differ from the literal
-   proposal.
-4. **Apply** — write the reviewed effects to their target (a signal's effects or the baseline
-   list) and return a human-readable diff.
-
-### Approval
-
-The workflow auto-applies reviewed changes and returns the diff. Human approval of the diff is
-deferred to Phase 8 (tool confirmations), which layers a confirmation/diff step on top without
-changing this workflow.
+The intimacy review workflow is designed but not yet built. Its full design lives in
+[future_work.md](future_work.md). Until it exists, agents author intimacy effects through the direct
+structured operations described in [story_bible_model.md](story_bible_model.md).
 
 ## Related Docs
 
@@ -131,4 +90,5 @@ changing this workflow.
 - Story Bible data model (characters, intimacies, events, signals, effects): see [story_bible_model.md](story_bible_model.md).
 - Scene model and the scene blueprint (premise, purpose, stances, outline): see [forms_and_data_models.md](forms_and_data_models.md).
 - Per-node model selection used by workflow nodes: see [model_configuration.md](model_configuration.md).
-- Phased plan (Phase 6a/6b/6c): see [implementation_plan.md](implementation_plan.md).
+- Phased plan (completed core phases): see [implementation_plan.md](implementation_plan.md).
+- Planned enhancements, including the intimacy review workflow: see [future_work.md](future_work.md).

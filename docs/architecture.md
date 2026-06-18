@@ -72,11 +72,12 @@ The app is a local-first Python writing workspace built around one in-memory `Wo
   - Write tools mutate world state before returning.
   - Tools raise `ToolException` for expected domain errors (e.g. an unknown entity id). The agent is built with a `ToolRetryMiddleware(max_retries=0, on_failure="continue")` so a failing tool call produces an error `ToolMessage` for the model to recover from instead of aborting the run. Tools are local and deterministic, so retries are disabled.
   - Workflows or subagents can also be exposed as tools.
-  - Intimacy edits are not authored directly by the agent. From Phase 6c the agent describes the
-    intended change in natural language and the intimacy review workflow proposes, reviews, and
-    applies the concrete effects, returning a diff. The structured effect operations remain the
-    data model and stay directly editable in the UI; only the agent's authoring path changes.
-    World-state effects keep their direct CRUD authoring.
+  - Intimacy edits are authored directly by the agent today, but the planned design routes them
+    through an intimacy review workflow: the agent would describe the intended change in natural
+    language and the workflow would propose, review, and apply the concrete effects, returning a
+    diff. The structured effect operations remain the data model and stay directly editable in the
+    UI; only the agent's authoring path would change, and world-state effects keep their direct CRUD
+    authoring. This workflow is tracked in [future_work.md](future_work.md).
 
 - **Context Assembly**
   - Builds each model call from the system prompt, chat history, current UI context, and workflow-specific context.
@@ -96,7 +97,7 @@ The app is a local-first Python writing workspace built around one in-memory `Wo
 
 ## Related Docs
 
-- Multi-step agent workflows (scene writing and intimacy review): see [architecture_agent_workflows.md](architecture_agent_workflows.md).
+- Multi-step agent workflows (scene writing, plus the planned intimacy review): see [architecture_agent_workflows.md](architecture_agent_workflows.md).
 - LLM call logging and the Debug page: see [architecture_llm_debug_logging.md](architecture_llm_debug_logging.md).
 - Model configuration and per-node model selection: see [model_configuration.md](model_configuration.md).
 - Known / open issues and architectural debt: see [known_issues.md](known_issues.md).

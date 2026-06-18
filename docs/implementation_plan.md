@@ -1,3 +1,9 @@
+# Implementation Plan
+
+> **Status: core phased implementation complete.** Every phase below is done. Further enhancements
+> (including work formerly scoped as Phases 6c, 7, and 8) are tracked in
+> [future_work.md](future_work.md) rather than as numbered phases here.
+
 ## Phase 0: Pre-Coding & Environment Setup (Completed)
 
 * Dependency Management: Initialize project using Poetry.
@@ -54,17 +60,15 @@
 
 ---
 
-## Phase 6: Advanced Workflows & Sub-Agents
+## Phase 6: Advanced Workflows & Sub-Agents (Completed)
 
-Phase 6 introduces the first multi-step LangGraph workflows. Both the scene writer and the
-intimacy reviewer are built as enforced LangGraph workflow graphs whose nodes may themselves be
-tool-enabled, and each compiled graph is exposed to the main agent as a single tool. The
-cross-cutting pattern (enforced sequence, tool-using nodes, per-node model config, write-through
-persistence, workflow registry) is described in
-[architecture_agent_workflows.md](architecture_agent_workflows.md). The phase is split into three
-independently verifiable sub-phases.
+Phase 6 introduces the first multi-step LangGraph workflows. The scene writer is built as an
+enforced LangGraph workflow graph whose nodes may themselves be tool-enabled, and the compiled
+graph is exposed to the main agent as a single tool. The cross-cutting pattern (enforced sequence,
+tool-using nodes, per-node model config, write-through persistence, workflow registry) is described
+in [architecture_agent_workflows.md](architecture_agent_workflows.md).
 
-### Phase 6a: Scene-Level Stance & Stance/Mood Model Changes
+### Phase 6a: Scene-Level Stance & Stance/Mood Model Changes (Completed)
 
 Foundational data-model changes that the scene writer (6b) builds on.
 
@@ -86,7 +90,7 @@ Foundational data-model changes that the scene writer (6b) builds on.
 * Testing: Update world-model, story-bible-tool, and UI-page tests for the relocated stance and
   list-valued mood.
 
-### Phase 6b: Scene-Writing Workflow (`draft_scene`)
+### Phase 6b: Scene-Writing Workflow (`draft_scene`) (Completed)
 
 * Workflow Graph: Build a LangGraph workflow with an enforced node sequence: formalize essential
   details -> author initial stances -> outline as concise beats -> review outline -> revise
@@ -109,38 +113,6 @@ Foundational data-model changes that the scene writer (6b) builds on.
   workflows.
 * Expose As Tool: Expose the compiled graph to the main agent as a `draft_scene` tool.
 * Testing: Unit tests for the workflow nodes and the `draft_scene` tool.
-
-### Phase 6c: Intimacy Review Workflow
-
-* Workflow Graph: Build a LangGraph workflow: retrieve (the character's current intimacies at the
-  relevant timeline position plus relevant world facts) -> propose specific structured effects
-  from a natural-language change description -> review (enforce simple first-person statements,
-  merge duplicates, prefer strengthening over duplicating, prefer small cumulative changes) ->
-  apply -> return a human-readable diff.
-* Description-Based Tool Surface: Replace the agent's direct intimacy-effect authoring with
-  description-based, reviewed entry points. For event signals the agent supplies an interpretation
-  plus a change description; for baseline intimacies the agent describes the desired baseline. The
-  structured effect data model and the manual UI editing of effects are unchanged; only the
-  agent's tool surface changes. World-state effects keep their current direct authoring.
-* Auto-Apply With Logging: The workflow applies reviewed changes and returns the diff; human
-  approval of the diff is deferred to Phase 8 (tool confirmations).
-* Testing: Unit tests for the workflow nodes and the description-based intimacy tool(s).
-
----
-
-## Phase 7: User Context Notes
-
-* Current Page Context: Add a note to each user message describing the user's currently open page or focused content.
-* Initial Story Bible Summary: Include an initial Story Bible summary in the user message note so the agent starts with basic world context.
-* Context Tests: Add tests for user message note generation.
-
----
-
-## Phase 8: Chat & Tool UX Polish
-
-* Tool-Call Display: Render tool calls clearly in the chat history.
-* Tool Confirmations: Add tool confirmations to the chat window, including diffs where agent tools edit scene Markdown or Story Bible data.
-* Stop/Cancel: Add controls to stop or cancel in-flight agent and sub-agent runs.
 
 ---
 

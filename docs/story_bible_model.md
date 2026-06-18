@@ -158,9 +158,10 @@ and surfacing such conflicts is planned future work, not a replay error.
 - Deleting a character does not delete events or their signals referencing that character;
   replay skips signals whose `character_id` no longer resolves.
 - Intimacy review behavior (merging duplicates, strengthening instead of duplicating, pruning
-  stale intimacies, preferring small cumulative changes) is an agent workflow layered on top
-  of these primitives in Phase 6c. The data model only provides the primitive operations; the
-  intimacy review workflow proposes and reviews effects before they are applied (see
+  stale intimacies, preferring small cumulative changes) is a planned agent workflow that would
+  layer on top of these primitives (tracked in [future_work.md](future_work.md)). The data model
+  only provides the primitive operations; the intimacy review workflow would propose and review
+  effects before they are applied (see
   [architecture_agent_workflows.md](architecture_agent_workflows.md)).
 
 ## Agent Access
@@ -170,9 +171,10 @@ baseline world state, characters, events with world-state effects and signals) p
 derived state at any timeline position. Tools mutate the in-memory `World` and write through
 to disk, the same as user edits via forms.
 
-Intimacy effects are the exception: from Phase 6c the agent does not author intimacy effects
-directly. It describes the intended change in natural language and the intimacy review workflow
-proposes, reviews, and applies the concrete effects, returning a diff. The structured effect
-operations below remain the underlying data model and stay directly editable in the UI; only the
-agent's authoring path changes (see
+Intimacy effects are a planned exception: today the agent authors intimacy effects directly, but
+the intended design is that it should not. Under the planned intimacy review workflow the agent
+would describe the intended change in natural language and the workflow would propose, review, and
+apply the concrete effects, returning a diff. The structured effect operations below remain the
+underlying data model and stay directly editable in the UI; only the agent's authoring path would
+change. This workflow is tracked in [future_work.md](future_work.md) (see
 [architecture_agent_workflows.md](architecture_agent_workflows.md)).
