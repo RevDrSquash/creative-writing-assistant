@@ -18,17 +18,18 @@ async def test_index_redirects_to_workspace(user: User) -> None:
     await user.should_see("Story Bible")
 
 
-async def test_workspace_renders_scene_editor_and_chat(user: User) -> None:
+async def test_workspace_renders_narrative_style_and_chat(user: User) -> None:
     await user.open("/workspace")
-    await user.should_see("New Scene")
-    await user.should_see("Notes")
-    await user.should_see("Edit Markdown")
+    await user.should_see("Premise")
+    await user.should_see("Writing style")
     await user.should_see("Send")
-    user.find(marker="scene-editor-delete-button")
+    await user.should_not_see("Notes")
 
 
 async def test_scene_title_is_editable_in_edit_state(user: User) -> None:
-    await user.open("/workspace")
+    await user.open("/workspace/narrative-style")
+    user.find(marker="new-scene-button").click()
+    await user.should_see("Notes")
     user.find(marker="scene-editor-toggle-button").click()
     await user.should_see("Preview Markdown")
     await user.should_see("Blueprint")
@@ -42,13 +43,15 @@ async def test_scene_title_is_editable_in_edit_state(user: User) -> None:
 
 
 async def test_scene_blueprint_hidden_in_preview_mode(user: User) -> None:
-    await user.open("/workspace")
+    await user.open("/workspace/narrative-style")
+    user.find(marker="new-scene-button").click()
+    await user.should_see("Notes")
     await user.should_not_see("Blueprint")
     await user.should_not_see("Character Stances")
 
 
 async def test_workspace_sidebar_navigates_to_characters(user: User) -> None:
-    await user.open("/workspace")
+    await user.open("/workspace/narrative-style")
     user.find("Characters").click()
     await user.should_see("No characters yet.")
 
@@ -99,16 +102,23 @@ async def test_timeline_add_event_opens_event_form(
     assert len(stored["story_bible"]["timeline"]) == 1
 
 
-async def test_new_scene_button_creates_second_scene(
+async def test_new_scene_button_creates_first_scene(
     user: User,
     isolated_data_dir: Path,
 ) -> None:
-    await user.open("/workspace")
+    await user.open("/workspace/narrative-style")
     user.find(marker="new-scene-button").click()
     await user.should_see("Notes")
 
     stored = json.loads((isolated_data_dir / "world.json").read_text(encoding="utf-8"))
-    assert len(stored["scenes"]) == 2
+    assert len(stored["scenes"]) == 1
+
+
+async def test_zero_scene_workspace_renders_without_crash(user: User) -> None:
+    await user.open("/workspace/narrative-style")
+    await user.should_see("Premise")
+    await user.should_see("New Scene")
+    user.find(marker="new-scene-button")
 
 
 async def test_settings_page_renders(user: User) -> None:
@@ -187,7 +197,7 @@ def test_catalog_by_provider_groups_and_sorts() -> None:
 
 
 async def test_header_menu_includes_clear_state(user: User) -> None:
-    await user.open("/workspace")
+    await user.open("/workspace/narrative-style")
     user.find(marker="header-overflow-menu").click()
     await user.should_see("Clear State...")
 
@@ -206,7 +216,7 @@ async def test_clear_state_dialog_clears_everything(
     world.scenes.append(Scene(title="Chapter 2", markdown="# Two"))
     JsonFileWorldStore(isolated_data_dir / "world.json").save(world)
 
-    await user.open("/workspace")
+    await user.open("/workspace/narrative-style")
     user.find(marker="header-overflow-menu").click()
     user.find(marker="clear-state-menu-item").click()
     await user.should_see("Clear State")
@@ -217,8 +227,7 @@ async def test_clear_state_dialog_clears_everything(
     assert stored["story_bible"]["premise"] == ""
     assert stored["story_bible"]["world_facts"] == []
     assert stored["story_bible"]["characters"] == []
-    assert len(stored["scenes"]) == 1
-    assert stored["scenes"][0]["title"] == "New Scene"
+    assert len(stored["scenes"]) == 0
 
 
 async def test_debug_page_renders_empty_state(user: User) -> None:

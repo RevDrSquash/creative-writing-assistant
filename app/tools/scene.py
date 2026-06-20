@@ -157,9 +157,10 @@ def delete_scene(
     state: Annotated[dict[str, Any], InjectedState],
     tool_call_id: Annotated[str, InjectedToolCallId],
 ) -> Command:
-    """Delete a scene permanently. The last remaining scene cannot be deleted.
+    """Delete a scene permanently.
 
-    If the deleted scene was open, the first remaining scene is opened.
+    If the deleted scene was open, the first remaining scene is opened, or
+    no scene is open when none remain.
     """
 
     world = get_world()
@@ -181,9 +182,13 @@ def delete_scene(
         ]
     }
     if state.get("current_scene_id") == scene_id:
-        fallback = world.scenes[0]
-        update["current_scene_id"] = fallback.id
-        update["current_scene"] = fallback.markdown
+        if world.scenes:
+            fallback = world.scenes[0]
+            update["current_scene_id"] = fallback.id
+            update["current_scene"] = fallback.markdown
+        else:
+            update["current_scene_id"] = ""
+            update["current_scene"] = ""
     return Command(update=update)
 
 
@@ -212,6 +217,10 @@ def replace_scene_text(
     whitespace / punctuation drift via fuzzy matching, but refuses if `target`
     matches zero or more than one block.
     """
+
+    current_id = state.get("current_scene_id", "")
+    if not current_id:
+        raise ToolException("No scene is open; call create_scene or draft_scene first.")
 
     current_scene = state.get("current_scene", "")
     if not isinstance(current_scene, str):

@@ -87,8 +87,8 @@ def render_chat(conversation: ChatConversation | None = None) -> None:
         # Tracks which scene the run is editing and its last authoritative text
         # (graph-state updates). Optimistic canvas appends layer on top of it.
         run_scene: dict[str, str] = {
-            "id": start_scene.id,
-            "authoritative_text": start_scene.markdown,
+            "id": start_scene.id if start_scene is not None else "",
+            "authoritative_text": start_scene.markdown if start_scene is not None else "",
         }
         parser = CanvasStreamParser()
         stream_failed = False
@@ -97,8 +97,8 @@ def render_chat(conversation: ChatConversation | None = None) -> None:
             async for stream_name, payload in get_chat_agent().astream(
                 {
                     "messages": messages,
-                    "current_scene": start_scene.markdown,
-                    "current_scene_id": start_scene.id,
+                    "current_scene": start_scene.markdown if start_scene is not None else "",
+                    "current_scene_id": start_scene.id if start_scene is not None else "",
                 },
                 stream_mode=["messages", "updates"],
             ):
@@ -117,7 +117,9 @@ def render_chat(conversation: ChatConversation | None = None) -> None:
                     # Optimistic in-memory append so the editor streams live;
                     # the authoritative text (and disk save) comes through the
                     # updates stream once the model turn completes.
-                    resolve_scene(run_scene["id"]).markdown += events.canvas_text
+                    resolved = resolve_scene(run_scene["id"])
+                    if resolved is not None:
+                        resolved.markdown += events.canvas_text
                 assistant_text = _append_streamed_chat_text(
                     assistant_text,
                     events.chat_text,
@@ -148,7 +150,7 @@ def render_chat(conversation: ChatConversation | None = None) -> None:
             _safe_ui_update(send_button.enable)
             is_streaming = False
 
-        if run_scene["id"] != start_scene.id:
+        if run_scene["id"] and (start_scene is None or run_scene["id"] != start_scene.id):
             set_current_scene_id(run_scene["id"])
             _safe_ui_update(lambda: ui.navigate.to(f"/workspace/scenes/{run_scene['id']}"))
 

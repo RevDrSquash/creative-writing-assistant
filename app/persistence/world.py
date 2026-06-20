@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Protocol
 
 from app.persistence.paths import get_data_dir
-from app.world.models import SCHEMA_VERSION, Scene, World
+from app.world.models import SCHEMA_VERSION, World
 
 WORLD_FILENAME = "world.json"
 
@@ -19,9 +19,9 @@ _WORLD_STORE: JsonFileWorldStore | None = None
 
 
 def default_world() -> World:
-    """Return a fresh world seeded with one starter scene."""
+    """Return a fresh world with no scenes."""
 
-    return World(scenes=[Scene(title=DEFAULT_SCENE_TITLE, markdown=DEFAULT_SCENE_MARKDOWN)])
+    return World(scenes=[])
 
 
 class WorldStorePort(Protocol):

@@ -72,6 +72,20 @@ def isolated_world(isolated_data_dir: Path):
 
 
 @pytest.fixture
+def world_with_scene(isolated_world):
+    """World with one starter scene for tests that need scene content."""
+
+    from app.persistence.world import DEFAULT_SCENE_MARKDOWN, DEFAULT_SCENE_TITLE
+    from app.world.models import Scene, unique_slug
+
+    if not isolated_world.scenes:
+        scene = Scene(title=DEFAULT_SCENE_TITLE, markdown=DEFAULT_SCENE_MARKDOWN)
+        scene.id = unique_slug("scene_", scene.title, set())
+        isolated_world.scenes.append(scene)
+    return isolated_world
+
+
+@pytest.fixture
 async def user(
     isolated_data_dir: Path,
     monkeypatch: pytest.MonkeyPatch,

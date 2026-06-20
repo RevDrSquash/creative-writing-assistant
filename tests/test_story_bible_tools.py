@@ -233,10 +233,10 @@ def test_read_character_includes_identity_baseline_and_derived_state(
     assert "## Stance" not in detail
 
 
-def test_update_character_stance_changes_only_provided_fields(isolated_world: World) -> None:
+def test_update_character_stance_changes_only_provided_fields(world_with_scene: World) -> None:
     upsert_character.func(name="Mira")
-    character = isolated_world.story_bible.characters[0]
-    scene = isolated_world.scenes[0]
+    character = world_with_scene.story_bible.characters[0]
+    scene = world_with_scene.scenes[0]
     scene.blueprint.stances.append(SceneCharacterStance(character_id=character.id, mood=["Calm"]))
     state = {"current_scene_id": scene.id}
 
@@ -248,11 +248,11 @@ def test_update_character_stance_changes_only_provided_fields(isolated_world: Wo
 
 
 def test_read_scene_blueprint_includes_premise_outline_and_stances(
-    isolated_world: World,
+    world_with_scene: World,
 ) -> None:
     upsert_character.func(name="Mira")
-    character = isolated_world.story_bible.characters[0]
-    scene = isolated_world.scenes[0]
+    character = world_with_scene.story_bible.characters[0]
+    scene = world_with_scene.scenes[0]
     scene.blueprint.premise = "A tense negotiation"
     scene.blueprint.outline = ["Mira arrives", "Terms are refused"]
     scene.blueprint.stances.append(

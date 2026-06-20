@@ -38,7 +38,7 @@ def test_export_world_zip_layout_and_emptied_markdown() -> None:
         assert all(scene["markdown"] == "" for scene in payload["scenes"])
 
     # Exporting must not mutate the live world.
-    assert world.scenes[1].markdown == "# Two\n\nProse here."
+    assert world.scenes[-1].markdown == "# Two\n\nProse here."
 
 
 def test_zip_round_trip_restores_world() -> None:

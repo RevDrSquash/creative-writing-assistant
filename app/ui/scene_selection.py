@@ -10,11 +10,12 @@ from app.world.scene import resolve_scene
 CURRENT_SCENE_KEY = "current_scene_id"
 
 
-def get_current_scene() -> Scene:
+def get_current_scene() -> Scene | None:
     """Return the user's currently selected scene, falling back to the first."""
 
     scene = resolve_scene(app.storage.user.get(CURRENT_SCENE_KEY))
-    app.storage.user[CURRENT_SCENE_KEY] = scene.id
+    if scene is not None:
+        app.storage.user[CURRENT_SCENE_KEY] = scene.id
     return scene
 
 

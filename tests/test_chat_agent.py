@@ -124,7 +124,7 @@ def test_get_chat_agent_uses_resolved_config_and_rebuilds_on_prefix_change(
     assert captured_configs[1].system_prompt_prefix == "Second prefix."
 
 
-def test_chat_agent_with_create_scene_tool_switches_open_scene(isolated_world) -> None:
+def test_chat_agent_with_create_scene_tool_switches_open_scene(world_with_scene) -> None:
     tool_call = {
         "name": "create_scene",
         "args": {"title": "Chapter 2", "summary": "A fresh start"},
@@ -143,7 +143,7 @@ def test_chat_agent_with_create_scene_tool_switches_open_scene(isolated_world) -
         model=fake_model,
         assembler=ContextAssembler(system_prompt="System instructions"),
     )
-    first_scene = isolated_world.scenes[0]
+    first_scene = world_with_scene.scenes[0]
 
     result = agent.invoke(
         {
@@ -153,7 +153,7 @@ def test_chat_agent_with_create_scene_tool_switches_open_scene(isolated_world) -
         }
     )
 
-    new_scene = isolated_world.scenes[1]
+    new_scene = world_with_scene.scenes[1]
     assert new_scene.title == "Chapter 2"
     assert result["current_scene_id"] == new_scene.id
     assert result["current_scene"] == ""
@@ -313,6 +313,7 @@ def test_chat_agent_with_replace_scene_text_tool_updates_state() -> None:
         {
             "messages": [HumanMessage(content="Please revise the door sentence.")],
             "current_scene": "The old door creaked.",
+            "current_scene_id": "scene-1",
         }
     )
 

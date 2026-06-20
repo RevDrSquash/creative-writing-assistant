@@ -41,15 +41,13 @@ WORKSPACE_STORY_BIBLE_ITEMS: tuple[NavigationItem, ...] = (
 
 def _workspace_page(active_path: str, scene_id: str | None = None) -> None:
     active_scene: Scene | None = None
-    if active_path == "/workspace" or active_path.startswith("/workspace/scenes/"):
+    if active_path.startswith("/workspace/scenes/"):
         if scene_id is not None:
             active_scene = get_world().get_scene(scene_id)
             if active_scene is None:
-                ui.navigate.to("/workspace")
+                ui.navigate.to("/workspace/narrative-style")
                 return
             set_current_scene_id(active_scene.id)
-        else:
-            active_scene = get_current_scene()
 
     render_header("/workspace")
     _render_workspace_sidebar(active_path, active_scene.id if active_scene else None)
@@ -82,7 +80,7 @@ def _workspace_page(active_path: str, scene_id: str | None = None) -> None:
 def _render_story_bible_panel(active_path: str) -> None:
     with ui.scroll_area().classes("w-full h-full min-h-0"):
         with ui.column().classes("w-full gap-4 pr-4"):
-            if active_path == "/workspace/narrative-style":
+            if active_path == "/workspace/narrative-style" or active_path == "/workspace":
                 render_narrative_style_form()
             elif active_path == "/workspace/world":
                 render_world_form()
@@ -164,7 +162,8 @@ async def _confirm_delete_scene(scene: Scene) -> None:
     if not await dialog:
         return
 
-    was_open = get_current_scene().id == scene.id
+    current = get_current_scene()
+    was_open = current is not None and current.id == scene.id
     try:
         delete_scene(scene.id)
     except ValueError as exc:
@@ -264,7 +263,7 @@ def _render_scene_editor(scene: Scene) -> None:
 
 @ui.page("/workspace")
 def workspace() -> None:
-    _workspace_page("/workspace")
+    ui.navigate.to("/workspace/narrative-style")
 
 
 @ui.page("/workspace/story-bible")
@@ -304,7 +303,7 @@ def workspace_event(event_id: str) -> None:
 
 @ui.page("/workspace/scenes")
 def workspace_scenes() -> None:
-    ui.navigate.to("/workspace")
+    ui.navigate.to("/workspace/narrative-style")
 
 
 @ui.page("/workspace/scenes/{scene_id}")

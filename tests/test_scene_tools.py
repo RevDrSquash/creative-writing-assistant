@@ -69,11 +69,21 @@ def test_read_scene_returns_state_current_scene() -> None:
     assert result == "# Scene\n\nText"
 
 
+def test_replace_scene_text_raises_when_no_scene_is_open() -> None:
+    with pytest.raises(ToolException, match="No scene is open"):
+        replace_scene_text.func(
+            "old wording",
+            "new wording",
+            {"current_scene": "", "current_scene_id": ""},
+            "tool-call-1",
+        )
+
+
 def test_replace_scene_text_returns_command_with_updated_scene_and_tool_message() -> None:
     command = replace_scene_text.func(
         "old wording",
         "new wording",
-        {"current_scene": "Some old wording here."},
+        {"current_scene": "Some old wording here.", "current_scene_id": "scene-1"},
         "tool-call-1",
     )
 
@@ -89,15 +99,15 @@ def test_replace_scene_text_raises_tool_exception_on_no_match() -> None:
         replace_scene_text.func(
             "missing wording",
             "new wording",
-            {"current_scene": "Some old wording here."},
+            {"current_scene": "Some old wording here.", "current_scene_id": "scene-1"},
             "tool-call-1",
         )
 
 
-def test_read_scene_with_id_reads_other_scene_from_world(isolated_world: World) -> None:
+def test_read_scene_with_id_reads_other_scene_from_world(world_with_scene: World) -> None:
     other = Scene(title="Other", markdown="Other scene text")
-    isolated_world.scenes.append(other)
-    state = {"current_scene": "Open scene text", "current_scene_id": isolated_world.scenes[0].id}
+    world_with_scene.scenes.append(other)
+    state = {"current_scene": "Open scene text", "current_scene_id": world_with_scene.scenes[0].id}
 
     assert read_scene.func(state, scene_id=other.id) == "Other scene text"
     assert read_scene.func(state) == "Open scene text"
@@ -105,9 +115,9 @@ def test_read_scene_with_id_reads_other_scene_from_world(isolated_world: World) 
         read_scene.func(state, scene_id="missing")
 
 
-def test_list_scenes_marks_open_scene(isolated_world: World) -> None:
-    isolated_world.scenes.append(Scene(title="Chapter 2", summary="The journey"))
-    first = isolated_world.scenes[0]
+def test_list_scenes_marks_open_scene(world_with_scene: World) -> None:
+    world_with_scene.scenes.append(Scene(title="Chapter 2", summary="The journey"))
+    first = world_with_scene.scenes[0]
 
     listing = list_scenes.func({"current_scene_id": first.id})
 
@@ -116,20 +126,20 @@ def test_list_scenes_marks_open_scene(isolated_world: World) -> None:
     assert "The journey" in listing
 
 
-def test_create_scene_helper_assigns_slug_id(isolated_world: World) -> None:
+def test_create_scene_helper_assigns_slug_id(world_with_scene: World) -> None:
     scene = create_scene_helper("Chapter Two", summary="The journey continues")
 
     assert scene.id == "scene_chapter_two"
-    assert isolated_world.scenes[-1].id == "scene_chapter_two"
+    assert world_with_scene.scenes[-1].id == "scene_chapter_two"
 
 
-def test_create_scene_tool_persists_open_text_and_switches(isolated_world: World) -> None:
-    first = isolated_world.scenes[0]
+def test_create_scene_tool_persists_open_text_and_switches(world_with_scene: World) -> None:
+    first = world_with_scene.scenes[0]
     state = {"current_scene": "Edited mid-run text", "current_scene_id": first.id}
 
     command = create_scene.func("Chapter 2", state, "tool-call-1", "A new beginning")
 
-    new_scene = isolated_world.scenes[1]
+    new_scene = world_with_scene.scenes[1]
     assert new_scene.title == "Chapter 2"
     assert new_scene.summary == "A new beginning"
     assert command.update["current_scene_id"] == new_scene.id
@@ -138,10 +148,10 @@ def test_create_scene_tool_persists_open_text_and_switches(isolated_world: World
     assert first.markdown == "Edited mid-run text"
 
 
-def test_select_scene_tool_switches_to_existing_scene(isolated_world: World) -> None:
+def test_select_scene_tool_switches_to_existing_scene(world_with_scene: World) -> None:
     other = Scene(title="Other", markdown="Other text")
-    isolated_world.scenes.append(other)
-    first = isolated_world.scenes[0]
+    world_with_scene.scenes.append(other)
+    first = world_with_scene.scenes[0]
     state = {"current_scene": first.markdown, "current_scene_id": first.id}
 
     command = select_scene.func(other.id, state, "tool-call-1")
@@ -153,38 +163,41 @@ def test_select_scene_tool_switches_to_existing_scene(isolated_world: World) -> 
         select_scene.func("missing", state, "tool-call-2")
 
 
-def test_delete_scene_tool_switches_when_open_scene_deleted(isolated_world: World) -> None:
+def test_delete_scene_tool_switches_when_open_scene_deleted(world_with_scene: World) -> None:
     doomed = Scene(title="Doomed", markdown="Doomed text")
-    isolated_world.scenes.append(doomed)
-    first = isolated_world.scenes[0]
+    world_with_scene.scenes.append(doomed)
+    first = world_with_scene.scenes[0]
 
     command = delete_scene.func(doomed.id, {"current_scene_id": doomed.id}, "tool-call-1")
 
-    assert doomed not in isolated_world.scenes
+    assert doomed not in world_with_scene.scenes
     assert command.update["current_scene_id"] == first.id
     assert command.update["current_scene"] == first.markdown
 
 
-def test_delete_scene_tool_keeps_state_when_other_scene_deleted(isolated_world: World) -> None:
+def test_delete_scene_tool_keeps_state_when_other_scene_deleted(world_with_scene: World) -> None:
     doomed = Scene(title="Doomed")
-    isolated_world.scenes.append(doomed)
-    first = isolated_world.scenes[0]
+    world_with_scene.scenes.append(doomed)
+    first = world_with_scene.scenes[0]
 
     command = delete_scene.func(doomed.id, {"current_scene_id": first.id}, "tool-call-1")
 
     assert "current_scene_id" not in command.update
-    assert doomed not in isolated_world.scenes
+    assert doomed not in world_with_scene.scenes
 
 
-def test_delete_scene_tool_refuses_last_scene(isolated_world: World) -> None:
-    only_scene = isolated_world.scenes[0]
+def test_delete_scene_tool_clears_state_when_last_scene_deleted(world_with_scene: World) -> None:
+    only_scene = world_with_scene.scenes[0]
 
-    with pytest.raises(ToolException, match="last remaining scene"):
-        delete_scene.func(only_scene.id, {"current_scene_id": only_scene.id}, "tool-call-1")
+    command = delete_scene.func(only_scene.id, {"current_scene_id": only_scene.id}, "tool-call-1")
+
+    assert only_scene not in world_with_scene.scenes
+    assert command.update["current_scene_id"] == ""
+    assert command.update["current_scene"] == ""
 
 
-def test_set_scene_metadata_updates_only_provided_fields(isolated_world: World) -> None:
-    scene = isolated_world.scenes[0]
+def test_set_scene_metadata_updates_only_provided_fields(world_with_scene: World) -> None:
+    scene = world_with_scene.scenes[0]
     scene.title = "Original"
     scene.summary = "Original summary"
 
@@ -194,8 +207,8 @@ def test_set_scene_metadata_updates_only_provided_fields(isolated_world: World) 
     assert scene.summary == "Original summary"
 
 
-def test_update_scene_tool_renames_open_scene_by_default(isolated_world: World) -> None:
-    scene = isolated_world.scenes[0]
+def test_update_scene_tool_renames_open_scene_by_default(world_with_scene: World) -> None:
+    scene = world_with_scene.scenes[0]
     state = {"current_scene_id": scene.id}
 
     message = update_scene.func(state, title="New Title")
@@ -204,10 +217,10 @@ def test_update_scene_tool_renames_open_scene_by_default(isolated_world: World) 
     assert "New Title" in message
 
 
-def test_update_scene_tool_targets_explicit_scene_id(isolated_world: World) -> None:
+def test_update_scene_tool_targets_explicit_scene_id(world_with_scene: World) -> None:
     other = Scene(title="Other", summary="Other summary")
-    isolated_world.scenes.append(other)
-    first = isolated_world.scenes[0]
+    world_with_scene.scenes.append(other)
+    first = world_with_scene.scenes[0]
     state = {"current_scene_id": first.id}
 
     message = update_scene.func(state, scene_id=other.id, summary="Updated summary")
@@ -217,6 +230,6 @@ def test_update_scene_tool_targets_explicit_scene_id(isolated_world: World) -> N
     assert "Updated summary" in message
 
 
-def test_update_scene_tool_raises_on_unknown_id(isolated_world: World) -> None:
+def test_update_scene_tool_raises_on_unknown_id(world_with_scene: World) -> None:
     with pytest.raises(ToolException, match="No scene with id"):
-        update_scene.func({"current_scene_id": isolated_world.scenes[0].id}, scene_id="missing")
+        update_scene.func({"current_scene_id": world_with_scene.scenes[0].id}, scene_id="missing")

@@ -27,6 +27,8 @@ The app is a local-first Python writing workspace built around one in-memory `Wo
 
 - **NiceGUI UI**
   - Three-column workspace: navigation, content editor/forms, AI chat.
+  - The workspace defaults to the Narrative Style Story Bible page; the scene editor opens only at `/workspace/scenes/{id}`.
+  - Worlds may have zero scenes; create one explicitly via the sidebar or agent tools.
   - Shows markdown scenes, Story Bible forms, streamed assistant output, and tool-call results.
 
 - **World State**

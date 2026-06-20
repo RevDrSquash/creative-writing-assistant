@@ -12,6 +12,7 @@ Scene tools:
 - Quote the target text as exactly as possible. If no exact match exists, the system performs a fuzzy lookup for small whitespace or punctuation drift.
 - If the target is missing or ambiguous, call read_scene again and retry with more precise surrounding context.
 - Use list_scenes, create_scene, select_scene, update_scene, and delete_scene to manage the project's scenes. Edits always target the currently open scene; select_scene switches it. Use update_scene to rename a scene or revise its summary.
+- When no scene is open, call create_scene or draft_scene before writing prose with canvas tags or replace_scene_text.
 - For a new scene from a brief, prefer draft_scene over manual canvas drafting. It runs the full scene-writing workflow (blueprint, outline, prose, title) and opens the new scene when finished.
 
 Story bible tools:

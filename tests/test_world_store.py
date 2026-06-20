@@ -11,6 +11,7 @@ import pytest
 
 from app.persistence.world import (
     DEFAULT_SCENE_MARKDOWN,
+    DEFAULT_SCENE_TITLE,
     JsonFileWorldStore,
     default_world,
     get_world_store,
@@ -32,8 +33,7 @@ def test_store_load_returns_default_world_when_missing(tmp_path: Path) -> None:
     world = store.load()
 
     assert world.schema_version == SCHEMA_VERSION
-    assert len(world.scenes) == 1
-    assert world.scenes[0].markdown == DEFAULT_SCENE_MARKDOWN
+    assert world.scenes == []
 
 
 def test_store_save_and_load_round_trip(tmp_path: Path) -> None:
@@ -64,6 +64,9 @@ def test_store_load_rejects_unsupported_schema_version(tmp_path: Path) -> None:
 def test_store_load_migrates_v3_to_v4_discarding_character_stance(tmp_path: Path) -> None:
     path = tmp_path / "world.json"
     payload = default_world().model_dump(mode="json")
+    payload["scenes"] = [
+        Scene(title=DEFAULT_SCENE_TITLE, markdown=DEFAULT_SCENE_MARKDOWN).model_dump(mode="json")
+    ]
     payload["schema_version"] = 3
     payload["story_bible"]["characters"] = [
         {
@@ -203,32 +206,41 @@ def test_scene_helpers_create_read_write(isolated_world: World) -> None:
     assert get_scene_text(scene.id) == "# Updated"
 
 
-def test_resolve_scene_falls_back_to_first_scene(isolated_world: World) -> None:
-    assert resolve_scene("missing-id") is isolated_world.scenes[0]
-    assert resolve_scene(None) is isolated_world.scenes[0]
+def test_resolve_scene_falls_back_to_first_scene(world_with_scene: World) -> None:
+    assert resolve_scene("missing-id") is world_with_scene.scenes[0]
+    assert resolve_scene(None) is world_with_scene.scenes[0]
 
 
-def test_delete_scene_refuses_last_scene(isolated_world: World) -> None:
-    only_scene = isolated_world.scenes[0]
-
-    with pytest.raises(ValueError, match="last remaining scene"):
-        delete_scene(only_scene.id)
+def test_resolve_scene_returns_none_when_world_has_no_scenes(isolated_world: World) -> None:
+    assert resolve_scene(None) is None
+    assert resolve_scene("missing-id") is None
 
 
-def test_delete_scene_removes_scene(isolated_world: World) -> None:
+def test_delete_scene_removes_last_scene(world_with_scene: World) -> None:
+    only_scene = world_with_scene.scenes[0]
+
+    delete_scene(only_scene.id)
+
+    assert only_scene not in world_with_scene.scenes
+    assert world_with_scene.scenes == []
+
+
+def test_delete_scene_removes_scene(world_with_scene: World) -> None:
     extra = create_scene("Extra")
 
     delete_scene(extra.id)
 
-    assert extra not in isolated_world.scenes
+    assert extra not in world_with_scene.scenes
     with pytest.raises(ValueError, match="Scene not found"):
         delete_scene(extra.id)
 
 
-def test_clear_world_story_bible_only(isolated_world: World) -> None:
-    isolated_world.story_bible.premise = "A dark tale"
-    isolated_world.story_bible.world_facts.append(WorldFact(title="The Reach", text="Coastal"))
-    isolated_world.story_bible.characters.append(Character(identity=CharacterIdentity(name="Mira")))
+def test_clear_world_story_bible_only(world_with_scene: World) -> None:
+    world_with_scene.story_bible.premise = "A dark tale"
+    world_with_scene.story_bible.world_facts.append(WorldFact(title="The Reach", text="Coastal"))
+    world_with_scene.story_bible.characters.append(
+        Character(identity=CharacterIdentity(name="Mira"))
+    )
     create_scene("Extra")
 
     clear_world(story_bible=True, scenes=False)
@@ -240,28 +252,26 @@ def test_clear_world_story_bible_only(isolated_world: World) -> None:
     assert len(world.scenes) == 2
 
 
-def test_clear_world_scenes_only(isolated_world: World) -> None:
-    isolated_world.story_bible.premise = "Keep me"
+def test_clear_world_scenes_only(world_with_scene: World) -> None:
+    world_with_scene.story_bible.premise = "Keep me"
     create_scene("Extra")
 
     clear_world(story_bible=False, scenes=True)
 
     world = get_world()
     assert world.story_bible.premise == "Keep me"
-    assert len(world.scenes) == 1
-    assert world.scenes[0].title == "New Scene"
-    assert world.scenes[0].markdown == DEFAULT_SCENE_MARKDOWN
+    assert world.scenes == []
 
 
-def test_clear_world_both(isolated_world: World) -> None:
-    isolated_world.story_bible.premise = "Gone"
+def test_clear_world_both(world_with_scene: World) -> None:
+    world_with_scene.story_bible.premise = "Gone"
     create_scene("Extra")
 
     clear_world(story_bible=True, scenes=True)
 
     world = get_world()
     assert world.story_bible.premise == ""
-    assert len(world.scenes) == 1
+    assert world.scenes == []
 
 
 def test_clear_world_preserves_metadata(isolated_world: World) -> None:

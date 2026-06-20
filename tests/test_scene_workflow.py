@@ -322,7 +322,7 @@ def test_full_graph_drafts_end_to_end(isolated_world: World) -> None:
 
 
 def test_draft_scene_tool_creates_and_opens_scene(
-    isolated_world: World,
+    world_with_scene: World,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     character_id = _seed_character()
@@ -332,8 +332,8 @@ def test_draft_scene_tool_creates_and_opens_scene(
     )
 
     state = {
-        "current_scene_id": get_world().scenes[0].id,
-        "current_scene": get_world().scenes[0].markdown,
+        "current_scene_id": world_with_scene.scenes[0].id,
+        "current_scene": world_with_scene.scenes[0].markdown,
     }
 
     command = draft_scene.func(
@@ -354,7 +354,7 @@ def test_draft_scene_tool_creates_and_opens_scene(
 
 
 def test_draft_scene_tool_normalizes_drifted_character_ids(
-    isolated_world: World,
+    world_with_scene: World,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     upsert_character.invoke({"name": "The Narrator"})
@@ -375,8 +375,8 @@ def test_draft_scene_tool_normalizes_drifted_character_ids(
     monkeypatch.setattr("app.graphs.registry.WORKFLOWS", {"draft_scene": fake_build})
 
     state = {
-        "current_scene_id": get_world().scenes[0].id,
-        "current_scene": get_world().scenes[0].markdown,
+        "current_scene_id": world_with_scene.scenes[0].id,
+        "current_scene": world_with_scene.scenes[0].markdown,
     }
     draft_scene.func(
         "Brief premise.",
@@ -390,13 +390,13 @@ def test_draft_scene_tool_normalizes_drifted_character_ids(
     assert captured["character_ids"] == [character_id]
 
 
-def test_draft_scene_tool_rejects_unknown_character_ids(isolated_world: World) -> None:
+def test_draft_scene_tool_rejects_unknown_character_ids(world_with_scene: World) -> None:
     _seed_character()
     state = {
-        "current_scene_id": get_world().scenes[0].id,
-        "current_scene": get_world().scenes[0].markdown,
+        "current_scene_id": world_with_scene.scenes[0].id,
+        "current_scene": world_with_scene.scenes[0].markdown,
     }
-    scene_count = len(get_world().scenes)
+    scene_count = len(world_with_scene.scenes)
 
     with pytest.raises(ToolException, match="Unknown character_id"):
         draft_scene.func(

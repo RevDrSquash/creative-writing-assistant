@@ -6,7 +6,7 @@ import threading
 from collections.abc import Iterator
 from contextlib import contextmanager
 
-from app.persistence.world import default_world, get_world_store
+from app.persistence.world import get_world_store
 from app.world.models import StoryBible, World, utc_now
 
 _WORLD: World | None = None
@@ -70,7 +70,7 @@ def clear_world(*, story_bible: bool, scenes: bool) -> None:
         if story_bible:
             world.story_bible = StoryBible()
         if scenes:
-            world.scenes = default_world().scenes
+            world.scenes = []
 
 
 def replace_world(world: World) -> None:

@@ -19,35 +19,35 @@ __all__ = [
 ]
 
 
-def resolve_scene(scene_id: str | None = None) -> Scene:
+def resolve_scene(scene_id: str | None = None) -> Scene | None:
     """Return the scene with ``scene_id``, or the first scene if not found.
 
-    The world always contains at least one scene (the store seeds a default
-    and ``delete_scene`` refuses to remove the last one).
+    Returns ``None`` when the world has no scenes and no matching id.
     """
 
     world = get_world()
-    if not world.scenes:
-        with world_transaction() as world:
-            world.scenes.append(Scene(title=DEFAULT_SCENE_TITLE, markdown=DEFAULT_SCENE_MARKDOWN))
     if scene_id:
         scene = world.get_scene(scene_id)
         if scene is not None:
             return scene
-    return world.scenes[0]
+    return world.scenes[0] if world.scenes else None
 
 
 def get_scene_text(scene_id: str | None = None) -> str:
     """Return the markdown text of a scene (first scene if id is unknown)."""
 
-    return resolve_scene(scene_id).markdown
+    scene = resolve_scene(scene_id)
+    return scene.markdown if scene is not None else ""
 
 
 def set_scene_text(scene_id: str | None, text: str) -> None:
     """Set a scene's markdown text and write the world through to disk."""
 
     with world_transaction():
-        resolve_scene(scene_id).markdown = text
+        scene = resolve_scene(scene_id)
+        if scene is None:
+            return
+        scene.markdown = text
 
 
 def update_scene_blueprint(
@@ -61,7 +61,11 @@ def update_scene_blueprint(
     """Partially update a scene blueprint and write the world through to disk."""
 
     with world_transaction():
-        blueprint = resolve_scene(scene_id).blueprint
+        scene = resolve_scene(scene_id)
+        if scene is None:
+            msg = f"Scene not found: {scene_id}"
+            raise ValueError(msg)
+        blueprint = scene.blueprint
         if premise is not None:
             blueprint.premise = premise
         if purpose is not None:
@@ -82,6 +86,9 @@ def set_scene_metadata(
 
     with world_transaction():
         scene = resolve_scene(scene_id)
+        if scene is None:
+            msg = "No scene found to update."
+            raise ValueError(msg)
         if title is not None:
             scene.title = title
         if summary is not None:
@@ -103,14 +110,11 @@ def create_scene(title: str = DEFAULT_SCENE_TITLE, summary: str = "") -> Scene:
 
 
 def delete_scene(scene_id: str) -> None:
-    """Delete a scene; refuses to delete the last remaining scene."""
+    """Delete a scene from the world."""
 
     with world_transaction() as world:
         scene = world.get_scene(scene_id)
         if scene is None:
             msg = f"Scene not found: {scene_id}"
-            raise ValueError(msg)
-        if len(world.scenes) == 1:
-            msg = "Cannot delete the last remaining scene."
             raise ValueError(msg)
         world.scenes.remove(scene)
