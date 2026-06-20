@@ -16,6 +16,7 @@ from app.world.models import (
     AddWorldStateEntry,
     Character,
     Event,
+    EventRelation,
     Intimacy,
     RemoveIntimacy,
     RemoveWorldStateEntry,
@@ -30,6 +31,12 @@ from app.world.models import (
     WorldStateEntry,
     unique_slug,
 )
+from app.world.relations import (
+    RelationValidationError,
+    diagnostics_for_relation,
+    normalize_relation,
+    relation_diagnostics,
+)
 from app.world.replay import derive_state_at
 from app.world.store import get_world, save_world
 
@@ -38,6 +45,17 @@ _WORLD_STATE_KIND_OPTIONS = {
     "pressure": "Pressure",
     "thread": "Thread",
     "consequence": "Consequence",
+}
+_RELATION_KIND_OPTIONS = {
+    "follows": "Follows (loose order)",
+    "directly_follows": "Directly follows (tight continuity)",
+    "during": "During (concurrent)",
+}
+# For directed kinds the user picks which event is the follower (the later one)
+# instead of inferring it from timeline list position.
+_RELATION_DIRECTION_OPTIONS = {
+    "this_follows": "This event follows the other",
+    "other_follows": "The other event follows this one",
 }
 
 
@@ -478,9 +496,24 @@ def render_timeline_form(active_path: str) -> None:
 def _render_timeline_list() -> None:
     bible = get_world().story_bible
     ui.label("Timeline").classes("text-xl font-semibold")
-    ui.label("Ordered story events. Events update world state and signal characters.").classes(
-        "text-grey-7"
-    )
+    ui.label(
+        "Ordered story events. Events update world state and signal characters. "
+        "Relationships add ordering semantics on top of list position."
+    ).classes("text-grey-7")
+
+    if bible.timeline:
+        mermaid_source = _build_timeline_mermaid(bible)
+        with ui.card().classes("w-full"):
+            ui.label("Event graph").classes("text-lg font-semibold")
+            ui.mermaid(mermaid_source)
+            _render_timeline_legend()
+
+        relation_warnings = relation_diagnostics(bible)
+        if relation_warnings:
+            with ui.card().classes("w-full bg-orange-1"):
+                ui.label("Relationship warnings").classes("text-warning font-semibold")
+                for warning in relation_warnings:
+                    ui.label(warning.message).classes("text-sm")
 
     def insert_event(index: int) -> None:
         event = Event()
@@ -595,6 +628,253 @@ def _render_event_detail(event: Event) -> None:
             signals_section.refresh()
 
         ui.button("Add signal", icon="add", on_click=add_signal).props("flat")
+
+    with ui.card().classes("w-full"):
+        ui.label("Relationships").classes("text-lg font-semibold")
+        ui.label(
+            "Typed links to other events. For 'follows' kinds, choose which event is the "
+            "follower (the later one); 'during' marks concurrent events."
+        ).classes("text-grey-7 text-sm")
+
+        @ui.refreshable
+        def relations_section() -> None:
+            relations = bible.relations_for_event(event.id)
+            all_relations = relations.incoming + relations.outgoing + relations.concurrent
+            if not all_relations:
+                ui.label("No relationships.").classes("text-grey-7")
+            for relation in all_relations:
+                _render_event_relation_row(event, relation, relations_section.refresh)
+
+        relations_section()
+
+        other_event_options = {
+            other.id: other.title or "Untitled event"
+            for other in bible.timeline
+            if other.id != event.id
+        }
+
+        if other_event_options:
+            add_state = {
+                "kind": "follows",
+                "direction": "this_follows",
+                "other_id": next(iter(other_event_options)),
+            }
+
+            with ui.row().classes("w-full items-end no-wrap gap-2"):
+                kind_select = ui.select(
+                    _RELATION_KIND_OPTIONS,
+                    label="Kind",
+                    value=add_state["kind"],
+                ).classes("grow")
+                kind_select.props("dense outlined")
+                direction_select = ui.select(
+                    _RELATION_DIRECTION_OPTIONS,
+                    label="Direction",
+                    value=add_state["direction"],
+                ).classes("grow")
+                direction_select.props("dense outlined")
+                direction_select.mark("relation-direction-select")
+                other_select = ui.select(
+                    other_event_options,
+                    label="Other event",
+                    value=add_state["other_id"],
+                ).classes("grow")
+                other_select.props("dense outlined")
+
+                def on_kind_change(event_change) -> None:
+                    add_state["kind"] = event_change.value
+                    # Direction is meaningless for the symmetric ``during`` kind.
+                    direction_select.set_visibility(event_change.value != "during")
+
+                def on_direction_change(event_change) -> None:
+                    add_state["direction"] = event_change.value
+
+                def on_other_change(event_change) -> None:
+                    add_state["other_id"] = event_change.value
+
+                kind_select.on_value_change(on_kind_change)
+                direction_select.on_value_change(on_direction_change)
+                other_select.on_value_change(on_other_change)
+
+                def add_relation() -> None:
+                    kind = add_state["kind"]
+                    other_id = add_state["other_id"]
+                    if not other_id:
+                        return
+                    if kind == "during" or add_state["direction"] == "this_follows":
+                        # Source is the follower (later) event; for ``during`` the
+                        # pair is unordered so endpoint order does not matter.
+                        source_id, target_id = event.id, other_id
+                    else:
+                        source_id, target_id = other_id, event.id
+                    try:
+                        normalize_relation(bible, kind, source_id, target_id)
+                    except RelationValidationError as exc:
+                        ui.notify(str(exc), type="negative")
+                        return
+                    relation = EventRelation(
+                        kind=kind,
+                        source_id=source_id,
+                        target_id=target_id,
+                    )
+                    bible.event_relations.append(relation)
+                    save_world()
+                    relations_section.refresh()
+
+                ui.button("Add relationship", icon="add", on_click=add_relation).props("flat")
+
+
+def _mermaid_escape_label(text: str) -> str:
+    cleaned = text.replace('"', "'").replace("\n", " ").strip()
+    return cleaned or "Untitled"
+
+
+_CONFLICT_EDGE_COLOR = "#e53935"
+
+
+def _during_groups(bible: StoryBible) -> list[list[str]]:
+    """Cluster timeline events linked (transitively) by ``during`` relations.
+
+    Returns groups of 2+ event ids, ordered by timeline position, so the graph
+    builder can place concurrent events in a shared vertical band.
+    """
+
+    order = [event.id for event in bible.timeline]
+    parent = {event_id: event_id for event_id in order}
+
+    def find(node: str) -> str:
+        while parent[node] != node:
+            parent[node] = parent[parent[node]]
+            node = parent[node]
+        return node
+
+    known = set(order)
+    for relation in bible.event_relations:
+        if (
+            relation.kind == "during"
+            and relation.source_id in known
+            and relation.target_id in known
+        ):
+            parent[find(relation.source_id)] = find(relation.target_id)
+
+    groups: dict[str, list[str]] = {}
+    for event_id in order:
+        groups.setdefault(find(event_id), []).append(event_id)
+    return [members for members in groups.values() if len(members) >= 2]
+
+
+def _build_timeline_mermaid(bible: StoryBible) -> str:
+    conflict_ids = {diagnostic.relation_id for diagnostic in relation_diagnostics(bible)}
+    labels = {
+        event.id: _mermaid_escape_label(event.title or f"Event {index + 1}")
+        for index, event in enumerate(bible.timeline)
+    }
+
+    groups = _during_groups(bible)
+    grouped_ids = {event_id for group in groups for event_id in group}
+
+    lines = ["flowchart LR"]
+    for event in bible.timeline:
+        if event.id not in grouped_ids:
+            lines.append(f'  {event.id}["{labels[event.id]}"]')
+
+    # Concurrent (``during``) events are wrapped in an outlined subgraph instead
+    # of being joined by an edge. With no edge forcing a rank gap, dagre lets the
+    # group's members settle on the same rank (a shared vertical band in this
+    # left-to-right graph) while the box keeps them visually connected.
+    subgraph_ids: list[str] = []
+    for group_index, members in enumerate(groups):
+        subgraph_id = f"during_group_{group_index}"
+        subgraph_ids.append(subgraph_id)
+        lines.append(f'  subgraph {subgraph_id}["during"]')
+        for event_id in members:
+            lines.append(f'    {event_id}["{labels[event_id]}"]')
+        lines.append("  end")
+
+    # Directed edges are drawn earlier -> later so the graph flows left-to-right
+    # in chronological order (``source`` is the later follower, ``target`` the
+    # earlier event it follows). ``during`` carries no edge -- it is shown by the
+    # group box above.
+    conflict_link_indices: list[int] = []
+    link_index = 0
+    for relation in bible.event_relations:
+        if relation.kind == "follows":
+            lines.append(f"  {relation.target_id} --> {relation.source_id}")
+        elif relation.kind == "directly_follows":
+            lines.append(f"  {relation.target_id} ==> {relation.source_id}")
+        else:
+            continue
+        if relation.id in conflict_ids:
+            conflict_link_indices.append(link_index)
+        link_index += 1
+
+    for subgraph_id in subgraph_ids:
+        lines.append(f"  style {subgraph_id} fill:none,stroke:#9c6ade,stroke-dasharray:4 4")
+
+    for idx in conflict_link_indices:
+        lines.append(f"  linkStyle {idx} stroke:{_CONFLICT_EDGE_COLOR},stroke-width:2px;")
+
+    return "\n".join(lines)
+
+
+def _render_timeline_legend() -> None:
+    """Minimal legend mapping graph styles to relation kinds."""
+
+    items = (
+        ("follows", "display:inline-block;width:28px;border-top:2px solid #555;"),
+        ("directly follows", "display:inline-block;width:28px;border-top:4px solid #555;"),
+        (
+            "during",
+            "display:inline-block;width:24px;height:14px;"
+            "border:1px dashed #9c6ade;border-radius:2px;",
+        ),
+        (
+            "conflict",
+            f"display:inline-block;width:28px;border-top:2px solid {_CONFLICT_EDGE_COLOR};",
+        ),
+    )
+    with ui.row().classes("gap-4 items-center q-mt-sm"):
+        for label, sample_style in items:
+            with ui.row().classes("items-center gap-1 no-wrap"):
+                ui.html(f'<span style="{sample_style}"></span>')
+                ui.label(label).classes("text-grey-7 text-sm")
+
+
+def _render_event_relation_row(
+    event: Event,
+    relation: EventRelation,
+    refresh: Callable[[], None],
+) -> None:
+    bible = get_world().story_bible
+    if relation.kind == "during":
+        other_id = relation.target_id if relation.source_id == event.id else relation.source_id
+        other = bible.get_event(other_id)
+        other_title = other.title if other else other_id
+        label = f"during with {other_title or 'Untitled'}"
+    elif relation.source_id == event.id:
+        other = bible.get_event(relation.target_id)
+        other_title = other.title if other else relation.target_id
+        label = f"{relation.kind} → {other_title or 'Untitled'}"
+    else:
+        other = bible.get_event(relation.source_id)
+        other_title = other.title if other else relation.source_id
+        label = f"{relation.kind} ← {other_title or 'Untitled'}"
+
+    warnings = diagnostics_for_relation(bible, relation.id)
+
+    with ui.row().classes("w-full items-center no-wrap gap-2"):
+        ui.label(label).classes("grow")
+        if warnings:
+            ui.badge("warning").props("color=warning")
+
+        def delete_relation(relation_id: str = relation.id) -> None:
+            bible.event_relations = [
+                item for item in bible.event_relations if item.id != relation_id
+            ]
+            save_world()
+            refresh()
+
+        _delete_button(delete_relation, "Remove relationship")
 
 
 def _render_world_state_effect_row(
@@ -761,6 +1041,11 @@ async def _confirm_delete_event(event: Event) -> None:
 
     bible = get_world().story_bible
     bible.timeline = [item for item in bible.timeline if item.id != event.id]
+    bible.event_relations = [
+        item
+        for item in bible.event_relations
+        if item.source_id != event.id and item.target_id != event.id
+    ]
     save_world()
     ui.navigate.to("/workspace/timeline")
 

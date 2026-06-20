@@ -18,6 +18,8 @@ from langgraph.prebuilt import InjectedState
 from app.world.models import (
     Character,
     Event,
+    EventRelation,
+    EventRelationKind,
     Intimacy,
     SceneCharacterStance,
     Signal,
@@ -27,6 +29,13 @@ from app.world.models import (
     WorldStateEntry,
     WorldStateKind,
     unique_slug,
+)
+from app.world.relations import (
+    RelationValidationError,
+    diagnostics_for_relation,
+    format_diagnostics,
+    normalize_relation,
+    relation_diagnostics,
 )
 from app.world.replay import DerivedCharacterState, derive_state
 from app.world.store import get_world, world_transaction
@@ -80,9 +89,17 @@ def read_story_bible() -> str:
     lines.append(f"## Timeline ({len(bible.timeline)} events)")
     for position, event in enumerate(bible.timeline, start=1):
         signal_count = len(event.signals)
-        lines.append(
-            f"{position}. {event.title or 'Untitled'} [id: {event.id}] ({signal_count} signals)"
-        )
+        relation_summary = _event_relation_summary(bible, event.id)
+        summary_suffix = f" ({signal_count} signals"
+        if relation_summary:
+            summary_suffix += f", {relation_summary}"
+        summary_suffix += ")"
+        lines.append(f"{position}. {event.title or 'Untitled'} [id: {event.id}]{summary_suffix}")
+
+    relation_warnings = format_diagnostics(relation_diagnostics(bible))
+    if relation_warnings:
+        lines.append("")
+        lines.append(relation_warnings)
 
     return "\n".join(lines)
 
@@ -396,10 +413,18 @@ def read_timeline() -> str:
     lines = []
     for position, event in enumerate(bible.timeline, start=1):
         description = f" - {event.description}" if event.description else ""
+        relation_summary = _event_relation_summary(bible, event.id)
+        relation_part = f", {relation_summary}" if relation_summary else ""
         lines.append(
             f"{position}. {event.title or 'Untitled'} [id: {event.id}] "
-            f"({len(event.signals)} signals){description}"
+            f"({len(event.signals)} signals{relation_part}){description}"
         )
+
+    relation_warnings = format_diagnostics(relation_diagnostics(bible))
+    if relation_warnings:
+        lines.append("")
+        lines.append(relation_warnings)
+
     return "\n".join(lines)
 
 
@@ -435,6 +460,40 @@ def read_event(event_id: str) -> str:
         lines.append(f"- {name} [signal id: {signal.id}]: {signal.interpretation or '-'}")
         for effect in signal.effects:
             lines.append(f"  - {json.dumps(effect.model_dump(mode='json'))}")
+
+    relations = bible.relations_for_event(event.id)
+    lines.append("")
+    lines.append("## Relationships")
+    if not relations.incoming and not relations.outgoing and not relations.concurrent:
+        lines.append("(none)")
+    for relation in relations.outgoing:
+        other = bible.get_event(relation.target_id)
+        title = other.title if other else relation.target_id
+        lines.append(
+            f"- {relation.kind} '{title}' [id: {relation.target_id}] [relation id: {relation.id}]"
+        )
+        warning = format_diagnostics(diagnostics_for_relation(bible, relation.id))
+        if warning:
+            lines.append(f"  {warning}")
+    for relation in relations.incoming:
+        other = bible.get_event(relation.source_id)
+        title = other.title if other else relation.source_id
+        lines.append(
+            f"- '{title}' {relation.kind} this event [id: {relation.source_id}] "
+            f"[relation id: {relation.id}]"
+        )
+        warning = format_diagnostics(diagnostics_for_relation(bible, relation.id))
+        if warning:
+            lines.append(f"  {warning}")
+    for relation in relations.concurrent:
+        other_id = relation.target_id if relation.source_id == event.id else relation.source_id
+        other = bible.get_event(other_id)
+        title = other.title if other else other_id
+        lines.append(f"- during with '{title}' [id: {other_id}] [relation id: {relation.id}]")
+        warning = format_diagnostics(diagnostics_for_relation(bible, relation.id))
+        if warning:
+            lines.append(f"  {warning}")
+
     return "\n".join(lines)
 
 
@@ -513,6 +572,66 @@ def update_event(
 
 
 @tool
+def add_event_relation(
+    kind: EventRelationKind,
+    source_id: str,
+    target_id: str,
+) -> str:
+    """Add a typed relationship between two timeline events.
+
+    Directed kinds use ``source_id`` as the later event (the follower) and
+    ``target_id`` as the earlier event it follows. ``follows`` is loose ordering
+    (any distance); ``directly_follows`` is tight moment-to-moment continuity.
+    ``during`` marks concurrent events (unordered pair). Order conflicts with the
+    timeline list are warned but allowed.
+    """
+
+    with world_transaction() as world:
+        bible = world.story_bible
+        try:
+            normalized_source, normalized_target = normalize_relation(
+                bible, kind, source_id, target_id
+            )
+        except RelationValidationError as exc:
+            raise ToolException(str(exc)) from exc
+
+        relation = EventRelation(
+            kind=kind,
+            source_id=normalized_source,
+            target_id=normalized_target,
+        )
+        bible.event_relations.append(relation)
+
+    warnings = format_diagnostics(diagnostics_for_relation(bible, relation.id))
+    result = (
+        f"Added {kind} relation from '{normalized_source}' to '{normalized_target}' "
+        f"(relation id: {relation.id})."
+    )
+    if warnings:
+        result = f"{result} {warnings}"
+    return result
+
+
+@tool
+def remove_event_relation(relation_id: str) -> str:
+    """Remove an event relationship by its relation id."""
+
+    with world_transaction() as world:
+        bible = world.story_bible
+        relation = bible.get_event_relation(relation_id)
+        if relation is None:
+            raise ToolException(
+                f"No event relation with id {relation_id}. "
+                "Call read_event to list relation ids for an event."
+            )
+        bible.event_relations = [item for item in bible.event_relations if item.id != relation_id]
+    return (
+        f"Removed {relation.kind} relation "
+        f"from '{relation.source_id}' to '{relation.target_id}' (id: {relation_id})."
+    )
+
+
+@tool
 def delete_event(event_id: str) -> str:
     """Delete an event and its signals permanently."""
 
@@ -522,6 +641,11 @@ def delete_event(event_id: str) -> str:
         if event is None:
             raise ToolException(f"No event with id {event_id}.")
         bible.timeline = [item for item in bible.timeline if item.id != event_id]
+        bible.event_relations = [
+            item
+            for item in bible.event_relations
+            if item.source_id != event_id and item.target_id != event_id
+        ]
     return f"Deleted event '{event.title or 'Untitled'}' (id: {event_id})."
 
 
@@ -578,6 +702,18 @@ def _resolve_insert_index(bible: StoryBible, position: int | None) -> int:
     return max(0, min(position - 1, len(bible.timeline)))
 
 
+def _event_relation_summary(bible: StoryBible, event_id: str) -> str:
+    relations = bible.relations_for_event(event_id)
+    parts: list[str] = []
+    if relations.incoming:
+        parts.append(f"{len(relations.incoming)} incoming")
+    if relations.outgoing:
+        parts.append(f"{len(relations.outgoing)} outgoing")
+    if relations.concurrent:
+        parts.append(f"{len(relations.concurrent)} concurrent")
+    return ", ".join(parts)
+
+
 def _intimacy_lines(intimacies: list[Intimacy]) -> list[str]:
     if not intimacies:
         return ["(none)"]
@@ -610,5 +746,7 @@ STORY_BIBLE_TOOLS = [
     add_event,
     update_event,
     delete_event,
+    add_event_relation,
+    remove_event_relation,
     read_world_state,
 ]

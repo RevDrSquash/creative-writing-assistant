@@ -44,13 +44,11 @@ worth preserving. These are not committed to a specific phase yet.
   "husband and wife", "work together"). Open question: model these as fields on character
   identities or as a separate relationships table. A separate table would be easier to migrate
   to a graph database if relationships grow complex, though that is not needed yet.
-* Event relationships (event tree): Events are currently a flat list that captures chronology
-  ("A happens before B") but not causality ("A happens because of B") or multiple arcs that
-  weave together across the timeline. Make events a tree/graph that captures causal relationships
-  and arc membership. This also feeds scene context: with scenes tied to events and events
-  related by causality, the workflow can look at what happens before a scene (incoming
-  conditions) and what must happen after it (final-state constraints), and visualize arcs that
-  span chronologically distant events.
+* Event relationships (remaining): Causality edges (`causes`), arc membership, scene-to-event
+  linking so workflows can select relevant neighboring scenes by relationship rather than list
+  adjacency, and a per-character perspective timeline view (events a character signals, in
+  order). Typed ordering relationships (`follows`, `directly_follows`, `during`) are implemented;
+  see [story_bible_model.md](story_bible_model.md).
 
 ## Intimacy review workflow
 

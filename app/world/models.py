@@ -16,13 +16,16 @@ from uuid import uuid4
 
 from pydantic import BaseModel, Field
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 6
 
 IntimacyStrength = Literal["minor", "major", "defining"]
 WorldStateKind = Literal["pressure", "thread", "consequence"]
+EventRelationKind = Literal["follows", "directly_follows", "during"]
 
 INTIMACY_STRENGTHS: tuple[IntimacyStrength, ...] = ("minor", "major", "defining")
 WORLD_STATE_KINDS: tuple[WorldStateKind, ...] = ("pressure", "thread", "consequence")
+EVENT_RELATION_KINDS: tuple[EventRelationKind, ...] = ("follows", "directly_follows", "during")
+DIRECTED_EVENT_RELATION_KINDS: tuple[EventRelationKind, ...] = ("follows", "directly_follows")
 
 # Articles dropped when comparing character ids, so a model that emits
 # ``char_narrator`` still resolves to the real ``char_the_narrator``.
@@ -210,6 +213,27 @@ class Event(BaseModel):
     signals: list[Signal] = Field(default_factory=list)
 
 
+class EventRelation(BaseModel):
+    """A typed edge between two timeline events.
+
+    For the directed kinds (``follows``, ``directly_follows``), ``source_id`` is
+    the later event and ``target_id`` the earlier one it follows.
+    """
+
+    id: str = Field(default_factory=new_id)
+    kind: EventRelationKind = "follows"
+    source_id: str = ""
+    target_id: str = ""
+
+
+class EventRelationsForEvent(BaseModel):
+    """Relations involving a single event, split by direction."""
+
+    incoming: list[EventRelation] = Field(default_factory=list)
+    outgoing: list[EventRelation] = Field(default_factory=list)
+    concurrent: list[EventRelation] = Field(default_factory=list)
+
+
 class StoryBible(BaseModel):
     """Structured reference material for the story world."""
 
@@ -221,6 +245,7 @@ class StoryBible(BaseModel):
     baseline_world_state: list[WorldStateEntry] = Field(default_factory=list)
     characters: list[Character] = Field(default_factory=list)
     timeline: list[Event] = Field(default_factory=list)
+    event_relations: list[EventRelation] = Field(default_factory=list)
 
     def get_character(self, character_id: str) -> Character | None:
         return next(
@@ -270,6 +295,30 @@ class StoryBible(BaseModel):
             if event.id == event_id:
                 return index
         return None
+
+    def get_event_relation(self, relation_id: str) -> EventRelation | None:
+        return next(
+            (relation for relation in self.event_relations if relation.id == relation_id),
+            None,
+        )
+
+    def relations_for_event(self, event_id: str) -> EventRelationsForEvent:
+        incoming: list[EventRelation] = []
+        outgoing: list[EventRelation] = []
+        concurrent: list[EventRelation] = []
+        for relation in self.event_relations:
+            if relation.kind == "during":
+                if relation.source_id == event_id or relation.target_id == event_id:
+                    concurrent.append(relation)
+            elif relation.target_id == event_id:
+                incoming.append(relation)
+            elif relation.source_id == event_id:
+                outgoing.append(relation)
+        return EventRelationsForEvent(
+            incoming=incoming,
+            outgoing=outgoing,
+            concurrent=concurrent,
+        )
 
 
 class SceneCharacterStance(BaseModel):

@@ -92,6 +92,51 @@ def test_store_load_migrates_v3_to_v4_discarding_character_stance(tmp_path: Path
     assert world.scenes[0].blueprint.premise == ""
 
 
+def test_store_load_migrates_v4_to_v5_adding_event_relations(tmp_path: Path) -> None:
+    path = tmp_path / "world.json"
+    payload = default_world().model_dump(mode="json")
+    payload["schema_version"] = 4
+    path.write_text(json.dumps(payload), encoding="utf-8")
+
+    world = JsonFileWorldStore(path).load()
+
+    assert world.schema_version == SCHEMA_VERSION
+    assert world.story_bible.event_relations == []
+
+
+def test_store_load_migrates_v5_to_v6_flips_directed_relations(tmp_path: Path) -> None:
+    path = tmp_path / "world.json"
+    payload = default_world().model_dump(mode="json")
+    payload["schema_version"] = 5
+    payload["story_bible"]["timeline"] = [
+        {"id": "event_a", "title": "Alpha", "world_state_effects": [], "signals": []},
+        {"id": "event_b", "title": "Beta", "world_state_effects": [], "signals": []},
+    ]
+    payload["story_bible"]["event_relations"] = [
+        {"id": "rel_p", "kind": "precedes", "source_id": "event_a", "target_id": "event_b"},
+        {"id": "rel_d", "kind": "directly_follows", "source_id": "event_a", "target_id": "event_b"},
+        {"id": "rel_c", "kind": "during", "source_id": "event_a", "target_id": "event_b"},
+    ]
+    path.write_text(json.dumps(payload), encoding="utf-8")
+
+    world = JsonFileWorldStore(path).load()
+
+    assert world.schema_version == SCHEMA_VERSION
+    relations = {relation.id: relation for relation in world.story_bible.event_relations}
+    # `precedes` becomes `follows` with endpoints swapped (later event as source).
+    assert relations["rel_p"].kind == "follows"
+    assert relations["rel_p"].source_id == "event_b"
+    assert relations["rel_p"].target_id == "event_a"
+    # `directly_follows` keeps its name but flips to follower-as-source.
+    assert relations["rel_d"].kind == "directly_follows"
+    assert relations["rel_d"].source_id == "event_b"
+    assert relations["rel_d"].target_id == "event_a"
+    # `during` is symmetric and unchanged.
+    assert relations["rel_c"].kind == "during"
+    assert relations["rel_c"].source_id == "event_a"
+    assert relations["rel_c"].target_id == "event_b"
+
+
 def test_get_world_singleton_loads_once_and_save_world_persists(
     isolated_world: World,
     isolated_data_dir: Path,

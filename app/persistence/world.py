@@ -77,12 +77,47 @@ def migrate_world_payload(data: dict) -> dict:
     if schema_version == 3:
         migrated = dict(data)
         migrated["schema_version"] = 4
-        return migrated
+        return migrate_world_payload(migrated)
+    if schema_version == 4:
+        migrated = dict(data)
+        migrated["schema_version"] = 5
+        return migrate_world_payload(migrated)
+    if schema_version == 5:
+        return migrate_world_payload(_migrate_v5_to_v6(data))
     msg = (
         f"Unsupported world schema_version {schema_version!r}; "
         f"this app supports version {SCHEMA_VERSION}."
     )
     raise ValueError(msg)
+
+
+def _migrate_v5_to_v6(data: dict) -> dict:
+    """Flip directed event relations to the follower-as-source convention.
+
+    v5 stored directed edges with ``source`` as the earlier event
+    (``precedes`` meant "source precedes target"). v6 renames ``precedes`` to
+    ``follows`` and stores ``source`` as the later event (the follower), so both
+    directed kinds reference an earlier ``target``. Swapping endpoints preserves
+    each edge's chronological meaning.
+    """
+
+    migrated = dict(data)
+    bible = dict(migrated.get("story_bible") or {})
+    relations = []
+    for raw in bible.get("event_relations", []):
+        relation = dict(raw)
+        kind = relation.get("kind")
+        if kind in ("precedes", "directly_follows"):
+            relation["source_id"], relation["target_id"] = (
+                relation.get("target_id", ""),
+                relation.get("source_id", ""),
+            )
+            relation["kind"] = "follows" if kind == "precedes" else "directly_follows"
+        relations.append(relation)
+    bible["event_relations"] = relations
+    migrated["story_bible"] = bible
+    migrated["schema_version"] = 6
+    return migrated
 
 
 def validate_world_payload(data: dict, *, source: str) -> World:

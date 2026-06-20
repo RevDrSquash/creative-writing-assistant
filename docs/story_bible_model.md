@@ -25,6 +25,7 @@ The Story Bible lives on the `World` object and contains:
   stored on the character; it lives on the scene (see the Scene model in
   [forms_and_data_models.md](forms_and_data_models.md)).
 - **Timeline**: an ordered list of Events.
+- **Event Relations**: typed edges between events (stored separately from list order).
 
 ## Baselines Versus Derived State
 
@@ -107,7 +108,42 @@ and are modified over time by Signal effects.
 An objective story beat on the timeline. Fields: `id`, `title`, `description`, a list of
 world-state effects, and a list of Signals. Event order is the timeline order (list position);
 events can be inserted at any position. Events do not store timestamps; position is the
-ordering.
+ordering. Relationships between events are stored on the Story Bible as `event_relations`, not
+on the Event itself.
+
+### Event Relationship
+
+A typed edge between two events. Stored on `StoryBible.event_relations` as a flat list.
+Fields: `id`, `kind`, `source_id`, `target_id`.
+
+Kinds (for the directed kinds, `source` is the later event that follows the earlier `target`):
+
+- `follows` (directed, loose): `source` happens after `target`, with no required time gap.
+- `directly_follows` (directed, tight): `source` immediately follows `target` on a short
+  timescale and they share moment-to-moment continuity (location, time of day, who is present).
+- `during` (symmetric): `source` and `target` are concurrent; the pair is unordered.
+
+Both directed kinds reference an earlier event, so an edge can be added from the later event
+(usually the one just created) without editing the earlier one. The edge direction is set
+explicitly when adding a relation (the form's "Direction" choice picks which event is the
+follower), not inferred from timeline list position, so an event can be placed before a
+later-listed one. `happens_before` is not stored; read a `follows` edge backwards. Causality and
+arc membership are deferred (see [future_work.md](future_work.md)).
+
+The timeline list remains the canonical chronology for replay. Relationships add semantics,
+validation diagnostics, and visualization; they do not change replay order. Directed edges whose
+`source` (the follower) is at or before `target` in the list order produce order-conflict
+warnings; directed cycles produce cycle warnings. Warnings are derived (like replay) and surfaced
+in tools and the UI; they do not block edits. Structural errors (unknown event ids, self-loops,
+duplicate edges) are rejected at the tool and form boundary.
+
+The Timeline page renders the relations as a Mermaid graph that flows left-to-right in
+chronological order (earlier events on the left). Directed edges encode the kind by line style
+(solid `follows`, thick `directly_follows`) with a legend below the graph rather than per-edge
+labels, and conflicting edges are drawn red. `during` is *not* drawn as an edge: events linked
+(transitively) by `during` are wrapped in a dashed outlined subgraph box. Because no edge forces a
+rank gap between them, Mermaid/dagre lets the concurrent members settle on the same rank (a shared
+vertical band), and the box keeps them visually connected.
 
 ### Signal
 
@@ -144,8 +180,8 @@ The replay engine is a pure function over the Story Bible:
 - Output: the derived world state (list of world-state entries) and the derived state of each
   character (intimacies).
 - Replay starts from the baselines and applies each event's world-state effects, then each of
-  its signals' character-state effects, in timeline order, up to and including the requested
-  position.
+  its signals' character-state effects, in **timeline list order**, up to and including the
+  requested position. Event relationships do not affect replay order.
 
 Replay is tolerant of dangling references: an effect that targets a missing entry or intimacy
 (for example, strengthening an intimacy a later edit removed) is skipped silently. Detecting
@@ -167,8 +203,8 @@ and surfacing such conflicts is planned future work, not a replay error.
 ## Agent Access
 
 Agent tools provide simple CRUD over the editable entities (narrative style fields, world facts,
-baseline world state, characters, events with world-state effects and signals) plus read access to
-derived state at any timeline position. Tools mutate the in-memory `World` and write through
+baseline world state, characters, events with world-state effects and signals, event
+relationships) plus read access to derived state at any timeline position. Tools mutate the in-memory `World` and write through
 to disk, the same as user edits via forms.
 
 Intimacy effects are a planned exception: today the agent authors intimacy effects directly, but

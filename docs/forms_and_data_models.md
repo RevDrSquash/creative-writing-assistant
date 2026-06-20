@@ -35,7 +35,8 @@ summary it contains:
 - Baseline World State: pressures, open threads, and consequences at the start of the timeline.
 - Characters: stable identity and baseline state with intimacies. Ephemeral scene stance is not
   stored on the character; it lives on the scene (see the Scene Model below).
-- Timeline: an ordered list of Events carrying world-state effects and character Signals.
+- Timeline: an ordered list of Events carrying world-state effects and character Signals, plus
+  a separate list of typed Event Relationships between events.
 
 World state and character state at any timeline position are derived by replaying event
 effects over the baselines; derived views are read-only. These records are structured so
@@ -113,6 +114,10 @@ Story Bible forms render one field per canonical data-model field.
   with a selector for the timeline position.
 
 The UI should present characters, world facts, and events as structured forms rather than raw JSON.
+
+The Timeline page shows an event-relationship graph (Mermaid) above the ordered event list.
+Each event detail form includes a Relationships section for adding and removing typed edges to
+other events.
 
 ## Validation Behavior
 

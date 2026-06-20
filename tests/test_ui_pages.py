@@ -12,6 +12,9 @@ from pathlib import Path
 
 from nicegui.testing import User
 
+from app.ui.components.story_bible_forms import _build_timeline_mermaid, _during_groups
+from app.world.models import Event, EventRelation, StoryBible
+
 
 async def test_index_redirects_to_workspace(user: User) -> None:
     await user.open("/")
@@ -97,9 +100,59 @@ async def test_timeline_add_event_opens_event_form(
     user.find("Add event").click()
     await user.should_see("World State Effects")
     await user.should_see("Signals")
+    await user.should_see("Relationships")
 
     stored = json.loads((isolated_data_dir / "world.json").read_text(encoding="utf-8"))
     assert len(stored["story_bible"]["timeline"]) == 1
+
+
+async def test_timeline_graph_and_event_relationships(
+    user: User,
+    isolated_data_dir: Path,
+) -> None:
+    await user.open("/workspace/timeline")
+    user.find("Add event").click()
+    await user.should_see("Relationships")
+
+    await user.open("/workspace/timeline")
+    user.find("Add event").click()
+    await user.should_see("Add relationship")
+
+    user.find("Add relationship").click()
+
+    stored = json.loads((isolated_data_dir / "world.json").read_text(encoding="utf-8"))
+    assert len(stored["story_bible"]["event_relations"]) == 1
+
+    await user.open("/workspace/timeline")
+    await user.should_see("Event graph")
+
+
+async def test_relationship_direction_control_reverses_stored_edge(
+    user: User,
+    isolated_data_dir: Path,
+) -> None:
+    await user.open("/workspace/timeline")
+    user.find("Add event").click()
+    await user.should_see("Relationships")
+
+    await user.open("/workspace/timeline")
+    user.find("Add event").click()
+    await user.should_see("Add relationship")
+
+    # On the second (later-in-list) event, declare that the OTHER (earlier-in-list)
+    # event is the follower. This must reverse the stored edge instead of inferring
+    # direction from list position.
+    direction = next(iter(user.find(marker="relation-direction-select").elements))
+    direction.set_value("other_follows")
+    user.find("Add relationship").click()
+
+    stored = json.loads((isolated_data_dir / "world.json").read_text(encoding="utf-8"))
+    timeline = stored["story_bible"]["timeline"]
+    relations = stored["story_bible"]["event_relations"]
+    assert len(relations) == 1
+    # other (timeline[0]) follows this (timeline[1]): source is the other, target is this.
+    assert relations[0]["source_id"] == timeline[0]["id"]
+    assert relations[0]["target_id"] == timeline[1]["id"]
 
 
 async def test_new_scene_button_creates_first_scene(
@@ -260,3 +313,69 @@ async def test_debug_call_page_renders_response_tool_calls(
     await user.open("/debug/calls/run-1")
     await user.should_see("Creating the fact now.")
     await user.should_see("Tool Call: upsert_world_fact")
+
+
+def _three_event_bible() -> StoryBible:
+    return StoryBible(
+        timeline=[
+            Event(id="evt_a", title="Alpha"),
+            Event(id="evt_b", title="Beta"),
+            Event(id="evt_c", title="Gamma"),
+        ]
+    )
+
+
+def test_during_groups_clusters_transitively_concurrent_events() -> None:
+    bible = _three_event_bible()
+    bible.event_relations.append(EventRelation(kind="during", source_id="evt_a", target_id="evt_b"))
+    bible.event_relations.append(EventRelation(kind="during", source_id="evt_b", target_id="evt_c"))
+
+    groups = _during_groups(bible)
+
+    assert groups == [["evt_a", "evt_b", "evt_c"]]
+
+
+def test_during_groups_ignores_solo_events() -> None:
+    bible = _three_event_bible()
+    bible.event_relations.append(
+        EventRelation(kind="follows", source_id="evt_b", target_id="evt_a")
+    )
+
+    assert _during_groups(bible) == []
+
+
+def test_build_timeline_mermaid_flows_chronologically_left_to_right() -> None:
+    bible = _three_event_bible()
+    bible.event_relations.append(
+        EventRelation(kind="follows", source_id="evt_b", target_id="evt_a")
+    )
+
+    source = _build_timeline_mermaid(bible)
+
+    assert source.startswith("flowchart LR")
+    assert "evt_a --> evt_b" in source
+    assert "|follows|" not in source
+
+
+def test_build_timeline_mermaid_groups_during_events_without_an_edge() -> None:
+    bible = _three_event_bible()
+    bible.event_relations.append(EventRelation(kind="during", source_id="evt_a", target_id="evt_b"))
+
+    source = _build_timeline_mermaid(bible)
+
+    assert 'subgraph during_group_0["during"]' in source
+    assert "style during_group_0 fill:none,stroke:#9c6ade,stroke-dasharray:4 4" in source
+    # The during relation must not emit an edge -- that is what kept the members
+    # off the same rank. Membership in the box conveys concurrency instead.
+    assert "evt_a -.- evt_b" not in source
+    assert "evt_b -.- evt_a" not in source
+
+
+def test_build_timeline_mermaid_marks_conflicting_edges_red() -> None:
+    bible = _three_event_bible()
+    conflict = EventRelation(kind="follows", source_id="evt_a", target_id="evt_b")
+    bible.event_relations.append(conflict)
+
+    source = _build_timeline_mermaid(bible)
+
+    assert "linkStyle 0 stroke:#e53935" in source

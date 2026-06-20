@@ -48,8 +48,8 @@ def _bible_with_character() -> tuple[StoryBible, Character, Intimacy]:
     return bible, character, intimacy
 
 
-def test_schema_version_is_four() -> None:
-    assert SCHEMA_VERSION == 4
+def test_schema_version_is_six() -> None:
+    assert SCHEMA_VERSION == 6
 
 
 def test_scene_blueprint_defaults() -> None:

@@ -107,7 +107,7 @@ fix so the context is not lost between phases.
 - **Why it usually doesn't bite:** Scenes far apart in the story rarely share fine-grained
   state, so the gaps are only obvious when scenes are tightly coupled.
 - **Possible fix:** Simple first iteration — always pass the previous scene as context to the
-  workflow. A fuller fix depends on the scene/event linking and event-relationship work tracked
-  in `docs/future_work.md` (scenes linked to events, events related by causality), which would
-  let the workflow select genuinely relevant neighboring scenes rather than always the previous
-  one.
+  workflow. Event relationships (`follows`, `directly_follows`, `during`) now exist for
+  semantics and visualization; full cross-scene context still depends on scene-to-event linking
+  (tracked in `docs/future_work.md`), which would let the workflow pull continuity-group neighbors
+  and list-ordered predecessors by relationship rather than always the previous scene.
