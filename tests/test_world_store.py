@@ -137,6 +137,25 @@ def test_store_load_migrates_v5_to_v6_flips_directed_relations(tmp_path: Path) -
     assert relations["rel_c"].target_id == "event_b"
 
 
+def test_store_load_migrates_v6_to_v7_adds_blueprint_event_links(tmp_path: Path) -> None:
+    path = tmp_path / "world.json"
+    payload = default_world().model_dump(mode="json")
+    scene_payload = Scene(title=DEFAULT_SCENE_TITLE, markdown=DEFAULT_SCENE_MARKDOWN).model_dump(
+        mode="json"
+    )
+    scene_payload["blueprint"].pop("event_ids", None)
+    scene_payload["blueprint"].pop("related_event_ids", None)
+    payload["scenes"] = [scene_payload]
+    payload["schema_version"] = 6
+    path.write_text(json.dumps(payload), encoding="utf-8")
+
+    world = JsonFileWorldStore(path).load()
+
+    assert world.schema_version == SCHEMA_VERSION
+    assert world.scenes[0].blueprint.event_ids == []
+    assert world.scenes[0].blueprint.related_event_ids == []
+
+
 def test_get_world_singleton_loads_once_and_save_world_persists(
     isolated_world: World,
     isolated_data_dir: Path,

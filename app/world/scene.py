@@ -57,6 +57,8 @@ def update_scene_blueprint(
     purpose: str | None = None,
     stances: list[SceneCharacterStance] | None = None,
     outline: list[str] | None = None,
+    event_ids: list[str] | None = None,
+    related_event_ids: list[str] | None = None,
 ) -> None:
     """Partially update a scene blueprint and write the world through to disk."""
 
@@ -74,6 +76,10 @@ def update_scene_blueprint(
             blueprint.stances = stances
         if outline is not None:
             blueprint.outline = outline
+        if event_ids is not None:
+            blueprint.event_ids = event_ids
+        if related_event_ids is not None:
+            blueprint.related_event_ids = related_event_ids
 
 
 def set_scene_metadata(

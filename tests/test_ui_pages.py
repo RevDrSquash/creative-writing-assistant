@@ -53,6 +53,34 @@ async def test_scene_blueprint_hidden_in_preview_mode(user: User) -> None:
     await user.should_not_see("Character Stances")
 
 
+async def test_scene_blueprint_shows_linked_events(
+    user: User,
+    isolated_data_dir: Path,
+) -> None:
+    from app.persistence.world import JsonFileWorldStore, default_world
+    from app.world.models import Event, Scene, SceneBlueprint
+
+    world = default_world()
+    world.story_bible.timeline.append(Event(id="event_arrival", title="The Arrival"))
+    world.scenes.append(
+        Scene(
+            title="Chapter 1",
+            markdown="# One",
+            blueprint=SceneBlueprint(event_ids=["event_arrival"]),
+        )
+    )
+    JsonFileWorldStore(isolated_data_dir / "world.json").save(world)
+
+    await user.open("/workspace")
+    await user.should_see("Chapter 1")
+    user.find("Chapter 1").click()
+    await user.should_see("Notes")
+    user.find(marker="scene-editor-toggle-button").click()
+    await user.should_see("Linked Events")
+    user.find("Linked Events").click()
+    await user.should_see("The Arrival [event_arrival]")
+
+
 async def test_workspace_sidebar_navigates_to_characters(user: User) -> None:
     await user.open("/workspace/narrative-style")
     user.find("Characters").click()

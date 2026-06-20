@@ -96,6 +96,13 @@ stance is an agent workflow concern (the scene-writing workflow, Phase 6b); see 
 [forms_and_data_models.md](forms_and_data_models.md) and
 [architecture_agent_workflows.md](architecture_agent_workflows.md).
 
+A scene links to the events it depicts through its blueprint: `event_ids` (the events the scene
+enacts; a scene represents one or more plot events) and `related_event_ids` (context-only events
+that are relevant without being enacted). These links are scene-local scratch on the blueprint,
+not authoritative structural edges on the timeline, so they are validated when drafting but may go
+stale if a linked event is later removed (see [known_issues.md](known_issues.md)). See the Scene
+model in [forms_and_data_models.md](forms_and_data_models.md).
+
 ### Intimacy
 
 A character-subjective belief, attachment, value, fear, desire, or relationship assumption.

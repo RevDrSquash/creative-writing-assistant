@@ -36,7 +36,7 @@ from app.models.config import (
     SCENE_TITLE_SUMMARY_NODE_ID,
 )
 from app.tools.scene import draft_scene
-from app.tools.story_bible import upsert_character
+from app.tools.story_bible import add_event, upsert_character
 from app.world.models import World
 from app.world.scene import create_scene
 from app.world.store import get_world
@@ -99,12 +99,25 @@ def _seed_character() -> str:
     return get_world().story_bible.characters[-1].id
 
 
-def _workflow_input(scene_id: str, max_revisions: int = 1) -> dict[str, Any]:
+def _seed_event(title: str = "Alpha") -> str:
+    add_event.invoke({"title": title})
+    return get_world().story_bible.timeline[-1].id
+
+
+def _workflow_input(
+    scene_id: str,
+    max_revisions: int = 1,
+    *,
+    event_ids: list[str] | None = None,
+    related_event_ids: list[str] | None = None,
+) -> dict[str, Any]:
     return {
         "premise": "Brief premise.",
         "purpose": "Brief purpose.",
         "pov": "Third person",
         "character_ids": ["char_hero"],
+        "event_ids": event_ids if event_ids is not None else [],
+        "related_event_ids": related_event_ids if related_event_ids is not None else [],
         "constraints": "Keep it tense.",
         "scene_id": scene_id,
         "revision_count": 0,
@@ -113,6 +126,8 @@ def _workflow_input(scene_id: str, max_revisions: int = 1) -> dict[str, Any]:
 
 
 def test_formalize_node_persists_blueprint(isolated_world: World) -> None:
+    enacted_id = _seed_event("Enacted")
+    related_id = _seed_event("Related")
     scene = create_scene()
     models = {
         SCENE_FORMALIZE_NODE_ID: structured_fake_model(
@@ -120,11 +135,13 @@ def test_formalize_node_persists_blueprint(isolated_world: World) -> None:
         )
     }
     node = _formalize_details_node(models)
-    node(_workflow_input(scene.id))
+    node(_workflow_input(scene.id, event_ids=[enacted_id], related_event_ids=[related_id]))
 
     blueprint = get_world().get_scene(scene.id).blueprint
     assert blueprint.premise == "Stored premise."
     assert blueprint.purpose == "Stored purpose."
+    assert blueprint.event_ids == [enacted_id]
+    assert blueprint.related_event_ids == [related_id]
 
 
 def test_stances_node_persists_blueprint(isolated_world: World) -> None:
@@ -326,6 +343,7 @@ def test_draft_scene_tool_creates_and_opens_scene(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     character_id = _seed_character()
+    event_id = _seed_event()
     monkeypatch.setattr(
         "app.graphs.registry.WORKFLOWS",
         {"draft_scene": lambda **kwargs: build_scene_writer_graph(models=_workflow_models())},
@@ -341,6 +359,7 @@ def test_draft_scene_tool_creates_and_opens_scene(
         "Brief purpose.",
         "First person",
         [character_id],
+        [event_id],
         state,
         "draft-call",
     )
@@ -359,6 +378,7 @@ def test_draft_scene_tool_normalizes_drifted_character_ids(
 ) -> None:
     upsert_character.invoke({"name": "The Narrator"})
     character_id = get_world().story_bible.characters[-1].id
+    event_id = _seed_event()
     captured: dict[str, Any] = {}
 
     def fake_build(**_kwargs: Any) -> Any:
@@ -383,6 +403,7 @@ def test_draft_scene_tool_normalizes_drifted_character_ids(
         "Brief purpose.",
         "Second person",
         ["char_narrator"],
+        [event_id],
         state,
         "draft-call",
     )
@@ -392,6 +413,7 @@ def test_draft_scene_tool_normalizes_drifted_character_ids(
 
 def test_draft_scene_tool_rejects_unknown_character_ids(world_with_scene: World) -> None:
     _seed_character()
+    event_id = _seed_event()
     state = {
         "current_scene_id": world_with_scene.scenes[0].id,
         "current_scene": world_with_scene.scenes[0].markdown,
@@ -404,12 +426,99 @@ def test_draft_scene_tool_rejects_unknown_character_ids(world_with_scene: World)
             "Brief purpose.",
             "Third person",
             ["char_villain"],
+            [event_id],
             state,
             "draft-call",
         )
 
     # The bogus call must not have created an orphan scene.
     assert len(get_world().scenes) == scene_count
+
+
+def test_draft_scene_tool_rejects_unknown_event_ids(world_with_scene: World) -> None:
+    character_id = _seed_character()
+    state = {
+        "current_scene_id": world_with_scene.scenes[0].id,
+        "current_scene": world_with_scene.scenes[0].markdown,
+    }
+    scene_count = len(world_with_scene.scenes)
+
+    with pytest.raises(ToolException, match="Unknown event_id"):
+        draft_scene.func(
+            "Brief premise.",
+            "Brief purpose.",
+            "Third person",
+            [character_id],
+            ["event_ghost"],
+            state,
+            "draft-call",
+        )
+
+    assert len(get_world().scenes) == scene_count
+
+
+def test_draft_scene_tool_requires_at_least_one_event(world_with_scene: World) -> None:
+    character_id = _seed_character()
+    state = {
+        "current_scene_id": world_with_scene.scenes[0].id,
+        "current_scene": world_with_scene.scenes[0].markdown,
+    }
+    scene_count = len(world_with_scene.scenes)
+
+    with pytest.raises(ToolException, match="must enact at least one event"):
+        draft_scene.func(
+            "Brief premise.",
+            "Brief purpose.",
+            "Third person",
+            [character_id],
+            [],
+            state,
+            "draft-call",
+        )
+
+    assert len(get_world().scenes) == scene_count
+
+
+def test_draft_scene_tool_drops_related_event_listed_as_enacted(
+    world_with_scene: World,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    character_id = _seed_character()
+    enacted_id = _seed_event("Enacted")
+    related_id = _seed_event("Related")
+    captured: dict[str, Any] = {}
+
+    def fake_build(**_kwargs: Any) -> Any:
+        graph = build_scene_writer_graph(models=_workflow_models())
+        original_invoke = graph.invoke
+
+        def invoke(input_state: dict[str, Any], *args: Any, **kwargs: Any) -> Any:
+            captured["event_ids"] = input_state["event_ids"]
+            captured["related_event_ids"] = input_state["related_event_ids"]
+            return original_invoke(input_state, *args, **kwargs)
+
+        monkeypatch.setattr(graph, "invoke", invoke)
+        return graph
+
+    monkeypatch.setattr("app.graphs.registry.WORKFLOWS", {"draft_scene": fake_build})
+
+    state = {
+        "current_scene_id": world_with_scene.scenes[0].id,
+        "current_scene": world_with_scene.scenes[0].markdown,
+    }
+    draft_scene.func(
+        "Brief premise.",
+        "Brief purpose.",
+        "Third person",
+        [character_id],
+        [enacted_id],
+        state,
+        "draft-call",
+        related_event_ids=[enacted_id, related_id],
+    )
+
+    assert captured["event_ids"] == [enacted_id]
+    assert captured["related_event_ids"] == [related_id]
 
 
 def test_graph_nodes_register_scene_workflow_nodes() -> None:

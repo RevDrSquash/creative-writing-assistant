@@ -16,14 +16,14 @@ worth preserving. These are not committed to a specific phase yet.
   the full, token-heavy scene workflow. The user then triggers the actual draft-scene workflow
   separately from a proposed scene, so the main agent can set up several scenes for review
   before committing tokens to drafting any of them.
-  * The scene card captures the key details of the scene: a brief summary of the surrounding
-    context, the premise, the purpose, a ~three-point description of the scene's arc, and the
-    character stances.
+  * The scene card captures the key details of the scene: the premise, the purpose, a three-point description of the scene's arc, the
+    character's involved, and any key constraints.
   * `propose_scene` should take more inputs than the current premise/purpose: the events the
-    scene covers (scenes get linked to timeline events) and the characters involved (likely
-    derivable from the events). Linking scenes to events is what later enables relevance-based
-    scene context (see the cross-scene consistency issue in `docs/known_issues.md` and event
-    relationships below).
+    scene covers and the characters involved (likely derivable from the events). Scene-to-event
+    linking already exists on `draft_scene` (the scene blueprint stores `event_ids` for enacted
+    events and `related_event_ids` for context); `propose_scene` should carry the same links
+    forward. These links are what later enable relevance-based scene context (see the cross-scene
+    consistency issue in `docs/known_issues.md` and event relationships below).
 * Scene review (replaces the outline review): Replace the current `review_outline` /
   `revise_outline` step with a review of the *finished* scene. After the user kicks off the
   workflow from a proposed scene, the final scene is reviewed in parallel by multiple reviewers,
@@ -44,11 +44,13 @@ worth preserving. These are not committed to a specific phase yet.
   "husband and wife", "work together"). Open question: model these as fields on character
   identities or as a separate relationships table. A separate table would be easier to migrate
   to a graph database if relationships grow complex, though that is not needed yet.
-* Event relationships (remaining): Causality edges (`causes`), arc membership, scene-to-event
-  linking so workflows can select relevant neighboring scenes by relationship rather than list
-  adjacency, and a per-character perspective timeline view (events a character signals, in
-  order). Typed ordering relationships (`follows`, `directly_follows`, `during`) are implemented;
-  see [story_bible_model.md](story_bible_model.md).
+* Event relationships (remaining): Causality edges (`causes`), arc membership, and a per-character
+  perspective timeline view (events a character signals, in order). Typed ordering relationships
+  (`follows`, `directly_follows`, `during`) are implemented; see
+  [story_bible_model.md](story_bible_model.md). Scene-to-event linking now exists as scene-local
+  blueprint links (`event_ids` / `related_event_ids`); making workflows select relevant neighboring
+  scenes by those links (rather than list adjacency) is the remaining follow-up. A "related" link is
+  the interim stand-in for an explicit relevance relation between events.
 
 ## Intimacy review workflow
 

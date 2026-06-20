@@ -147,7 +147,13 @@ def _formalize_details_node(models: dict[str, BaseChatModel] | None) -> Any:
             (f"Formalize the scene brief into a clear premise and purpose.\n\n{prompt}"),
         )
         scene_id = state["scene_id"]
-        update_scene_blueprint(scene_id, premise=details.premise, purpose=details.purpose)
+        update_scene_blueprint(
+            scene_id,
+            premise=details.premise,
+            purpose=details.purpose,
+            event_ids=list(state.get("event_ids", [])),
+            related_event_ids=list(state.get("related_event_ids", [])),
+        )
         return {"premise": details.premise, "purpose": details.purpose}
 
     return node
@@ -192,10 +198,13 @@ def _author_stances_node(models: dict[str, BaseChatModel] | None) -> Any:
 def _outline_node(models: dict[str, BaseChatModel] | None) -> Any:
     def node(state: SceneWorkflowState) -> dict[str, Any]:
         prompt = (
-            "Outline the scene as a short list of concise beat statements.\n\n"
+            "Outline the scene as a short list of concise beat statements.\n"
+            "The scene must enact the events listed below.\n\n"
             f"Premise: {state.get('premise', '')}\n"
             f"Purpose: {state.get('purpose', '')}\n"
             f"POV: {state.get('pov', '')}\n"
+            f"Events this scene enacts:\n{_event_context(state.get('event_ids', []))}\n"
+            f"Related events (context only):\n{_event_context(state.get('related_event_ids', []))}\n"
             f"Stances:\n{_stances_text(state.get('stances', []))}"
         )
         result = _structured_invoke(SCENE_OUTLINE_NODE_ID, models, OutlineBeats, prompt)
@@ -254,10 +263,14 @@ def _draft_prose_node(models: dict[str, BaseChatModel] | None) -> Any:
             ],
         )
         prompt = (
-            "Draft the full scene prose in markdown.\n\n"
+            "Draft the full scene prose in markdown.\n"
+            "The scene must enact the events listed below; use the related events only as "
+            "background context.\n\n"
             f"Premise: {state.get('premise', '')}\n"
             f"Purpose: {state.get('purpose', '')}\n"
             f"POV: {state.get('pov', '')}\n"
+            f"Events this scene enacts:\n{_event_context(state.get('event_ids', []))}\n"
+            f"Related events (context only):\n{_event_context(state.get('related_event_ids', []))}\n"
             f"Stances:\n{_stances_text(state.get('stances', []))}\n"
             f"Outline:\n{_outline_text(state.get('outline', []))}\n"
             f"Constraints: {state.get('constraints', '') or '(none)'}"
@@ -314,6 +327,8 @@ def _brief_prompt(state: SceneWorkflowState) -> str:
         f"Purpose (brief): {state.get('purpose', '')}\n"
         f"POV: {state.get('pov', '')}\n"
         f"Participating characters:\n{character_lines}\n"
+        f"Events this scene enacts:\n{_event_context(state.get('event_ids', []))}\n"
+        f"Related events (context only):\n{_event_context(state.get('related_event_ids', []))}\n"
         f"Constraints: {state.get('constraints', '') or '(none)'}"
     )
 
@@ -330,6 +345,22 @@ def _character_context(character_ids: list[str]) -> str:
         else:
             name = character.identity.name or "Unnamed"
             lines.append(f"- {name} [id: {character_id}]")
+    return "\n".join(lines)
+
+
+def _event_context(event_ids: list[str]) -> str:
+    bible = get_world().story_bible
+    if not event_ids:
+        return "(none)"
+    lines: list[str] = []
+    for event_id in event_ids:
+        event = bible.get_event(event_id)
+        if event is None:
+            lines.append(f"- unknown id: {event_id}")
+            continue
+        title = event.title or "Untitled"
+        description = f": {event.description}" if event.description else ""
+        lines.append(f"- {title} [id: {event_id}]{description}")
     return "\n".join(lines)
 
 

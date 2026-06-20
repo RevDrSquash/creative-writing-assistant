@@ -402,8 +402,10 @@ def draft_scene(
     purpose: str,
     pov: str,
     character_ids: list[str],
+    event_ids: list[str],
     state: Annotated[dict[str, Any], InjectedState],
     tool_call_id: Annotated[str, InjectedToolCallId],
+    related_event_ids: list[str] | None = None,
     constraints: str = "",
 ) -> Command:
     """Run the full scene-writing workflow and open the resulting new scene.
@@ -411,10 +413,15 @@ def draft_scene(
     Always creates a new scene, formalizes the brief into blueprint fields,
     outlines, drafts prose, and sets title and summary.
 
-    `character_ids` must come from read_story_bible; unknown ids are rejected.
+    A scene enacts one or more plot events. `event_ids` are the timeline events
+    this scene depicts (at least one is required); `related_event_ids` are extra
+    events that provide relevant context without being enacted (for example, a
+    past event the characters discuss). Both lists must come from read_timeline;
+    unknown ids are rejected. `character_ids` must come from read_story_bible.
     """
 
     character_ids = _resolve_scene_character_ids(character_ids)
+    enacted_ids, related_ids = _resolve_scene_event_ids(event_ids, related_event_ids or [])
 
     _persist_open_scene_text(state)
     scene = world_create_scene()
@@ -427,6 +434,8 @@ def draft_scene(
             "purpose": purpose,
             "pov": pov,
             "character_ids": character_ids,
+            "event_ids": enacted_ids,
+            "related_event_ids": related_ids,
             "constraints": constraints,
             "scene_id": scene.id,
             "revision_count": 0,
@@ -485,6 +494,61 @@ def _unknown_character_detail(unknown_ids: list[str]) -> str:
     else:
         detail = "No characters exist yet; create one first."
     return f"Unknown character_id(s): {unknown}. {detail}"
+
+
+def _resolve_scene_event_ids(
+    event_ids: list[str],
+    related_event_ids: list[str],
+) -> tuple[list[str], list[str]]:
+    """Validate enacted and related event ids, rejecting unknown ones.
+
+    Events use exact-match ids (there is no fuzzy event resolver). Returns
+    de-duplicated ``(enacted, related)`` lists; a scene must enact at least one
+    event, and an id listed as enacted is dropped from the related list so the
+    two never overlap.
+    """
+
+    enacted = _validate_event_ids(event_ids)
+    if not enacted:
+        raise ToolException(
+            "A scene must enact at least one event; pass event_ids from read_timeline."
+        )
+    enacted_set = set(enacted)
+    related = [
+        event_id
+        for event_id in _validate_event_ids(related_event_ids)
+        if event_id not in enacted_set
+    ]
+    return enacted, related
+
+
+def _validate_event_ids(event_ids: list[str]) -> list[str]:
+    """Return de-duplicated, existing event ids, rejecting unknown ones."""
+
+    bible = get_world().story_bible
+    resolved: list[str] = []
+    unknown: list[str] = []
+    seen: set[str] = set()
+    for raw_id in event_ids:
+        if bible.get_event(raw_id) is None:
+            unknown.append(raw_id)
+        elif raw_id not in seen:
+            seen.add(raw_id)
+            resolved.append(raw_id)
+    if unknown:
+        raise ToolException(_unknown_event_detail(unknown))
+    return resolved
+
+
+def _unknown_event_detail(unknown_ids: list[str]) -> str:
+    bible = get_world().story_bible
+    unknown = ", ".join(unknown_ids)
+    if bible.timeline:
+        listing = ", ".join(f"{event.title or 'Untitled'} [{event.id}]" for event in bible.timeline)
+        detail = f"Valid events: {listing}"
+    else:
+        detail = "No events exist yet; add one to the timeline first."
+    return f"Unknown event_id(s): {unknown}. {detail}"
 
 
 SCENE_TOOLS = [

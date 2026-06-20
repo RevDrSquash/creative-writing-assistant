@@ -1097,6 +1097,21 @@ def _with_current(options: dict[str, str], current: str) -> dict[str, str]:
 # --- scene blueprint ---------------------------------------------------------
 
 
+def _render_linked_events(label: str, event_ids: list[str], bible: StoryBible) -> None:
+    """Render a read-only list of linked events by title, tolerating stale ids."""
+
+    _field_label(label)
+    if not event_ids:
+        ui.label("(none)").classes("text-grey-7 text-sm")
+        return
+    for event_id in event_ids:
+        event = bible.get_event(event_id)
+        if event is None:
+            ui.label(f"Unknown event [{event_id}]").classes("text-grey-7 text-sm")
+        else:
+            ui.label(f"{event.title or 'Untitled'} [{event_id}]").classes("text-sm")
+
+
 def render_scene_blueprint_form(scene: Scene, edit_state: dict) -> None:
     """Render the scene blueprint editor, visible only in edit mode."""
 
@@ -1124,6 +1139,14 @@ def render_scene_blueprint_form(scene: Scene, edit_state: dict) -> None:
                 placeholder="Why this scene exists in the story...",
                 rows=3,
             )
+
+        with ui.expansion("Linked Events", icon="timeline", value=False).classes("w-full"):
+            ui.label(
+                "Timeline events this scene enacts, plus related events for context. "
+                "Set when drafting; links may go stale if an event is later removed."
+            ).classes("text-grey-7 text-sm")
+            _render_linked_events("Enacted", blueprint.event_ids, bible)
+            _render_linked_events("Related (context only)", blueprint.related_event_ids, bible)
 
         with ui.expansion("Outline", icon="format_list_numbered", value=False).classes("w-full"):
             ui.label("Concise beats that structure the scene.").classes("text-grey-7 text-sm")

@@ -66,6 +66,12 @@ drafting:
   `character_id`, `mood` (a list of short statements), and `intent`, `tactics`, and `stakes`
   (single strings). Only characters with a defined stance in this scene appear.
 - **Outline**: the scene's beats as a list of short, concise statements.
+- **Event links**: `event_ids` are the timeline events this scene enacts (a scene depicts one or
+  more plot events), and `related_event_ids` are extra events that provide relevant context
+  without being enacted (for example, a past event the characters discuss). Both are lists of
+  event ids; the UI renders them read-only (links are set when drafting). Because they are
+  scene-local scratch they can go stale if a linked event is later removed (see
+  [known_issues.md](known_issues.md)); readers tolerate unresolved ids.
 
 The scene-writing workflow (Phase 6b) generates the blueprint, but every field is freely editable.
 The blueprint is excluded from Story Bible replay; like the old character stance, it is scene-local

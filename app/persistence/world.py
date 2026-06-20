@@ -84,6 +84,10 @@ def migrate_world_payload(data: dict) -> dict:
         return migrate_world_payload(migrated)
     if schema_version == 5:
         return migrate_world_payload(_migrate_v5_to_v6(data))
+    if schema_version == 6:
+        migrated = dict(data)
+        migrated["schema_version"] = 7
+        return migrate_world_payload(migrated)
     msg = (
         f"Unsupported world schema_version {schema_version!r}; "
         f"this app supports version {SCHEMA_VERSION}."

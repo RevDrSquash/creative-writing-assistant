@@ -14,6 +14,8 @@ class SceneWorkflowState(TypedDict, total=False):
     purpose: str
     pov: str
     character_ids: list[str]
+    event_ids: list[str]
+    related_event_ids: list[str]
     constraints: str
     scene_id: str
     stances: list[SceneCharacterStance]

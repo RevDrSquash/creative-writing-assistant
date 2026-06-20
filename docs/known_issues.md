@@ -130,3 +130,23 @@ fix so the context is not lost between phases.
   semantics and visualization; full cross-scene context still depends on scene-to-event linking
   (tracked in `docs/future_work.md`), which would let the workflow pull continuity-group neighbors
   and list-ordered predecessors by relationship rather than always the previous scene.
+
+## 9. Scene blueprint event links can go stale
+
+- **Severity:** Low (advisory scaffolding, not source-of-truth data)
+- **Location:** `app/world/models.py` (`SceneBlueprint.event_ids`,
+  `SceneBlueprint.related_event_ids`); `app/tools/scene.py` — `draft_scene`
+- **Introduced:** Scene-to-event linking on `draft_scene`
+- **Symptom:** A scene blueprint stores the ids of the events it enacts (`event_ids`) and
+  related context events (`related_event_ids`). These ids are validated when the scene is
+  drafted, but nothing keeps them in sync afterward: deleting an event leaves a dangling id in
+  any blueprint that referenced it.
+- **Why it is acceptable for now:** The links are scene-local blueprint scratch (not
+  event-sourced, excluded from replay), so a stale link is advisory scaffolding rather than a
+  correctness bug in the timeline. Readers tolerate unresolved ids — the blueprint form and
+  workflow render an "unknown event" placeholder instead of erroring. This matches the
+  warning-first posture used for dangling effect references (issue #8). We are choosing to live
+  with this for now.
+- **Possible fix:** Deferred. The intended handling for stale/changed links is still open;
+  options include surfacing a warning when an event a blueprint references is deleted, or
+  pruning the link at that point.

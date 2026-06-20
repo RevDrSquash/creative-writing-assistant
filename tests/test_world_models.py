@@ -49,8 +49,8 @@ def _bible_with_character() -> tuple[StoryBible, Character, Intimacy]:
     return bible, character, intimacy
 
 
-def test_schema_version_is_six() -> None:
-    assert SCHEMA_VERSION == 6
+def test_schema_version_is_seven() -> None:
+    assert SCHEMA_VERSION == 7
 
 
 def test_scene_blueprint_defaults() -> None:
@@ -59,6 +59,8 @@ def test_scene_blueprint_defaults() -> None:
     assert blueprint.purpose == ""
     assert blueprint.stances == []
     assert blueprint.outline == []
+    assert blueprint.event_ids == []
+    assert blueprint.related_event_ids == []
 
 
 def test_scene_character_stance_mood_is_list() -> None:

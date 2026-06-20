@@ -16,7 +16,7 @@ from uuid import uuid4
 
 from pydantic import BaseModel, Field
 
-SCHEMA_VERSION = 6
+SCHEMA_VERSION = 7
 
 IntimacyStrength = Literal["minor", "major", "defining"]
 WorldStateKind = Literal["pressure", "thread", "consequence"]
@@ -332,12 +332,20 @@ class SceneCharacterStance(BaseModel):
 
 
 class SceneBlueprint(BaseModel):
-    """Planning scaffold for a scene: premise, purpose, outline, and character stances."""
+    """Planning scaffold for a scene: premise, purpose, outline, stances, and event links.
+
+    ``event_ids`` are the timeline events this scene enacts; ``related_event_ids`` are
+    context-only events relevant to the scene without being chronologically adjacent. Both are
+    scene-local scratch (not event-sourced, excluded from replay) and may go stale if a linked
+    event is later deleted or changed; readers tolerate unresolved ids.
+    """
 
     premise: str = ""
     purpose: str = ""
     stances: list[SceneCharacterStance] = Field(default_factory=list)
     outline: list[str] = Field(default_factory=list)
+    event_ids: list[str] = Field(default_factory=list)
+    related_event_ids: list[str] = Field(default_factory=list)
 
 
 class Scene(BaseModel):
