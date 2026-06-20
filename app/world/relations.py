@@ -1,7 +1,7 @@
 """Event relationship validation and derived diagnostics.
 
-Relations are stored separately from the canonical timeline list; this module
-validates structural constraints and computes order-conflict and cycle warnings.
+Relations define chronology (with the timeline list as tie-breaker); this module
+validates structural constraints, computes canonical order, and cycle warnings.
 See ``docs/story_bible_model.md``.
 """
 
@@ -12,12 +12,13 @@ from typing import Literal
 
 from app.world.models import (
     DIRECTED_EVENT_RELATION_KINDS,
+    Event,
     EventRelation,
     EventRelationKind,
     StoryBible,
 )
 
-DiagnosticKind = Literal["order_conflict", "cycle"]
+DiagnosticKind = Literal["cycle"]
 
 
 @dataclass(frozen=True)
@@ -46,6 +47,80 @@ def _relation_key(kind: EventRelationKind, source_id: str, target_id: str) -> tu
     return (kind, source_id, target_id)
 
 
+def _directed_adjacency(bible: StoryBible) -> dict[str, list[str]]:
+    """Map each follower (later) event to the earlier events it follows."""
+
+    adjacency: dict[str, list[str]] = {event.id: [] for event in bible.timeline}
+    for relation in bible.event_relations:
+        if relation.kind not in DIRECTED_EVENT_RELATION_KINDS:
+            continue
+        if relation.source_id in adjacency and relation.target_id in adjacency:
+            adjacency[relation.source_id].append(relation.target_id)
+    return adjacency
+
+
+def _can_reach(adjacency: dict[str, list[str]], start: str, goal: str) -> bool:
+    if start == goal:
+        return True
+    seen: set[str] = set()
+    queue = [start]
+    while queue:
+        node = queue.pop()
+        if node == goal:
+            return True
+        if node in seen:
+            continue
+        seen.add(node)
+        queue.extend(adjacency.get(node, []))
+    return False
+
+
+def chronological_order(bible: StoryBible) -> list[Event]:
+    """Return events in canonical chronological order.
+
+    Directed edges force ``target`` (earlier) before ``source`` (later). Among
+    events with no ordering constraint, list position is the tie-breaker.
+    Residual cycles (legacy data) are appended in list order.
+    """
+
+    if not bible.timeline:
+        return []
+
+    index_by_id = {event.id: index for index, event in enumerate(bible.timeline)}
+    adjacency = _directed_adjacency(bible)
+
+    # For topological sort: earlier must come before later, so later depends on earlier.
+    in_degree: dict[str, int] = {event.id: 0 for event in bible.timeline}
+    reverse_adjacency: dict[str, list[str]] = {event.id: [] for event in bible.timeline}
+    for later_id, earlier_ids in adjacency.items():
+        for earlier_id in earlier_ids:
+            in_degree[later_id] += 1
+            reverse_adjacency[earlier_id].append(later_id)
+
+    ready = sorted(
+        [event_id for event_id, degree in in_degree.items() if degree == 0],
+        key=lambda event_id: index_by_id[event_id],
+    )
+    ordered_ids: list[str] = []
+
+    while ready:
+        event_id = ready.pop(0)
+        ordered_ids.append(event_id)
+        for later_id in reverse_adjacency[event_id]:
+            in_degree[later_id] -= 1
+            if in_degree[later_id] == 0:
+                ready.append(later_id)
+        ready.sort(key=lambda event_id: index_by_id[event_id])
+
+    if len(ordered_ids) < len(bible.timeline):
+        for event in bible.timeline:
+            if event.id not in ordered_ids:
+                ordered_ids.append(event.id)
+
+    event_by_id = {event.id: event for event in bible.timeline}
+    return [event_by_id[event_id] for event_id in ordered_ids]
+
+
 def normalize_relation(
     bible: StoryBible,
     kind: EventRelationKind,
@@ -57,7 +132,7 @@ def normalize_relation(
     """Validate and normalize a relation's endpoints.
 
     Returns ``(source_id, target_id)`` ready for storage. Raises
-    ``RelationValidationError`` for unknown ids, self-loops, or duplicates.
+    ``RelationValidationError`` for unknown ids, self-loops, duplicates, or cycles.
     """
 
     if kind not in ("follows", "directly_follows", "during"):
@@ -87,14 +162,24 @@ def normalize_relation(
             )
             raise RelationValidationError(msg)
 
+    if kind in DIRECTED_EVENT_RELATION_KINDS:
+        adjacency = _directed_adjacency(bible)
+        if _can_reach(adjacency, target_id, source_id):
+            msg = (
+                f"Adding directed relation '{kind}' from '{source_id}' to '{target_id}' "
+                f"would create a cycle: '{target_id}' already reaches '{source_id}' "
+                "through existing relations."
+            )
+            raise RelationValidationError(msg)
+
     return source_id, target_id
 
 
 def relation_diagnostics(bible: StoryBible) -> list[RelationDiagnostic]:
-    """Return order-conflict and cycle warnings for directed relations."""
+    """Return cycle warnings for directed relations (safety net for legacy data)."""
 
     diagnostics: list[RelationDiagnostic] = []
-    index_by_id = {event.id: index for index, event in enumerate(bible.timeline)}
+    adjacency = _directed_adjacency(bible)
 
     directed: list[EventRelation] = [
         relation
@@ -103,47 +188,7 @@ def relation_diagnostics(bible: StoryBible) -> list[RelationDiagnostic]:
     ]
 
     for relation in directed:
-        source_index = index_by_id.get(relation.source_id)
-        target_index = index_by_id.get(relation.target_id)
-        if source_index is None or target_index is None:
-            continue
-        if source_index <= target_index:
-            diagnostics.append(
-                RelationDiagnostic(
-                    kind="order_conflict",
-                    relation_id=relation.id,
-                    message=(
-                        f"Relation '{relation.kind}' from "
-                        f"'{relation.source_id}' to '{relation.target_id}' "
-                        f"conflicts with timeline list order: the follower should come "
-                        f"after the event it follows "
-                        f"(positions {source_index + 1} and {target_index + 1})."
-                    ),
-                )
-            )
-
-    adjacency: dict[str, list[str]] = {event.id: [] for event in bible.timeline}
-    for relation in directed:
-        if relation.source_id in adjacency and relation.target_id in adjacency:
-            adjacency[relation.source_id].append(relation.target_id)
-
-    def can_reach(start: str, goal: str) -> bool:
-        if start == goal:
-            return True
-        seen: set[str] = set()
-        queue = [start]
-        while queue:
-            node = queue.pop()
-            if node == goal:
-                return True
-            if node in seen:
-                continue
-            seen.add(node)
-            queue.extend(adjacency.get(node, []))
-        return False
-
-    for relation in directed:
-        if can_reach(relation.target_id, relation.source_id):
+        if _can_reach(adjacency, relation.target_id, relation.source_id):
             diagnostics.append(
                 RelationDiagnostic(
                     kind="cycle",

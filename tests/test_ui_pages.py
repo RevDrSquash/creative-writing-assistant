@@ -371,10 +371,19 @@ def test_build_timeline_mermaid_groups_during_events_without_an_edge() -> None:
     assert "evt_b -.- evt_a" not in source
 
 
-def test_build_timeline_mermaid_marks_conflicting_edges_red() -> None:
-    bible = _three_event_bible()
-    conflict = EventRelation(kind="follows", source_id="evt_a", target_id="evt_b")
-    bible.event_relations.append(conflict)
+def test_build_timeline_mermaid_marks_cycle_edges_red() -> None:
+    bible = StoryBible(
+        timeline=[
+            Event(id="evt_a", title="Alpha"),
+            Event(id="evt_b", title="Beta"),
+        ]
+    )
+    bible.event_relations.append(
+        EventRelation(id="rel_ab", kind="follows", source_id="evt_a", target_id="evt_b")
+    )
+    bible.event_relations.append(
+        EventRelation(id="rel_ba", kind="follows", source_id="evt_b", target_id="evt_a")
+    )
 
     source = _build_timeline_mermaid(bible)
 

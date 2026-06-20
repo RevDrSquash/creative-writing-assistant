@@ -33,11 +33,12 @@ from app.world.models import (
 )
 from app.world.relations import (
     RelationValidationError,
+    chronological_order,
     diagnostics_for_relation,
     normalize_relation,
     relation_diagnostics,
 )
-from app.world.replay import derive_state_at
+from app.world.replay import derive_state_at, effect_diagnostics
 from app.world.store import get_world, save_world
 
 _STRENGTH_OPTIONS = {"minor": "Minor", "major": "Major", "defining": "Defining"}
@@ -127,9 +128,16 @@ def _delete_button(on_click: Callable, tooltip: str) -> ui.button:
 
 def _timeline_position_options(bible: StoryBible) -> dict[int, str]:
     options = {0: "Baseline (before any events)"}
-    for index, event in enumerate(bible.timeline):
+    for index, event in enumerate(chronological_order(bible)):
         options[index + 1] = f"After {index + 1}. {event.title or 'Untitled event'}"
     return options
+
+
+def _chronological_event_index(bible: StoryBible, event_id: str) -> int:
+    for index, event in enumerate(chronological_order(bible)):
+        if event.id == event_id:
+            return index
+    return 0
 
 
 # --- narrative style --------------------------------------------------------
@@ -259,7 +267,7 @@ def _render_derived_world_state(bible: StoryBible) -> None:
         "text-grey-7 text-sm"
     )
 
-    position = {"value": len(bible.timeline)}
+    position = {"value": len(chronological_order(bible))}
     options = _timeline_position_options(bible)
     select = ui.select(options, value=position["value"], label="As of").classes("w-full")
     select.props("dense outlined")
@@ -429,7 +437,7 @@ def _render_derived_character_state(character: Character) -> None:
             "text-grey-7 text-sm"
         )
 
-        position = {"value": len(bible.timeline)}
+        position = {"value": len(chronological_order(bible))}
         select = ui.select(
             _timeline_position_options(bible),
             value=position["value"],
@@ -497,8 +505,8 @@ def _render_timeline_list() -> None:
     bible = get_world().story_bible
     ui.label("Timeline").classes("text-xl font-semibold")
     ui.label(
-        "Ordered story events. Events update world state and signal characters. "
-        "Relationships add ordering semantics on top of list position."
+        "Ordered story events. Relationships drive chronology; list order breaks ties "
+        "among unconnected events."
     ).classes("text-grey-7")
 
     if bible.timeline:
@@ -509,10 +517,13 @@ def _render_timeline_list() -> None:
             _render_timeline_legend()
 
         relation_warnings = relation_diagnostics(bible)
-        if relation_warnings:
+        effect_warnings = effect_diagnostics(bible)
+        if relation_warnings or effect_warnings:
             with ui.card().classes("w-full bg-orange-1"):
-                ui.label("Relationship warnings").classes("text-warning font-semibold")
+                ui.label("Timeline warnings").classes("text-warning font-semibold")
                 for warning in relation_warnings:
+                    ui.label(warning.message).classes("text-sm")
+                for warning in effect_warnings:
                     ui.label(warning.message).classes("text-sm")
 
     def insert_event(index: int) -> None:
@@ -524,16 +535,18 @@ def _render_timeline_list() -> None:
 
     @ui.refreshable
     def rows() -> None:
-        if not bible.timeline:
+        ordered = chronological_order(bible)
+        if not ordered:
             ui.label("No events yet.").classes("text-grey-7")
-        for index, event in enumerate(bible.timeline):
+        for chron_index, event in enumerate(ordered):
+            list_index = bible.event_index(event.id) or 0
             with ui.card().classes("w-full"):
                 with ui.row().classes("w-full items-center no-wrap gap-2"):
-                    ui.label(f"{index + 1}.").classes("text-grey-7 font-mono")
+                    ui.label(f"{chron_index + 1}.").classes("text-grey-7 font-mono")
                     ui.label(event.title or "Untitled event").classes("grow font-semibold")
                     insert_button = ui.button(
                         icon="north",
-                        on_click=lambda index=index: insert_event(index),
+                        on_click=lambda index=list_index: insert_event(index),
                     )
                     insert_button.props("flat round dense size=sm color=grey-7")
                     insert_button.tooltip("Insert event before this one")
@@ -554,13 +567,15 @@ def _render_timeline_list() -> None:
 
 def _render_event_detail(event: Event) -> None:
     bible = get_world().story_bible
-    event_index = bible.event_index(event.id) or 0
+    chron_index = _chronological_event_index(bible, event.id)
 
     with ui.row().classes("w-full items-center no-wrap gap-2"):
         ui.button(icon="arrow_back", on_click=lambda: ui.navigate.to("/workspace/timeline")).props(
             "flat round dense"
         )
-        ui.label(f"Event {event_index + 1} of {len(bible.timeline)}").classes("text-grey-7")
+        ui.label(f"Event {chron_index + 1} of {len(chronological_order(bible))}").classes(
+            "text-grey-7"
+        )
         ui.space()
         _delete_button(lambda: _confirm_delete_event(event), "Delete event")
 
@@ -570,7 +585,7 @@ def _render_event_detail(event: Event) -> None:
         _field_label("Description")
         _bound_textarea(event, "description", placeholder="The objective story beat...")
 
-    entry_options = _entry_options_before(bible, event_index)
+    entry_options = _entry_options_before(bible, chron_index)
 
     with ui.card().classes("w-full"):
         ui.label("World State Effects").classes("text-lg font-semibold")
@@ -616,7 +631,7 @@ def _render_event_detail(event: Event) -> None:
             if not event.signals:
                 ui.label("No signals.").classes("text-grey-7")
             for signal in event.signals:
-                _render_signal_card(event, signal, event_index, signals_section.refresh)
+                _render_signal_card(event, signal, chron_index, signals_section.refresh)
 
         signals_section()
 
@@ -739,7 +754,7 @@ def _during_groups(bible: StoryBible) -> list[list[str]]:
     builder can place concurrent events in a shared vertical band.
     """
 
-    order = [event.id for event in bible.timeline]
+    order = [event.id for event in chronological_order(bible)]
     parent = {event_id: event_id for event_id in order}
 
     def find(node: str) -> str:
@@ -764,17 +779,22 @@ def _during_groups(bible: StoryBible) -> list[list[str]]:
 
 
 def _build_timeline_mermaid(bible: StoryBible) -> str:
-    conflict_ids = {diagnostic.relation_id for diagnostic in relation_diagnostics(bible)}
+    ordered = chronological_order(bible)
+    conflict_ids = {
+        diagnostic.relation_id
+        for diagnostic in relation_diagnostics(bible)
+        if diagnostic.kind == "cycle"
+    }
     labels = {
         event.id: _mermaid_escape_label(event.title or f"Event {index + 1}")
-        for index, event in enumerate(bible.timeline)
+        for index, event in enumerate(ordered)
     }
 
     groups = _during_groups(bible)
     grouped_ids = {event_id for group in groups for event_id in group}
 
     lines = ["flowchart LR"]
-    for event in bible.timeline:
+    for event in ordered:
         if event.id not in grouped_ids:
             lines.append(f'  {event.id}["{labels[event.id]}"]')
 
@@ -917,7 +937,7 @@ def _render_world_state_effect_row(
 def _render_signal_card(
     event: Event,
     signal: Signal,
-    event_index: int,
+    chron_index: int,
     refresh_signals: Callable[[], None],
 ) -> None:
     bible = get_world().story_bible
@@ -953,7 +973,7 @@ def _render_signal_card(
             signal, "interpretation", placeholder="How the character reads this event..."
         )
 
-        intimacy_options = _intimacy_options_before(bible, event_index, signal.character_id)
+        intimacy_options = _intimacy_options_before(bible, chron_index, signal.character_id)
 
         _field_label("State Effects")
 
@@ -1050,17 +1070,17 @@ async def _confirm_delete_event(event: Event) -> None:
     ui.navigate.to("/workspace/timeline")
 
 
-def _entry_options_before(bible: StoryBible, event_index: int) -> dict[str, str]:
-    derived = derive_state_at(bible, event_index)
+def _entry_options_before(bible: StoryBible, chron_index: int) -> dict[str, str]:
+    derived = derive_state_at(bible, chron_index)
     return {entry.id: f"{entry.text or entry.id} ({entry.kind})" for entry in derived.world_state}
 
 
 def _intimacy_options_before(
     bible: StoryBible,
-    event_index: int,
+    chron_index: int,
     character_id: str,
 ) -> dict[str, str]:
-    derived = derive_state_at(bible, event_index).characters.get(character_id)
+    derived = derive_state_at(bible, chron_index).characters.get(character_id)
     if derived is None:
         return {}
     return {intimacy.id: intimacy.text or intimacy.id for intimacy in derived.intimacies}

@@ -93,6 +93,25 @@ fix so the context is not lost between phases.
 - **Possible fix:** Add a one-shot migration script or import-time rewriter that maps old hex
   ids to new slugs and updates all references.
 
+## 8. Dangling effect references are warned but not prevented
+
+- **Severity:** Medium (correctness of derived state, surfaced but not blocked)
+- **Location:** `app/world/replay.py` — replay fold and `effect_diagnostics`; UI timeline
+  warnings card; `read_timeline` / `read_event` / `read_world_state` tools
+- **Introduced:** Graph-derived timeline order (chronology can change when relations are added
+  or list order changes, making prior effect references invalid at replay time)
+- **Symptom:** An event's `set_intimacy_strength`, `update_intimacy`, `remove_intimacy`, or
+  world-state `update_entry` / `remove_entry` may target an id that is not present when that
+  event is replayed (for example, strengthening an intimacy before the event that adds it).
+  Replay skips the effect silently; `effect_diagnostics()` and the Timeline warnings card
+  surface the problem but edits are still allowed.
+- **Why it is acceptable for now:** The same failure mode existed under list-order replay when
+  events were reordered or inserted; graph-derived order makes the effective sequence less
+  obvious when relations change. Warning-first keeps authoring flexible while surfacing mistakes.
+- **Possible fix:** Reject or auto-repair dangling effects when saving an event or when
+  chronology changes (reorder relations, move list position), or offer a guided fix in the UI
+  (move the effect, add the missing entry first, or reorder events).
+
 ## 7. Scene workflow has no cross-scene context, so adjacent scenes drift
 
 - **Severity:** Medium (correctness of generated content)

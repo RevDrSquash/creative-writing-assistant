@@ -32,12 +32,18 @@ from app.world.models import (
 )
 from app.world.relations import (
     RelationValidationError,
+    chronological_order,
     diagnostics_for_relation,
     format_diagnostics,
     normalize_relation,
     relation_diagnostics,
 )
-from app.world.replay import DerivedCharacterState, derive_state
+from app.world.replay import (
+    DerivedCharacterState,
+    derive_state,
+    effect_diagnostics,
+    format_effect_diagnostics,
+)
 from app.world.store import get_world, world_transaction
 
 
@@ -86,8 +92,9 @@ def read_story_bible() -> str:
         lines.append(f"- {character.identity.name or 'Unnamed'} [id: {character.id}]")
 
     lines.append("")
-    lines.append(f"## Timeline ({len(bible.timeline)} events)")
-    for position, event in enumerate(bible.timeline, start=1):
+    ordered = chronological_order(bible)
+    lines.append(f"## Timeline ({len(ordered)} events)")
+    for position, event in enumerate(ordered, start=1):
         signal_count = len(event.signals)
         relation_summary = _event_relation_summary(bible, event.id)
         summary_suffix = f" ({signal_count} signals"
@@ -96,10 +103,7 @@ def read_story_bible() -> str:
         summary_suffix += ")"
         lines.append(f"{position}. {event.title or 'Untitled'} [id: {event.id}]{summary_suffix}")
 
-    relation_warnings = format_diagnostics(relation_diagnostics(bible))
-    if relation_warnings:
-        lines.append("")
-        lines.append(relation_warnings)
+    _append_timeline_warnings(lines, bible)
 
     return "\n".join(lines)
 
@@ -408,10 +412,11 @@ def read_timeline() -> str:
     """Return the ordered event timeline with ids and signal counts."""
 
     bible = get_world().story_bible
-    if not bible.timeline:
+    ordered = chronological_order(bible)
+    if not ordered:
         return "The timeline has no events yet."
     lines = []
-    for position, event in enumerate(bible.timeline, start=1):
+    for position, event in enumerate(ordered, start=1):
         description = f" - {event.description}" if event.description else ""
         relation_summary = _event_relation_summary(bible, event.id)
         relation_part = f", {relation_summary}" if relation_summary else ""
@@ -420,10 +425,7 @@ def read_timeline() -> str:
             f"({len(event.signals)} signals{relation_part}){description}"
         )
 
-    relation_warnings = format_diagnostics(relation_diagnostics(bible))
-    if relation_warnings:
-        lines.append("")
-        lines.append(relation_warnings)
+    _append_timeline_warnings(lines, bible)
 
     return "\n".join(lines)
 
@@ -437,9 +439,9 @@ def read_event(event_id: str) -> str:
     if event is None:
         raise ToolException(f"No event with id {event_id}.")
 
-    index = bible.event_index(event.id) or 0
+    chron_index = _chronological_event_index(bible, event.id)
     lines = [
-        f"# Event {index + 1}: {event.title or 'Untitled'} [id: {event.id}]",
+        f"# Event {chron_index + 1}: {event.title or 'Untitled'} [id: {event.id}]",
         "",
         event.description or "(no description)",
         "",
@@ -493,6 +495,15 @@ def read_event(event_id: str) -> str:
         warning = format_diagnostics(diagnostics_for_relation(bible, relation.id))
         if warning:
             lines.append(f"  {warning}")
+
+    effect_warnings = [
+        item.message for item in effect_diagnostics(bible) if item.event_id == event.id
+    ]
+    if effect_warnings:
+        lines.append("")
+        lines.append("## Effect Warnings")
+        for warning in effect_warnings:
+            lines.append(f"- {warning}")
 
     return "\n".join(lines)
 
@@ -582,8 +593,8 @@ def add_event_relation(
     Directed kinds use ``source_id`` as the later event (the follower) and
     ``target_id`` as the earlier event it follows. ``follows`` is loose ordering
     (any distance); ``directly_follows`` is tight moment-to-moment continuity.
-    ``during`` marks concurrent events (unordered pair). Order conflicts with the
-    timeline list are warned but allowed.
+    ``during`` marks concurrent events (unordered pair). Chronology is derived
+    from directed edges (list order breaks ties); cycles are rejected.
     """
 
     with world_transaction() as world:
@@ -677,6 +688,12 @@ def read_world_state(at_event_id: str = "") -> str:
         lines.append("")
         lines.append(f"## {character.name or 'Unnamed'} [id: {character.character_id}]")
         lines.extend(_derived_character_lines(character))
+
+    effect_warnings = format_effect_diagnostics(effect_diagnostics(bible))
+    if effect_warnings:
+        lines.append("")
+        lines.append(effect_warnings)
+
     return "\n".join(lines)
 
 
@@ -700,6 +717,24 @@ def _resolve_insert_index(bible: StoryBible, position: int | None) -> int:
     if position is None:
         return len(bible.timeline)
     return max(0, min(position - 1, len(bible.timeline)))
+
+
+def _chronological_event_index(bible: StoryBible, event_id: str) -> int:
+    for index, event in enumerate(chronological_order(bible)):
+        if event.id == event_id:
+            return index
+    return 0
+
+
+def _append_timeline_warnings(lines: list[str], bible: StoryBible) -> None:
+    relation_warnings = format_diagnostics(relation_diagnostics(bible))
+    if relation_warnings:
+        lines.append("")
+        lines.append(relation_warnings)
+    effect_warnings = format_effect_diagnostics(effect_diagnostics(bible))
+    if effect_warnings:
+        lines.append("")
+        lines.append(effect_warnings)
 
 
 def _event_relation_summary(bible: StoryBible, event_id: str) -> str:

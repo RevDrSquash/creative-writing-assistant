@@ -424,17 +424,32 @@ def test_add_event_relation_creates_edge(isolated_world: World) -> None:
     assert relation.target_id == first.id
 
 
-def test_add_event_relation_warns_on_order_conflict_but_succeeds(isolated_world: World) -> None:
+def test_add_event_relation_rejects_cycle(isolated_world: World) -> None:
     add_event.func("First")
     add_event.func("Second")
     first = isolated_world.story_bible.timeline[0]
     second = isolated_world.story_bible.timeline[1]
 
-    result = add_event_relation.func("follows", first.id, second.id)
+    add_event_relation.func("follows", second.id, first.id)
 
-    assert "Added follows relation" in result
-    assert "Warnings:" in result
-    assert "conflicts with timeline list order" in result
+    with pytest.raises(ToolException, match="would create a cycle"):
+        add_event_relation.func("follows", first.id, second.id)
+
+    assert len(isolated_world.story_bible.event_relations) == 1
+
+
+def test_read_timeline_lists_chronological_order(isolated_world: World) -> None:
+    add_event.func("First")
+    add_event.func("Second")
+    first = isolated_world.story_bible.timeline[0]
+    second = isolated_world.story_bible.timeline[1]
+    add_event_relation.func("follows", first.id, second.id)
+
+    result = read_timeline.func()
+
+    first_pos = result.index(first.id)
+    second_pos = result.index(second.id)
+    assert second_pos < first_pos
 
 
 def test_add_event_relation_rejects_unknown_event_id(isolated_world: World) -> None:

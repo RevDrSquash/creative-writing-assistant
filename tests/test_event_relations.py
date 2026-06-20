@@ -7,6 +7,7 @@ import pytest
 from app.world.models import Event, EventRelation, StoryBible
 from app.world.relations import (
     RelationValidationError,
+    chronological_order,
     normalize_relation,
     relation_diagnostics,
 )
@@ -59,22 +60,38 @@ def test_normalize_relation_treats_during_as_unordered_for_dedup() -> None:
         normalize_relation(bible, "during", "event_b", "event_a")
 
 
-def test_relation_diagnostics_detects_order_conflict() -> None:
+def test_chronological_order_follows_directed_edges_over_list_order() -> None:
     bible = _timeline_with_three_events()
     bible.event_relations.append(
-        EventRelation(
-            id="rel_conflict",
-            kind="follows",
-            source_id="event_a",
-            target_id="event_b",
-        )
+        EventRelation(kind="follows", source_id="event_a", target_id="event_b")
     )
 
-    diagnostics = relation_diagnostics(bible)
+    ordered_ids = [event.id for event in chronological_order(bible)]
 
-    assert any(
-        item.kind == "order_conflict" and item.relation_id == "rel_conflict" for item in diagnostics
+    assert ordered_ids == ["event_b", "event_a", "event_c"]
+
+
+def test_chronological_order_uses_list_index_as_tie_breaker() -> None:
+    bible = _timeline_with_three_events()
+
+    ordered_ids = [event.id for event in chronological_order(bible)]
+
+    assert ordered_ids == ["event_a", "event_b", "event_c"]
+
+
+def test_normalize_relation_rejects_cycle() -> None:
+    bible = StoryBible(
+        timeline=[
+            Event(id="event_a", title="Alpha"),
+            Event(id="event_b", title="Beta"),
+        ]
     )
+    bible.event_relations.append(
+        EventRelation(kind="follows", source_id="event_a", target_id="event_b")
+    )
+
+    with pytest.raises(RelationValidationError, match="would create a cycle"):
+        normalize_relation(bible, "follows", "event_b", "event_a")
 
 
 def test_relation_diagnostics_detects_cycle() -> None:

@@ -12,6 +12,7 @@ from app.world.models import (
     CharacterBaselineState,
     CharacterIdentity,
     Event,
+    EventRelation,
     Intimacy,
     RemoveIntimacy,
     RemoveWorldStateEntry,
@@ -28,7 +29,7 @@ from app.world.models import (
     slugify,
     unique_slug,
 )
-from app.world.replay import derive_state, derive_state_at
+from app.world.replay import derive_state, derive_state_at, effect_diagnostics
 
 
 def _bible_with_character() -> tuple[StoryBible, Character, Intimacy]:
@@ -200,6 +201,107 @@ def test_derive_state_applies_signal_effects_to_character() -> None:
         "int-2": "major",
     }
     assert [item.text for item in final.intimacies] == ["Trusts Mira completely"]
+
+
+def test_derive_state_follows_graph_order_over_list_order() -> None:
+    bible, character, _intimacy = _bible_with_character()
+    added = Intimacy(id="int-2", text="New trust", strength="minor")
+    strengthen = SetIntimacyStrength(intimacy_id="int-2", strength="defining")
+    strengthen_event = Event(
+        id="event_strengthen",
+        title="Strengthen first in list",
+        signals=[Signal(character_id=character.id, effects=[strengthen])],
+    )
+    add_event = Event(
+        id="event_add",
+        title="Add later in list",
+        signals=[Signal(character_id=character.id, effects=[AddIntimacy(intimacy=added)])],
+    )
+    bible.timeline = [strengthen_event, add_event]
+    bible.event_relations.append(
+        EventRelation(
+            kind="follows",
+            source_id="event_strengthen",
+            target_id="event_add",
+        )
+    )
+
+    derived = derive_state(bible)
+
+    assert derived.characters[character.id].intimacies[-1].strength == "defining"
+
+
+def test_effect_diagnostics_warns_on_dangling_intimacy_reference() -> None:
+    bible, character, _intimacy = _bible_with_character()
+    added = Intimacy(id="int-2", text="Later intimacy", strength="minor")
+    first = Event(
+        id="event_early",
+        title="Early",
+        signals=[
+            Signal(
+                character_id=character.id,
+                effects=[SetIntimacyStrength(intimacy_id="int-2", strength="major")],
+            )
+        ],
+    )
+    second = Event(
+        id="event_late",
+        title="Late",
+        signals=[Signal(character_id=character.id, effects=[AddIntimacy(intimacy=added)])],
+    )
+    bible.timeline = [first, second]
+
+    diagnostics = effect_diagnostics(bible)
+
+    assert len(diagnostics) == 1
+    assert diagnostics[0].event_id == "event_early"
+    assert "int-2" in diagnostics[0].message
+    assert "later in chronological order" in diagnostics[0].message
+
+
+def test_effect_diagnostics_warns_on_dangling_world_state_reference() -> None:
+    bible = StoryBible(
+        baseline_world_state=[WorldStateEntry(id="ws-1", text="Baseline", kind="thread")]
+    )
+    first = Event(
+        id="event_early",
+        title="Early",
+        world_state_effects=[UpdateWorldStateEntry(entry_id="ws-2", text="missing")],
+    )
+    second = Event(
+        id="event_late",
+        title="Late",
+        world_state_effects=[
+            AddWorldStateEntry(entry=WorldStateEntry(id="ws-2", text="Added later", kind="thread"))
+        ],
+    )
+    bible.timeline = [first, second]
+
+    diagnostics = effect_diagnostics(bible)
+
+    assert len(diagnostics) == 1
+    assert diagnostics[0].event_id == "event_early"
+    assert "ws-2" in diagnostics[0].message
+
+
+def test_effect_diagnostics_warns_when_target_never_added() -> None:
+    bible, character, _intimacy = _bible_with_character()
+    bible.timeline = [
+        Event(
+            title="Ghost",
+            signals=[
+                Signal(
+                    character_id=character.id,
+                    effects=[RemoveIntimacy(intimacy_id="never-added")],
+                )
+            ],
+        )
+    ]
+
+    diagnostics = effect_diagnostics(bible)
+
+    assert len(diagnostics) == 1
+    assert "never added" in diagnostics[0].message
 
 
 def test_derive_state_up_to_event_id_includes_that_event() -> None:
