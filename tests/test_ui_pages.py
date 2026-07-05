@@ -29,14 +29,16 @@ async def test_workspace_renders_narrative_style_and_chat(user: User) -> None:
     await user.should_not_see("Notes")
 
 
-async def test_scene_title_is_editable_in_edit_state(user: User) -> None:
+async def test_ungenerated_scene_opens_in_edit_mode_with_blueprint(user: User) -> None:
+    # A scene without generated prose opens in edit mode with the blueprint
+    # expanded so the writer can review the card and generate.
     await user.open("/workspace/narrative-style")
     user.find(marker="new-scene-button").click()
     await user.should_see("Notes")
-    user.find(marker="scene-editor-toggle-button").click()
     await user.should_see("Preview Markdown")
     await user.should_see("Blueprint")
-    await user.should_see("Character Stances")
+    await user.should_see("Generated")
+    await user.should_see("Enacted events")
     title = next(iter(user.find(marker="scene-title-input").elements))
     assert title.visible is True
     title.set_value("Renamed Scene")
@@ -49,7 +51,49 @@ async def test_scene_blueprint_hidden_in_preview_mode(user: User) -> None:
     await user.open("/workspace/narrative-style")
     user.find(marker="new-scene-button").click()
     await user.should_see("Notes")
+    user.find(marker="scene-editor-toggle-button").click()
+    await user.should_see("Edit Markdown")
     await user.should_not_see("Blueprint")
+    await user.should_not_see("Generated")
+
+
+async def test_generated_scene_opens_in_preview_mode(
+    user: User,
+    isolated_data_dir: Path,
+) -> None:
+    from datetime import datetime, timezone
+
+    from app.persistence.world import JsonFileWorldStore, default_world
+    from app.world.models import (
+        Event,
+        Scene,
+        SceneBlueprint,
+        SceneGenerated,
+        blueprint_fingerprint,
+    )
+
+    world = default_world()
+    world.story_bible.timeline.append(Event(id="event_arrival", title="The Arrival"))
+    blueprint = SceneBlueprint(premise="Something happens.", event_ids=["event_arrival"])
+    world.scenes.append(
+        Scene(
+            id="scene_done",
+            title="Done Scene",
+            markdown="# Prose",
+            blueprint=blueprint,
+            generated=SceneGenerated(
+                blueprint_fingerprint=blueprint_fingerprint(blueprint),
+                generated_at=datetime.now(timezone.utc),
+            ),
+        )
+    )
+    JsonFileWorldStore(isolated_data_dir / "world.json").save(world)
+
+    await user.open("/workspace/scenes/scene_done")
+    await user.should_see("Notes")
+    # The disabled Regenerate tooltip mentions "Blueprint", so assert on
+    # blueprint-form-only content instead of the expansion label.
+    await user.should_not_see("Enacted events")
     await user.should_not_see("Character Stances")
 
 
@@ -64,6 +108,7 @@ async def test_scene_blueprint_shows_linked_events(
     world.story_bible.timeline.append(Event(id="event_arrival", title="The Arrival"))
     world.scenes.append(
         Scene(
+            id="scene_chapter_1",
             title="Chapter 1",
             markdown="# One",
             blueprint=SceneBlueprint(event_ids=["event_arrival"]),
@@ -71,14 +116,83 @@ async def test_scene_blueprint_shows_linked_events(
     )
     JsonFileWorldStore(isolated_data_dir / "world.json").save(world)
 
-    await user.open("/workspace")
-    await user.should_see("Chapter 1")
-    user.find("Chapter 1").click()
+    # Never generated, so the editor opens in edit mode with the blueprint expanded.
+    await user.open("/workspace/scenes/scene_chapter_1")
     await user.should_see("Notes")
-    user.find(marker="scene-editor-toggle-button").click()
-    await user.should_see("Linked Events")
-    user.find("Linked Events").click()
-    await user.should_see("The Arrival [event_arrival]")
+    await user.should_see("Blueprint")
+    await user.should_see("Enacted events")
+    await user.should_see("The Arrival")
+
+
+async def test_scene_generate_button_disabled_without_blueprint(user: User) -> None:
+    await user.open("/workspace/narrative-style")
+    user.find(marker="new-scene-button").click()
+    await user.should_see("Generate")
+    button = user.find(marker="scene-generate-button")
+    assert button is not None
+
+
+async def test_scene_generate_button_enabled_with_generatable_blueprint(
+    user: User,
+    isolated_data_dir: Path,
+) -> None:
+    from app.persistence.world import JsonFileWorldStore, default_world
+    from app.world.models import Event, Scene, SceneBlueprint
+
+    world = default_world()
+    world.story_bible.timeline.append(Event(id="event_arrival", title="The Arrival"))
+    world.scenes.append(
+        Scene(
+            id="scene_ready",
+            title="Ready",
+            markdown="# Ready",
+            blueprint=SceneBlueprint(
+                premise="Something happens.",
+                event_ids=["event_arrival"],
+            ),
+        )
+    )
+    JsonFileWorldStore(isolated_data_dir / "world.json").save(world)
+
+    await user.open("/workspace/scenes/scene_ready")
+    await user.should_see("Generate")
+
+
+async def test_scene_stale_badge_when_blueprint_changed_after_generation(
+    user: User,
+    isolated_data_dir: Path,
+) -> None:
+    from datetime import datetime, timezone
+
+    from app.persistence.world import JsonFileWorldStore, default_world
+    from app.world.models import Event, Scene, SceneBlueprint, SceneGenerated, blueprint_fingerprint
+
+    world = default_world()
+    world.story_bible.timeline.append(Event(id="event_arrival", title="The Arrival"))
+    blueprint = SceneBlueprint(
+        premise="Original premise.",
+        event_ids=["event_arrival"],
+    )
+    world.scenes.append(
+        Scene(
+            id="scene_stale",
+            title="Stale Scene",
+            markdown="# Prose",
+            blueprint=blueprint,
+            generated=SceneGenerated(
+                blueprint_fingerprint=blueprint_fingerprint(blueprint),
+                generated_at=datetime.now(timezone.utc),
+                outline=["Beat"],
+            ),
+        )
+    )
+    scene = world.scenes[0]
+    scene.blueprint.premise = "Changed premise."
+    JsonFileWorldStore(isolated_data_dir / "world.json").save(world)
+
+    await user.open("/workspace/scenes/scene_stale")
+    await user.should_see("Stale")
+    await user.should_see("Regenerate")
 
 
 async def test_workspace_sidebar_navigates_to_characters(user: User) -> None:

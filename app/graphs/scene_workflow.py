@@ -1,4 +1,4 @@
-"""Enforced LangGraph workflow for drafting a new scene from a brief."""
+"""Enforced LangGraph workflow for generating scene content from a blueprint."""
 
 from __future__ import annotations
 
@@ -19,12 +19,11 @@ from app.graphs.workflow_state import SceneWorkflowState
 from app.models.client import get_chat_model_for_node
 from app.models.config import (
     SCENE_DRAFT_NODE_ID,
-    SCENE_FORMALIZE_NODE_ID,
     SCENE_OUTLINE_NODE_ID,
     SCENE_OUTLINE_REVIEW_NODE_ID,
     SCENE_OUTLINE_REVISE_NODE_ID,
     SCENE_STANCES_NODE_ID,
-    SCENE_TITLE_SUMMARY_NODE_ID,
+    SCENE_SUMMARY_NODE_ID,
 )
 from app.tools import READ_ONLY_WRITING_TOOLS
 from app.world.models import SceneCharacterStance
@@ -32,7 +31,7 @@ from app.world.scene import (
     get_scene_text,
     set_scene_metadata,
     set_scene_text,
-    update_scene_blueprint,
+    update_scene_generated,
 )
 from app.world.store import get_world
 
@@ -41,21 +40,6 @@ Use read-only tools to pull story bible and scene blueprint detail when needed.
 Write the full scene markdown inside <canvas>...</canvas> tags.
 You may use multiple canvas blocks; they append in order.
 Always close canvas tags. Everything inside the tags is scene prose, not chat."""
-
-_NODE_IDS = (
-    SCENE_FORMALIZE_NODE_ID,
-    SCENE_STANCES_NODE_ID,
-    SCENE_OUTLINE_NODE_ID,
-    SCENE_OUTLINE_REVIEW_NODE_ID,
-    SCENE_OUTLINE_REVISE_NODE_ID,
-    SCENE_DRAFT_NODE_ID,
-    SCENE_TITLE_SUMMARY_NODE_ID,
-)
-
-
-class EssentialDetails(BaseModel):
-    premise: str
-    purpose: str
 
 
 class StanceOutput(BaseModel):
@@ -78,8 +62,7 @@ class OutlineCritique(BaseModel):
     critique: str = ""
 
 
-class TitleSummary(BaseModel):
-    title: str
+class SceneSummary(BaseModel):
     summary: str
 
 
@@ -90,16 +73,14 @@ def build_scene_writer_graph(
     """Build the enforced scene-writing workflow graph."""
 
     graph = StateGraph(SceneWorkflowState)
-    graph.add_node("formalize_details", _formalize_details_node(models))
     graph.add_node("author_stances", _author_stances_node(models))
     graph.add_node("outline", _outline_node(models))
     graph.add_node("review_outline", _review_outline_node(models))
     graph.add_node("revise_outline", _revise_outline_node(models))
     graph.add_node("draft_prose", _draft_prose_node(models))
-    graph.add_node("title_and_summary", _title_and_summary_node(models))
+    graph.add_node("summarize", _summary_node(models))
 
-    graph.add_edge(START, "formalize_details")
-    graph.add_edge("formalize_details", "author_stances")
+    graph.add_edge(START, "author_stances")
     graph.add_edge("author_stances", "outline")
     graph.add_edge("outline", "review_outline")
     graph.add_edge("review_outline", "revise_outline")
@@ -108,8 +89,8 @@ def build_scene_writer_graph(
         _route_after_revise,
         {"review_outline": "review_outline", "draft_prose": "draft_prose"},
     )
-    graph.add_edge("draft_prose", "title_and_summary")
-    graph.add_edge("title_and_summary", END)
+    graph.add_edge("draft_prose", "summarize")
+    graph.add_edge("summarize", END)
 
     return graph.compile()
 
@@ -131,32 +112,8 @@ def _structured_invoke(
     schema: type[BaseModel],
     prompt: str,
 ) -> BaseModel:
-    # Structured output is a one-shot call; streaming aggregation would emit
-    # noisy Pydantic serializer warnings for the parsed payload.
     model = _resolve_model(node_id, models, streaming=False).with_structured_output(schema)
     return model.invoke([HumanMessage(content=prompt)])
-
-
-def _formalize_details_node(models: dict[str, BaseChatModel] | None) -> Any:
-    def node(state: SceneWorkflowState) -> dict[str, Any]:
-        prompt = _brief_prompt(state)
-        details = _structured_invoke(
-            SCENE_FORMALIZE_NODE_ID,
-            models,
-            EssentialDetails,
-            (f"Formalize the scene brief into a clear premise and purpose.\n\n{prompt}"),
-        )
-        scene_id = state["scene_id"]
-        update_scene_blueprint(
-            scene_id,
-            premise=details.premise,
-            purpose=details.purpose,
-            event_ids=list(state.get("event_ids", [])),
-            related_event_ids=list(state.get("related_event_ids", [])),
-        )
-        return {"premise": details.premise, "purpose": details.purpose}
-
-    return node
 
 
 def _author_stances_node(models: dict[str, BaseChatModel] | None) -> Any:
@@ -167,8 +124,10 @@ def _author_stances_node(models: dict[str, BaseChatModel] | None) -> Any:
             f"Premise: {state.get('premise', '')}\n"
             f"Purpose: {state.get('purpose', '')}\n"
             f"POV: {state.get('pov', '')}\n"
+            f"Arc beats:\n{_arc_text(state.get('arc', []))}\n"
             f"Participating characters:\n{character_lines}\n"
-            f"Constraints: {state.get('constraints', '') or '(none)'}"
+            f"Constraints: {state.get('constraints', '') or '(none)'}\n"
+            f"Notes: {state.get('notes', '') or '(none)'}"
         )
         result = _structured_invoke(SCENE_STANCES_NODE_ID, models, StanceList, prompt)
         bible = get_world().story_bible
@@ -189,7 +148,7 @@ def _author_stances_node(models: dict[str, BaseChatModel] | None) -> Any:
                     stakes=item.stakes,
                 )
             )
-        update_scene_blueprint(state["scene_id"], stances=stances)
+        update_scene_generated(state["scene_id"], stances=stances)
         return {"stances": stances}
 
     return node
@@ -203,13 +162,15 @@ def _outline_node(models: dict[str, BaseChatModel] | None) -> Any:
             f"Premise: {state.get('premise', '')}\n"
             f"Purpose: {state.get('purpose', '')}\n"
             f"POV: {state.get('pov', '')}\n"
+            f"Arc beats:\n{_arc_text(state.get('arc', []))}\n"
             f"Events this scene enacts:\n{_event_context(state.get('event_ids', []))}\n"
             f"Related events (context only):\n{_event_context(state.get('related_event_ids', []))}\n"
-            f"Stances:\n{_stances_text(state.get('stances', []))}"
+            f"Stances:\n{_stances_text(state.get('stances', []))}\n"
+            f"Notes: {state.get('notes', '') or '(none)'}"
         )
         result = _structured_invoke(SCENE_OUTLINE_NODE_ID, models, OutlineBeats, prompt)
         beats = list(result.beats)
-        update_scene_blueprint(state["scene_id"], outline=beats)
+        update_scene_generated(state["scene_id"], outline=beats)
         return {"outline": beats}
 
     return node
@@ -241,7 +202,7 @@ def _revise_outline_node(models: dict[str, BaseChatModel] | None) -> Any:
         )
         result = _structured_invoke(SCENE_OUTLINE_REVISE_NODE_ID, models, OutlineBeats, prompt)
         beats = list(result.beats)
-        update_scene_blueprint(state["scene_id"], outline=beats)
+        update_scene_generated(state["scene_id"], outline=beats)
         revision_count = state.get("revision_count", 0) + 1
         return {"outline": beats, "revision_count": revision_count}
 
@@ -269,11 +230,13 @@ def _draft_prose_node(models: dict[str, BaseChatModel] | None) -> Any:
             f"Premise: {state.get('premise', '')}\n"
             f"Purpose: {state.get('purpose', '')}\n"
             f"POV: {state.get('pov', '')}\n"
+            f"Arc beats:\n{_arc_text(state.get('arc', []))}\n"
             f"Events this scene enacts:\n{_event_context(state.get('event_ids', []))}\n"
             f"Related events (context only):\n{_event_context(state.get('related_event_ids', []))}\n"
             f"Stances:\n{_stances_text(state.get('stances', []))}\n"
             f"Outline:\n{_outline_text(state.get('outline', []))}\n"
-            f"Constraints: {state.get('constraints', '') or '(none)'}"
+            f"Constraints: {state.get('constraints', '') or '(none)'}\n"
+            f"Notes: {state.get('notes', '') or '(none)'}"
         )
         result = agent.invoke(
             {
@@ -291,23 +254,23 @@ def _draft_prose_node(models: dict[str, BaseChatModel] | None) -> Any:
     return node
 
 
-def _title_and_summary_node(models: dict[str, BaseChatModel] | None) -> Any:
+def _summary_node(models: dict[str, BaseChatModel] | None) -> Any:
     def node(state: SceneWorkflowState) -> dict[str, Any]:
         prose = state.get("prose", "")
         prompt = (
-            "Generate a concise scene title and one-line summary from the drafted prose.\n\n"
+            "Generate a concise one-line summary of the drafted scene prose.\n\n"
             f"Premise: {state.get('premise', '')}\n"
             f"Purpose: {state.get('purpose', '')}\n"
             f"Prose preview:\n{prose[:2000]}"
         )
         result = _structured_invoke(
-            SCENE_TITLE_SUMMARY_NODE_ID,
+            SCENE_SUMMARY_NODE_ID,
             models,
-            TitleSummary,
+            SceneSummary,
             prompt,
         )
-        set_scene_metadata(state["scene_id"], title=result.title, summary=result.summary)
-        return {"title": result.title, "summary": result.summary}
+        set_scene_metadata(state["scene_id"], summary=result.summary)
+        return {"summary": result.summary}
 
     return node
 
@@ -320,17 +283,10 @@ def _route_after_revise(state: SceneWorkflowState) -> str:
     return "draft_prose"
 
 
-def _brief_prompt(state: SceneWorkflowState) -> str:
-    character_lines = _character_context(state.get("character_ids", []))
-    return (
-        f"Premise (brief): {state.get('premise', '')}\n"
-        f"Purpose (brief): {state.get('purpose', '')}\n"
-        f"POV: {state.get('pov', '')}\n"
-        f"Participating characters:\n{character_lines}\n"
-        f"Events this scene enacts:\n{_event_context(state.get('event_ids', []))}\n"
-        f"Related events (context only):\n{_event_context(state.get('related_event_ids', []))}\n"
-        f"Constraints: {state.get('constraints', '') or '(none)'}"
-    )
+def _arc_text(arc: list[str]) -> str:
+    if not arc:
+        return "(none)"
+    return "\n".join(f"{index}. {beat}" for index, beat in enumerate(arc, start=1))
 
 
 def _character_context(character_ids: list[str]) -> str:

@@ -1,4 +1,4 @@
-"""Tests for scene editing tools and fuzzy replacement."""
+"""Tests for scene editing tools."""
 
 from __future__ import annotations
 
@@ -7,101 +7,24 @@ from langchain_core.messages import ToolMessage
 from langchain_core.tools import ToolException
 
 from app.tools.scene import (
-    create_scene,
     delete_scene,
-    fuzzy_replace_once,
     list_scenes,
+    propose_scene,
     read_scene,
-    replace_scene_text,
+    read_scene_blueprint,
     select_scene,
     update_scene,
+    update_scene_blueprint,
 )
-from app.world.models import Scene, World
+from app.world.models import Scene, SceneBlueprint, World
 from app.world.scene import create_scene as create_scene_helper
 from app.world.scene import set_scene_metadata
-
-
-def test_fuzzy_replace_exact_single_match_replaces() -> None:
-    document = "The door opened.\nThe room was dark."
-
-    result = fuzzy_replace_once(document, "The door opened.", "The door groaned open.")
-
-    assert result == "The door groaned open.\nThe room was dark."
-
-
-def test_fuzzy_replace_multiple_exact_matches_raises() -> None:
-    with pytest.raises(ToolException, match="target matches 2 locations"):
-        fuzzy_replace_once("echo\necho", "echo", "whisper")
-
-
-def test_fuzzy_replace_fuzzy_match_with_whitespace_drift_replaces() -> None:
-    document = "The moon was   bright over the harbor."
-
-    result = fuzzy_replace_once(
-        document,
-        "The moon was bright",
-        "The moon burned silver",
-    )
-
-    assert result == "The moon burned silver over the harbor."
-
-
-def test_fuzzy_replace_no_match_below_threshold_raises() -> None:
-    with pytest.raises(ToolException, match="no match for target"):
-        fuzzy_replace_once("The room was empty.", "A dragon filled the sky.", "A storm rose.")
-
-
-def test_fuzzy_replace_ambiguous_fuzzy_matches_raises() -> None:
-    document = "The lantern flickered.\nThe lantern flickered."
-
-    with pytest.raises(ToolException, match="multiple fuzzy matches found"):
-        fuzzy_replace_once(document, "The lantern flickers", "The lantern died.")
-
-
-def test_fuzzy_replace_empty_target_raises() -> None:
-    with pytest.raises(ToolException, match="target must not be empty"):
-        fuzzy_replace_once("Text", "", "Replacement")
 
 
 def test_read_scene_returns_state_current_scene() -> None:
     result = read_scene.func({"current_scene": "# Scene\n\nText"})
 
     assert result == "# Scene\n\nText"
-
-
-def test_replace_scene_text_raises_when_no_scene_is_open() -> None:
-    with pytest.raises(ToolException, match="No scene is open"):
-        replace_scene_text.func(
-            "old wording",
-            "new wording",
-            {"current_scene": "", "current_scene_id": ""},
-            "tool-call-1",
-        )
-
-
-def test_replace_scene_text_returns_command_with_updated_scene_and_tool_message() -> None:
-    command = replace_scene_text.func(
-        "old wording",
-        "new wording",
-        {"current_scene": "Some old wording here.", "current_scene_id": "scene-1"},
-        "tool-call-1",
-    )
-
-    assert command.update["current_scene"] == "Some new wording here."
-    tool_message = command.update["messages"][0]
-    assert isinstance(tool_message, ToolMessage)
-    assert tool_message.tool_call_id == "tool-call-1"
-    assert "scene is now" in tool_message.content
-
-
-def test_replace_scene_text_raises_tool_exception_on_no_match() -> None:
-    with pytest.raises(ToolException, match="no match for target"):
-        replace_scene_text.func(
-            "missing wording",
-            "new wording",
-            {"current_scene": "Some old wording here.", "current_scene_id": "scene-1"},
-            "tool-call-1",
-        )
 
 
 def test_read_scene_with_id_reads_other_scene_from_world(world_with_scene: World) -> None:
@@ -133,19 +56,79 @@ def test_create_scene_helper_assigns_slug_id(world_with_scene: World) -> None:
     assert world_with_scene.scenes[-1].id == "scene_chapter_two"
 
 
-def test_create_scene_tool_persists_open_text_and_switches(world_with_scene: World) -> None:
+def test_propose_scene_tool_creates_blueprint_and_opens(world_with_scene: World) -> None:
+    from app.tools.story_bible import add_event, upsert_character
+
+    upsert_character.invoke({"name": "Hero"})
+    character_id = world_with_scene.story_bible.characters[-1].id
+    add_event.invoke({"title": "Arrival"})
+    event_id = world_with_scene.story_bible.timeline[-1].id
     first = world_with_scene.scenes[0]
-    state = {"current_scene": "Edited mid-run text", "current_scene_id": first.id}
+    state = {"current_scene_id": first.id, "current_scene": first.markdown}
 
-    command = create_scene.func("Chapter 2", state, "tool-call-1", "A new beginning")
+    command = propose_scene.func(
+        "The Arrival",
+        "Hero arrives.",
+        "Introduce the hero.",
+        "Third person",
+        [character_id],
+        [event_id],
+        state,
+        "tool-call-1",
+        arc=["Setup", "Turn", "Payoff"],
+        constraints="Keep it brief.",
+    )
 
-    new_scene = world_with_scene.scenes[1]
-    assert new_scene.title == "Chapter 2"
-    assert new_scene.summary == "A new beginning"
+    new_scene = world_with_scene.scenes[-1]
+    assert new_scene.title == "The Arrival"
+    assert new_scene.blueprint.premise == "Hero arrives."
+    assert new_scene.blueprint.event_ids == [event_id]
     assert command.update["current_scene_id"] == new_scene.id
-    assert command.update["current_scene"] == ""
-    # The open scene's in-run text must be saved before switching away.
-    assert first.markdown == "Edited mid-run text"
+    assert isinstance(command.update["messages"][0], ToolMessage)
+
+
+def test_propose_scene_tool_rejects_blank_title(world_with_scene: World) -> None:
+    from app.tools.story_bible import add_event
+
+    add_event.invoke({"title": "Arrival"})
+    event_id = world_with_scene.story_bible.timeline[-1].id
+    first = world_with_scene.scenes[0]
+    state = {"current_scene_id": first.id, "current_scene": first.markdown}
+    scene_count = len(world_with_scene.scenes)
+
+    with pytest.raises(ToolException, match="non-empty scene title"):
+        propose_scene.func(
+            "   ",
+            "Hero arrives.",
+            "Introduce the hero.",
+            "Third person",
+            [],
+            [event_id],
+            state,
+            "tool-call-1",
+        )
+
+    assert len(world_with_scene.scenes) == scene_count
+
+
+def test_update_scene_blueprint_marks_stale_after_generation(world_with_scene: World) -> None:
+    from datetime import datetime, timezone
+
+    from app.world.models import SceneGenerated, blueprint_fingerprint
+
+    scene = world_with_scene.scenes[0]
+    scene.blueprint.premise = "Original premise"
+    scene.blueprint.event_ids = ["event_1"]
+    scene.generated = SceneGenerated(
+        blueprint_fingerprint=blueprint_fingerprint(scene.blueprint),
+        generated_at=datetime.now(timezone.utc),
+    )
+    state = {"current_scene_id": scene.id}
+
+    message = update_scene_blueprint.func(state, premise="Changed premise")
+
+    assert "stale" in message
+    assert scene.blueprint.premise == "Changed premise"
 
 
 def test_select_scene_tool_switches_to_existing_scene(world_with_scene: World) -> None:
@@ -233,3 +216,14 @@ def test_update_scene_tool_targets_explicit_scene_id(world_with_scene: World) ->
 def test_update_scene_tool_raises_on_unknown_id(world_with_scene: World) -> None:
     with pytest.raises(ToolException, match="No scene with id"):
         update_scene.func({"current_scene_id": world_with_scene.scenes[0].id}, scene_id="missing")
+
+
+def test_read_scene_blueprint_reports_generation_status(world_with_scene: World) -> None:
+    scene = world_with_scene.scenes[0]
+    scene.blueprint = SceneBlueprint(premise="Test", event_ids=["event_1"])
+    state = {"current_scene_id": scene.id}
+
+    detail = read_scene_blueprint.func(state)
+
+    assert "never generated" in detail
+    assert "Test" in detail

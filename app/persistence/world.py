@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Protocol
 
 from app.persistence.paths import get_data_dir
-from app.world.models import SCHEMA_VERSION, World
+from app.world.models import SCHEMA_VERSION, SceneBlueprint, World, blueprint_fingerprint, utc_now
 
 WORLD_FILENAME = "world.json"
 
@@ -88,6 +88,8 @@ def migrate_world_payload(data: dict) -> dict:
         migrated = dict(data)
         migrated["schema_version"] = 7
         return migrate_world_payload(migrated)
+    if schema_version == 7:
+        return migrate_world_payload(_migrate_v7_to_v8(data))
     msg = (
         f"Unsupported world schema_version {schema_version!r}; "
         f"this app supports version {SCHEMA_VERSION}."
@@ -124,6 +126,52 @@ def _migrate_v5_to_v6(data: dict) -> dict:
     return migrated
 
 
+def _migrate_v7_to_v8(data: dict) -> dict:
+    """Split blueprint stances/outline into ``Scene.generated`` and add blueprint fields."""
+
+    migrated = dict(data)
+    raw_scenes = migrated.get("scenes")
+    if not isinstance(raw_scenes, list):
+        migrated["schema_version"] = 8
+        return migrated
+    scenes: list[dict] = []
+    for raw_scene in raw_scenes:
+        scene = dict(raw_scene)
+        blueprint = dict(scene.get("blueprint") or {})
+        generated = dict(scene.get("generated") or {})
+
+        stances = blueprint.pop("stances", None)
+        outline = blueprint.pop("outline", None)
+        if stances is not None:
+            generated["stances"] = stances
+        if outline is not None:
+            generated["outline"] = outline
+
+        blueprint.setdefault("pov", "")
+        blueprint.setdefault("arc", [])
+        blueprint.setdefault("character_ids", [])
+        blueprint.setdefault("constraints", "")
+        blueprint.setdefault("notes", "")
+
+        scene["blueprint"] = blueprint
+        scene["generated"] = generated
+
+        markdown = scene.get("markdown", "")
+        has_prose = bool(markdown.strip()) and markdown != DEFAULT_SCENE_MARKDOWN
+        has_generated = bool(generated.get("stances")) or bool(generated.get("outline"))
+        if has_prose or has_generated:
+            fingerprint = blueprint_fingerprint(SceneBlueprint.model_validate(blueprint))
+            generated["blueprint_fingerprint"] = fingerprint
+            if has_prose:
+                generated["generated_at"] = utc_now().isoformat()
+        scene["generated"] = generated
+        scenes.append(scene)
+
+    migrated["scenes"] = scenes
+    migrated["schema_version"] = 8
+    return migrated
+
+
 def validate_world_payload(data: dict, *, source: str) -> World:
     """Validate a world JSON payload, migrating and enforcing the schema version."""
 
@@ -132,7 +180,11 @@ def validate_world_payload(data: dict, *, source: str) -> World:
     except ValueError as exc:
         msg = f"{exc} in {source}."
         raise ValueError(msg) from exc
-    return World.model_validate(migrated)
+    try:
+        return World.model_validate(migrated)
+    except Exception as exc:
+        msg = f"World payload failed validation in {source}."
+        raise ValueError(msg) from exc
 
 
 def get_world_store() -> JsonFileWorldStore:

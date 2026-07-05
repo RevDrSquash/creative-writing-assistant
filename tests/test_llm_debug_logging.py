@@ -80,8 +80,8 @@ def test_handler_captures_structured_prompt_messages(tmp_path) -> None:
     handler = LLMDebugCallbackHandler(store)
     run_id = uuid4()
     tool_call = {
-        "name": "replace_scene_text",
-        "args": {"target": "old", "replacement": "new"},
+        "name": "update_scene_blueprint",
+        "args": {"premise": "Revised premise."},
         "id": "call-1",
         "type": "tool_call",
     }
@@ -91,9 +91,13 @@ def test_handler_captures_structured_prompt_messages(tmp_path) -> None:
         [
             [
                 SystemMessage(content="System instructions"),
-                HumanMessage(content="Revise the door line."),
+                HumanMessage(content="Tighten the premise."),
                 AIMessage(content="", tool_calls=[tool_call]),
-                ToolMessage(content="Replaced.", tool_call_id="call-1", name="replace_scene_text"),
+                ToolMessage(
+                    content="Updated blueprint.",
+                    tool_call_id="call-1",
+                    name="update_scene_blueprint",
+                ),
             ]
         ],
         run_id=run_id,
@@ -105,9 +109,9 @@ def test_handler_captures_structured_prompt_messages(tmp_path) -> None:
     roles = [message["role"] for message in record.prompt_messages]
     assert roles == ["system", "user", "assistant", "tool"]
     assistant_message = record.prompt_messages[2]
-    assert assistant_message["tool_calls"][0]["name"] == "replace_scene_text"
-    assert assistant_message["tool_calls"][0]["args"] == {"target": "old", "replacement": "new"}
-    assert record.prompt_messages[3]["name"] == "replace_scene_text"
+    assert assistant_message["tool_calls"][0]["name"] == "update_scene_blueprint"
+    assert assistant_message["tool_calls"][0]["args"] == {"premise": "Revised premise."}
+    assert record.prompt_messages[3]["name"] == "update_scene_blueprint"
 
 
 def test_handler_finalizes_success_on_llm_end(tmp_path) -> None:

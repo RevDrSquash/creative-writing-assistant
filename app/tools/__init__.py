@@ -2,14 +2,13 @@
 
 from app.tools.scene import (
     SCENE_TOOLS,
-    create_scene,
     delete_scene,
-    fuzzy_replace_once,
     list_scenes,
+    propose_scene,
     read_scene,
     read_scene_blueprint,
-    replace_scene_text,
     select_scene,
+    update_scene_blueprint,
 )
 from app.tools.story_bible import (
     STORY_BIBLE_TOOLS,
@@ -40,11 +39,11 @@ __all__ = [
     "SCENE_TOOLS",
     "STORY_BIBLE_TOOLS",
     "WRITING_TOOLS",
-    "create_scene",
     "delete_scene",
-    "fuzzy_replace_once",
     "list_scenes",
+    "propose_scene",
     "read_scene",
-    "replace_scene_text",
+    "read_scene_blueprint",
     "select_scene",
+    "update_scene_blueprint",
 ]

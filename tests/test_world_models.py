@@ -49,18 +49,21 @@ def _bible_with_character() -> tuple[StoryBible, Character, Intimacy]:
     return bible, character, intimacy
 
 
-def test_schema_version_is_seven() -> None:
-    assert SCHEMA_VERSION == 7
+def test_schema_version_is_eight() -> None:
+    assert SCHEMA_VERSION == 8
 
 
 def test_scene_blueprint_defaults() -> None:
     blueprint = SceneBlueprint()
     assert blueprint.premise == ""
     assert blueprint.purpose == ""
-    assert blueprint.stances == []
-    assert blueprint.outline == []
+    assert blueprint.pov == ""
+    assert blueprint.arc == []
+    assert blueprint.character_ids == []
     assert blueprint.event_ids == []
     assert blueprint.related_event_ids == []
+    assert blueprint.constraints == ""
+    assert blueprint.notes == ""
 
 
 def test_scene_character_stance_mood_is_list() -> None:
@@ -69,10 +72,12 @@ def test_scene_character_stance_mood_is_list() -> None:
     assert stance.intent == ""
 
 
-def test_scene_has_blueprint_default_factory() -> None:
+def test_scene_has_generated_default_factory() -> None:
     scene = Scene()
     assert isinstance(scene.blueprint, SceneBlueprint)
-    assert scene.blueprint.stances == []
+    assert scene.generated.stances == []
+    assert scene.generated.outline == []
+    assert scene.generated.generated_at is None
 
 
 def test_character_has_no_stance_field() -> None:

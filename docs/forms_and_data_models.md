@@ -51,48 +51,56 @@ Scenes represent prose. Each scene contains:
 - a short summary
 - Markdown prose
 - optional notes
-- a scene blueprint: the generated craft scaffolding for the scene
+- a scene blueprint: editable scene-card inputs (premise, purpose, POV, arc, characters, events, constraints, notes)
+- generated artifacts: stances, outline, and generation metadata (fingerprint, timestamp)
 
 Scenes are ordered because narrative sequence matters.
 
 ### Scene Blueprint
 
-The scene blueprint groups the planning artifacts produced (or hand-edited) before and during
-drafting:
+The scene blueprint holds **inputs only** — the scene card the writer and main agent edit:
 
-- **Premise** and **Purpose**: the scene's essential details (what happens and why it exists in
-  the story).
-- **Stances**: a sparse per-character list (`SceneCharacterStance`) of ephemeral scene posture —
-  `character_id`, `mood` (a list of short statements), and `intent`, `tactics`, and `stakes`
-  (single strings). Only characters with a defined stance in this scene appear.
-- **Outline**: the scene's beats as a list of short, concise statements.
-- **Event links**: `event_ids` are the timeline events this scene enacts (a scene depicts one or
-  more plot events), and `related_event_ids` are extra events that provide relevant context
-  without being enacted (for example, a past event the characters discuss). Both are lists of
-  event ids; the UI renders them read-only (links are set when drafting). Because they are
-  scene-local scratch they can go stale if a linked event is later removed (see
-  [known_issues.md](known_issues.md)); readers tolerate unresolved ids.
+- **Premise** and **Purpose**: what happens and why the scene exists.
+- **POV**: point-of-view character or narrator.
+- **Arc**: a list of arc-beat statements (typically three points) guiding generation.
+- **Character ids**: participating characters (`character_ids`).
+- **Event links**: `event_ids` (enacted events) and `related_event_ids` (context-only). Both are
+  scene-local scratch; links may go stale if an event is later removed (see
+  [known_issues.md](known_issues.md)).
+- **Constraints** and **Notes**: hard limits and free-form planning notes.
 
-The scene-writing workflow (Phase 6b) generates the blueprint, but every field is freely editable.
-The blueprint is excluded from Story Bible replay; like the old character stance, it is scene-local
-scratch, not event-sourced.
+### Scene Generated
+
+Workflow output lives on `Scene.generated`:
+
+- **Stances**: per-character ephemeral posture (`SceneCharacterStance`).
+- **Outline**: beat list.
+- **blueprint_fingerprint** and **generated_at**: staleness detection; when the fingerprint no
+  longer matches the current blueprint, the scene is **stale** until the user regenerates.
+
+Blueprint and generated fields are excluded from Story Bible replay; they are scene-local scratch,
+not event-sourced.
 
 ## Scene Editor Layout
 
-The workspace scene editor uses one edit/preview toggle on the title row. It opens in preview
-(view) mode by default. In edit mode the writer sees title, summary, and Markdown prose as
+The workspace scene editor uses one edit/preview toggle on the title row. A scene that has been
+generated opens in preview (view) mode; a scene that has never been generated opens in edit mode
+with the Blueprint expansion open, so the writer can review the scene card and trigger
+generation. In edit mode the writer sees title, summary, and Markdown prose as
 inputs; in preview mode those fields render as read-only labels and Markdown preview. Scene
 notes stay editable in an expansion below the prose editor. Delete scene lives in the editor
 header (next to the edit/preview toggle), not in the sidebar scene list.
 
-The scene blueprint (premise, purpose, stances, outline) is shown only in edit mode and hidden in
-preview, so the reading view stays focused on the prose while the planning scaffolding remains
-available while writing.
+The scene blueprint (inputs) and generated outline/stances are shown only in edit mode and hidden in
+preview, so the reading view stays focused on the prose while planning scaffolding remains
+available while writing. The title row includes **Generate** / **Regenerate** (user-triggered
+workflow), a **Stale** badge when the blueprint changed after generation, and generation status
+polling while a run is active.
 
-Agent scene tools can read and replace prose (`read_scene`, `replace_scene_text`) and
-manage scene metadata and navigation (`list_scenes`, `create_scene`, `select_scene`,
-`update_scene`, `delete_scene`). Use `update_scene` to rename a scene or change its
-summary without editing prose.
+Agent scene tools can read prose and blueprints (`read_scene`, `read_scene_blueprint`), propose
+and edit blueprints (`propose_scene`, `update_scene_blueprint`), and manage scene metadata and
+navigation (`list_scenes`, `select_scene`, `update_scene`, `delete_scene`). The main agent cannot
+edit scene prose directly; generation is user-triggered from the editor.
 
 ## Chat History Model
 

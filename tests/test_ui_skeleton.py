@@ -109,9 +109,9 @@ def test_debug_prompt_blocks_split_into_components() -> None:
             {
                 "role": "assistant",
                 "content": "Working on it.",
-                "tool_calls": [{"name": "replace_scene_text", "args": {"target": "old"}}],
+                "tool_calls": [{"name": "update_scene_blueprint", "args": {"premise": "new"}}],
             },
-            {"role": "tool", "content": "Replaced.", "name": "replace_scene_text"},
+            {"role": "tool", "content": "Updated.", "name": "update_scene_blueprint"},
         ]
     )
 
@@ -119,12 +119,12 @@ def test_debug_prompt_blocks_split_into_components() -> None:
         ("System Prompt", "markdown"),
         ("User Message", "markdown"),
         ("Assistant Message", "markdown"),
-        ("Tool Call: replace_scene_text", "json"),
-        ("Tool Response: replace_scene_text", "markdown"),
+        ("Tool Call: update_scene_blueprint", "json"),
+        ("Tool Response: update_scene_blueprint", "markdown"),
     ]
     tool_call_content = next(content for _, kind, content in blocks if kind == "json")
-    assert '"name": "replace_scene_text"' in tool_call_content
-    assert '"target": "old"' in tool_call_content
+    assert '"name": "update_scene_blueprint"' in tool_call_content
+    assert '"premise": "new"' in tool_call_content
 
 
 def test_debug_escape_html_escapes_canvas_tags() -> None:

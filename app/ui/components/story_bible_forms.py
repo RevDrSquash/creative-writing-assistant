@@ -1112,19 +1112,68 @@ def _render_linked_events(label: str, event_ids: list[str], bible: StoryBible) -
             ui.label(f"{event.title or 'Untitled'} [{event_id}]").classes("text-sm")
 
 
-def render_scene_blueprint_form(scene: Scene, edit_state: dict) -> None:
-    """Render the scene blueprint editor, visible only in edit mode."""
+def _event_select_options(bible: StoryBible) -> dict[str, str]:
+    return {event.id: f"{event.title or 'Untitled'} [{event.id}]" for event in bible.timeline}
+
+
+def _character_select_options(bible: StoryBible) -> dict[str, str]:
+    return {
+        character.id: character.identity.name or "Unnamed character"
+        for character in bible.characters
+    }
+
+
+def _render_string_list_editor(
+    items: list[str],
+    *,
+    placeholder: str,
+    refresh: Callable[[], None],
+) -> None:
+    if not items:
+        ui.label("(none)").classes("text-grey-7")
+    for index, value in enumerate(items):
+
+        def delete_item(index: int = index) -> None:
+            items.pop(index)
+            save_world()
+            refresh()
+
+        with ui.row().classes("w-full items-center no-wrap gap-2"):
+            text = ui.input(placeholder=placeholder, value=value).classes("grow")
+            text.props("dense outlined")
+
+            def apply_item(event, index: int = index) -> None:
+                items[index] = event.value or ""
+                save_world()
+
+            text.on_value_change(apply_item)
+            _delete_button(delete_item, "Remove")
+
+
+def render_scene_blueprint_form(
+    scene: Scene,
+    edit_state: dict,
+    *,
+    expand_blueprint: bool = False,
+) -> None:
+    """Render the scene blueprint and generated-content editors, visible in edit mode."""
 
     blueprint = scene.blueprint
+    generated = scene.generated
     bible = get_world().story_bible
 
     with ui.column().classes("w-full gap-4 shrink-0") as blueprint_block:
         blueprint_block.bind_visibility_from(edit_state, "edit_mode")
 
-        with ui.expansion("Blueprint", icon="description", value=False).classes("w-full"):
+        with ui.expansion("Blueprint", icon="description", value=expand_blueprint).classes(
+            "w-full"
+        ):
             ui.label(
-                "Planning scaffold for this scene: premise, purpose, outline, and character stances."
+                "Editable scene card inputs: premise, purpose, POV, arc, characters, events, "
+                "constraints, and notes."
             ).classes("text-grey-7 text-sm")
+            _field_label("POV")
+            _bound_input(blueprint, "pov", placeholder="Point-of-view character or narrator...")
             _field_label("Premise")
             _bound_textarea(
                 blueprint,
@@ -1139,65 +1188,130 @@ def render_scene_blueprint_form(scene: Scene, edit_state: dict) -> None:
                 placeholder="Why this scene exists in the story...",
                 rows=3,
             )
+            _field_label("Arc beats")
+            ui.label("Three-point (or more) arc guidance for generation.").classes(
+                "text-grey-7 text-sm"
+            )
 
-        with ui.expansion("Linked Events", icon="timeline", value=False).classes("w-full"):
+            @ui.refreshable
+            def arc_section() -> None:
+                _render_string_list_editor(
+                    blueprint.arc,
+                    placeholder="Arc beat...",
+                    refresh=arc_section.refresh,
+                )
+
+            arc_section()
+
+            def add_arc_beat() -> None:
+                blueprint.arc.append("")
+                save_world()
+                arc_section.refresh()
+
+            ui.button("Add arc beat", icon="add", on_click=add_arc_beat).props("flat")
+
+            _field_label("Participating characters")
+            character_select = ui.select(
+                _character_select_options(bible),
+                value=list(blueprint.character_ids),
+                multiple=True,
+            ).classes("w-full")
+            character_select.props("dense outlined use-chips")
+
+            def on_characters_change(event) -> None:
+                blueprint.character_ids = list(event.value or [])
+                save_world()
+
+            character_select.on_value_change(on_characters_change)
+
+            _field_label("Enacted events")
+            enacted_select = ui.select(
+                _event_select_options(bible),
+                value=list(blueprint.event_ids),
+                multiple=True,
+            ).classes("w-full")
+            enacted_select.props("dense outlined use-chips")
+
+            def on_enacted_change(event) -> None:
+                blueprint.event_ids = list(event.value or [])
+                enacted = set(blueprint.event_ids)
+                blueprint.related_event_ids = [
+                    event_id for event_id in blueprint.related_event_ids if event_id not in enacted
+                ]
+                save_world()
+
+            enacted_select.on_value_change(on_enacted_change)
+
+            _field_label("Related events (context only)")
+            related_select = ui.select(
+                _event_select_options(bible),
+                value=list(blueprint.related_event_ids),
+                multiple=True,
+            ).classes("w-full")
+            related_select.props("dense outlined use-chips")
+
+            def on_related_change(event) -> None:
+                enacted = set(blueprint.event_ids)
+                blueprint.related_event_ids = [
+                    event_id for event_id in (event.value or []) if event_id not in enacted
+                ]
+                save_world()
+
+            related_select.on_value_change(on_related_change)
+
+            _field_label("Constraints")
+            _bound_textarea(
+                blueprint,
+                "constraints",
+                placeholder="Hard limits for this scene...",
+                rows=2,
+            )
+            _field_label("Notes")
+            _bound_textarea(
+                blueprint,
+                "notes",
+                placeholder="Free-form planning notes...",
+                rows=2,
+            )
+
+        with ui.expansion("Generated", icon="auto_awesome", value=False).classes("w-full"):
             ui.label(
-                "Timeline events this scene enacts, plus related events for context. "
-                "Set when drafting; links may go stale if an event is later removed."
+                "Workflow output: outline and stances. Regenerating overwrites these fields."
             ).classes("text-grey-7 text-sm")
-            _render_linked_events("Enacted", blueprint.event_ids, bible)
-            _render_linked_events("Related (context only)", blueprint.related_event_ids, bible)
 
-        with ui.expansion("Outline", icon="format_list_numbered", value=False).classes("w-full"):
+            ui.label("Outline").classes("text-sm font-medium")
             ui.label("Concise beats that structure the scene.").classes("text-grey-7 text-sm")
 
             @ui.refreshable
             def outline_section() -> None:
-                if not blueprint.outline:
-                    ui.label("No outline beats yet.").classes("text-grey-7")
-                for index, beat in enumerate(blueprint.outline):
-
-                    def delete_beat(index: int = index) -> None:
-                        blueprint.outline.pop(index)
-                        save_world()
-                        outline_section.refresh()
-
-                    with ui.row().classes("w-full items-center no-wrap gap-2"):
-                        text = ui.input(
-                            placeholder="Outline beat...",
-                            value=beat,
-                        ).classes("grow")
-                        text.props("dense outlined")
-
-                        def apply_beat(event, index: int = index) -> None:
-                            blueprint.outline[index] = event.value or ""
-                            save_world()
-
-                        text.on_value_change(apply_beat)
-                        _delete_button(delete_beat, "Remove beat")
+                _render_string_list_editor(
+                    generated.outline,
+                    placeholder="Outline beat...",
+                    refresh=outline_section.refresh,
+                )
 
             outline_section()
 
             def add_beat() -> None:
-                blueprint.outline.append("")
+                generated.outline.append("")
                 save_world()
                 outline_section.refresh()
 
             ui.button("Add beat", icon="add", on_click=add_beat).props("flat")
 
-        with ui.expansion("Character Stances", icon="groups", value=False).classes("w-full"):
+            ui.label("Character Stances").classes("text-sm font-medium mt-2")
             ui.label("Ephemeral posture for characters in this scene.").classes(
                 "text-grey-7 text-sm"
             )
 
             @ui.refreshable
             def stances_section() -> None:
-                if not blueprint.stances:
+                if not generated.stances:
                     ui.label("No character stances yet.").classes("text-grey-7")
-                for stance in blueprint.stances:
+                for stance in generated.stances:
                     _render_scene_stance_card(
                         stance,
-                        blueprint.stances,
+                        generated.stances,
                         bible,
                         stances_section.refresh,
                     )
@@ -1207,7 +1321,7 @@ def render_scene_blueprint_form(scene: Scene, edit_state: dict) -> None:
             def add_stance() -> None:
                 characters = bible.characters
                 character_id = characters[0].id if characters else ""
-                blueprint.stances.append(SceneCharacterStance(character_id=character_id))
+                generated.stances.append(SceneCharacterStance(character_id=character_id))
                 save_world()
                 stances_section.refresh()
 

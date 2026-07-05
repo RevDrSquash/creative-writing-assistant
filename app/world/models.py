@@ -8,6 +8,8 @@ model description.
 
 from __future__ import annotations
 
+import hashlib
+import json
 import re
 from collections.abc import Iterable
 from datetime import datetime, timezone
@@ -16,7 +18,7 @@ from uuid import uuid4
 
 from pydantic import BaseModel, Field
 
-SCHEMA_VERSION = 7
+SCHEMA_VERSION = 8
 
 IntimacyStrength = Literal["minor", "major", "defining"]
 WorldStateKind = Literal["pressure", "thread", "consequence"]
@@ -332,7 +334,7 @@ class SceneCharacterStance(BaseModel):
 
 
 class SceneBlueprint(BaseModel):
-    """Planning scaffold for a scene: premise, purpose, outline, stances, and event links.
+    """Editable scene card inputs: premise, purpose, POV, arc, links, and constraints.
 
     ``event_ids`` are the timeline events this scene enacts; ``related_event_ids`` are
     context-only events relevant to the scene without being chronologically adjacent. Both are
@@ -342,10 +344,30 @@ class SceneBlueprint(BaseModel):
 
     premise: str = ""
     purpose: str = ""
-    stances: list[SceneCharacterStance] = Field(default_factory=list)
-    outline: list[str] = Field(default_factory=list)
+    pov: str = ""
+    arc: list[str] = Field(default_factory=list)
+    character_ids: list[str] = Field(default_factory=list)
     event_ids: list[str] = Field(default_factory=list)
     related_event_ids: list[str] = Field(default_factory=list)
+    constraints: str = ""
+    notes: str = ""
+
+
+def blueprint_fingerprint(blueprint: SceneBlueprint) -> str:
+    """Return a stable hash of blueprint inputs for staleness detection."""
+
+    payload = blueprint.model_dump(mode="json")
+    canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(canonical.encode()).hexdigest()[:16]
+
+
+class SceneGenerated(BaseModel):
+    """Workflow output for a scene: stances, outline, and generation metadata."""
+
+    stances: list[SceneCharacterStance] = Field(default_factory=list)
+    outline: list[str] = Field(default_factory=list)
+    blueprint_fingerprint: str = ""
+    generated_at: datetime | None = None
 
 
 class Scene(BaseModel):
@@ -357,6 +379,7 @@ class Scene(BaseModel):
     markdown: str = ""
     notes: str = ""
     blueprint: SceneBlueprint = Field(default_factory=SceneBlueprint)
+    generated: SceneGenerated = Field(default_factory=SceneGenerated)
 
 
 class WorldMetadata(BaseModel):

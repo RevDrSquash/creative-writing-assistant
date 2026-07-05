@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from nicegui import app, ui
 
+from app.graphs.generation_manager import get_generation_manager
 from app.ui.components.chat import render_chat
 from app.ui.components.markdown_editor import (
     _toggle_icon,
@@ -21,7 +22,7 @@ from app.ui.layout import render_header
 from app.ui.navigation import NavigationItem
 from app.ui.scene_selection import get_current_scene, set_current_scene_id
 from app.world.models import Scene
-from app.world.scene import create_scene, delete_scene
+from app.world.scene import create_scene, delete_scene, scene_is_generatable, scene_is_stale
 from app.world.store import get_world, save_world
 
 WORKSPACE_SPLIT_KEY = "workspace_split"
@@ -178,11 +179,83 @@ def _scene_snapshot() -> tuple[tuple[str, str], ...]:
     return tuple((scene.id, scene.title) for scene in get_world().scenes)
 
 
+def _scene_snapshot() -> tuple[tuple[str, str], ...]:
+    return tuple((scene.id, scene.title) for scene in get_world().scenes)
+
+
+def _render_generation_controls(scene: Scene) -> None:
+    """Render Generate/Regenerate controls with stale badge and status polling."""
+
+    manager = get_generation_manager()
+
+    @ui.refreshable
+    def controls() -> None:
+        generating = manager.is_generating(scene.id)
+        stale = scene_is_stale(scene)
+        has_generated = scene.generated.generated_at is not None
+        generatable = scene_is_generatable(scene)
+
+        if stale:
+            ui.badge("Stale").props("color=warning").mark("scene-stale-badge")
+
+        if generating:
+            button = ui.button("Generating...", icon="hourglass_empty")
+            button.props("flat disable")
+            button.mark("scene-generate-button")
+            ui.spinner(size="sm").mark("scene-generate-spinner")
+        elif not has_generated:
+            button = ui.button("Generate", on_click=lambda: _start_generation(scene))
+            button.mark("scene-generate-button")
+            if generatable:
+                button.props("color=primary")
+            else:
+                button.props("disable")
+                button.tooltip("Set a premise and at least one enacted event first")
+        elif stale:
+            button = ui.button("Regenerate", on_click=lambda: _confirm_regenerate(scene))
+            button.mark("scene-generate-button")
+            button.props("color=warning")
+        else:
+            button = ui.button("Regenerate")
+            button.mark("scene-generate-button")
+            button.props("disable")
+            button.tooltip("Blueprint unchanged since last generation")
+
+        error = manager.last_error(scene.id)
+        if error:
+            ui.label(error).classes("text-negative text-sm")
+
+    async def _confirm_regenerate(scene: Scene) -> None:
+        with ui.dialog() as dialog, ui.card():
+            ui.label(
+                "Regenerate this scene? Existing prose, outline, and stances will be discarded."
+            )
+            with ui.row().classes("w-full justify-end gap-2"):
+                ui.button("Cancel", on_click=lambda: dialog.submit(False)).props("flat")
+                ui.button("Regenerate", color="warning", on_click=lambda: dialog.submit(True))
+        if await dialog:
+            _start_generation(scene)
+
+    def _start_generation(scene: Scene) -> None:
+        try:
+            manager.start_generation(scene.id)
+        except RuntimeError as exc:
+            ui.notify(str(exc), type="warning")
+            return
+        controls.refresh()
+
+    controls()
+    ui.timer(1.0, controls.refresh)
+
+
 def _render_scene_editor(scene: Scene) -> None:
     def save() -> None:
         save_world()
 
-    edit_state = {"edit_mode": False}
+    # Scenes without generated prose open in edit mode with the blueprint
+    # expanded, so the writer can review the card and trigger generation.
+    never_generated = scene.generated.generated_at is None
+    edit_state = {"edit_mode": never_generated}
 
     def sync_edit_mode_visibility() -> None:
         edit_mode = edit_state["edit_mode"]
@@ -215,6 +288,7 @@ def _render_scene_editor(scene: Scene) -> None:
         )
 
         ui.space()
+        _render_generation_controls(scene)
         toggle_button = ui.button(icon=_toggle_icon(edit_state["edit_mode"]), on_click=toggle_mode)
         toggle_button.props("flat round dense")
         toggle_button.mark("scene-editor-toggle-button")
@@ -241,7 +315,7 @@ def _render_scene_editor(scene: Scene) -> None:
         backward=lambda edit_mode: not edit_mode,
     )
 
-    render_scene_blueprint_form(scene, edit_state)
+    render_scene_blueprint_form(scene, edit_state, expand_blueprint=never_generated)
 
     render_markdown_editor(
         scene,

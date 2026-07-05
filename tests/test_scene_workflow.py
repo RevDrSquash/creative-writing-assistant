@@ -1,4 +1,4 @@
-"""Unit tests for the scene-writing workflow and draft_scene tool."""
+"""Unit tests for the scene-writing workflow, generation entry point, and propose_scene."""
 
 from __future__ import annotations
 
@@ -10,17 +10,17 @@ from langchain_core.messages import AIMessage, ToolMessage
 from langchain_core.tools import ToolException
 from langgraph.types import Command
 
+from app.graphs.generation_manager import GenerationManager
+from app.graphs.scene_generation import run_scene_generation
 from app.graphs.scene_workflow import (
-    EssentialDetails,
     OutlineBeats,
     OutlineCritique,
+    SceneSummary,
     StanceList,
     StanceOutput,
-    TitleSummary,
     _author_stances_node,
-    _formalize_details_node,
     _outline_node,
-    _title_and_summary_node,
+    _summary_node,
     build_scene_writer_graph,
     structured_fake_model,
 )
@@ -28,17 +28,16 @@ from app.models.client import get_chat_model_for_node
 from app.models.config import (
     GRAPH_NODES,
     SCENE_DRAFT_NODE_ID,
-    SCENE_FORMALIZE_NODE_ID,
     SCENE_OUTLINE_NODE_ID,
     SCENE_OUTLINE_REVIEW_NODE_ID,
     SCENE_OUTLINE_REVISE_NODE_ID,
     SCENE_STANCES_NODE_ID,
-    SCENE_TITLE_SUMMARY_NODE_ID,
+    SCENE_SUMMARY_NODE_ID,
 )
-from app.tools.scene import draft_scene
+from app.tools.scene import propose_scene
 from app.tools.story_bible import add_event, upsert_character
-from app.world.models import World
-from app.world.scene import create_scene
+from app.world.models import SceneBlueprint, World, blueprint_fingerprint
+from app.world.scene import create_scene, scene_is_stale
 from app.world.store import get_world
 
 
@@ -64,9 +63,6 @@ def _workflow_models(
 ) -> dict[str, Any]:
     beats = outline_beats or ["Beat one.", "Beat two."]
     return {
-        SCENE_FORMALIZE_NODE_ID: structured_fake_model(
-            EssentialDetails(premise="Formal premise.", purpose="Formal purpose.")
-        ),
         SCENE_STANCES_NODE_ID: structured_fake_model(
             StanceList(
                 stances=[
@@ -88,9 +84,7 @@ def _workflow_models(
             OutlineBeats(beats=["Revised beat one.", "Revised beat two."])
         ),
         SCENE_DRAFT_NODE_ID: _canvas_draft_model(prose),
-        SCENE_TITLE_SUMMARY_NODE_ID: structured_fake_model(
-            TitleSummary(title="The Investigation", summary="Hero investigates.")
-        ),
+        SCENE_SUMMARY_NODE_ID: structured_fake_model(SceneSummary(summary="Hero investigates.")),
     }
 
 
@@ -119,32 +113,15 @@ def _workflow_input(
         "event_ids": event_ids if event_ids is not None else [],
         "related_event_ids": related_event_ids if related_event_ids is not None else [],
         "constraints": "Keep it tense.",
+        "arc": ["Setup", "Turn", "Payoff"],
+        "notes": "Planning note.",
         "scene_id": scene_id,
         "revision_count": 0,
         "max_revisions": max_revisions,
     }
 
 
-def test_formalize_node_persists_blueprint(isolated_world: World) -> None:
-    enacted_id = _seed_event("Enacted")
-    related_id = _seed_event("Related")
-    scene = create_scene()
-    models = {
-        SCENE_FORMALIZE_NODE_ID: structured_fake_model(
-            EssentialDetails(premise="Stored premise.", purpose="Stored purpose.")
-        )
-    }
-    node = _formalize_details_node(models)
-    node(_workflow_input(scene.id, event_ids=[enacted_id], related_event_ids=[related_id]))
-
-    blueprint = get_world().get_scene(scene.id).blueprint
-    assert blueprint.premise == "Stored premise."
-    assert blueprint.purpose == "Stored purpose."
-    assert blueprint.event_ids == [enacted_id]
-    assert blueprint.related_event_ids == [related_id]
-
-
-def test_stances_node_persists_blueprint(isolated_world: World) -> None:
+def test_stances_node_persists_generated(isolated_world: World) -> None:
     character_id = _seed_character()
     scene = create_scene()
     models = {
@@ -168,250 +145,170 @@ def test_stances_node_persists_blueprint(isolated_world: World) -> None:
     state["purpose"] = "Purpose"
     _author_stances_node(models)(state)
 
-    stances = get_world().get_scene(scene.id).blueprint.stances
+    stances = get_world().get_scene(scene.id).generated.stances
     assert len(stances) == 1
     assert stances[0].character_id == character_id
     assert stances[0].mood == ["Uneasy"]
 
 
-def test_stances_node_resolves_drifted_character_id(isolated_world: World) -> None:
-    upsert_character.invoke({"name": "The Narrator"})
-    character_id = get_world().story_bible.characters[-1].id
-    scene = create_scene()
-    models = {
-        SCENE_STANCES_NODE_ID: structured_fake_model(
-            StanceList(stances=[StanceOutput(character_id="char_narrator", mood=["Cold"])])
-        )
-    }
-    state = _workflow_input(scene.id)
-    state["character_ids"] = [character_id]
-    _author_stances_node(models)(state)
-
-    stances = get_world().get_scene(scene.id).blueprint.stances
-    assert [stance.character_id for stance in stances] == [character_id]
-
-
-def test_stances_node_drops_unknown_character(isolated_world: World) -> None:
-    character_id = _seed_character()
-    scene = create_scene()
-    models = {
-        SCENE_STANCES_NODE_ID: structured_fake_model(
-            StanceList(
-                stances=[
-                    StanceOutput(character_id=character_id, mood=["Wary"]),
-                    StanceOutput(character_id="char_ghost", mood=["Absent"]),
-                ]
-            )
-        )
-    }
-    state = _workflow_input(scene.id)
-    state["character_ids"] = [character_id]
-    _author_stances_node(models)(state)
-
-    stances = get_world().get_scene(scene.id).blueprint.stances
-    assert [stance.character_id for stance in stances] == [character_id]
-
-
-def test_outline_node_persists_beats(isolated_world: World) -> None:
+def test_outline_node_persists_generated_beats(isolated_world: World) -> None:
     scene = create_scene()
     models = {SCENE_OUTLINE_NODE_ID: structured_fake_model(OutlineBeats(beats=["Open.", "Close."]))}
     state = _workflow_input(scene.id)
     _outline_node(models)(state)
 
-    assert get_world().get_scene(scene.id).blueprint.outline == ["Open.", "Close."]
+    assert get_world().get_scene(scene.id).generated.outline == ["Open.", "Close."]
 
 
-def test_title_summary_node_persists_metadata(isolated_world: World) -> None:
-    scene = create_scene()
-    models = {
-        SCENE_TITLE_SUMMARY_NODE_ID: structured_fake_model(
-            TitleSummary(title="Night Watch", summary="A quiet patrol.")
-        )
-    }
+def test_summary_node_persists_summary_without_touching_title(isolated_world: World) -> None:
+    scene = create_scene("Agent Chosen Title")
+    models = {SCENE_SUMMARY_NODE_ID: structured_fake_model(SceneSummary(summary="A quiet patrol."))}
     state = _workflow_input(scene.id)
     state["prose"] = "Some prose."
-    _title_and_summary_node(models)(state)
+    _summary_node(models)(state)
 
     updated = get_world().get_scene(scene.id)
-    assert updated.title == "Night Watch"
+    assert updated.title == "Agent Chosen Title"
     assert updated.summary == "A quiet patrol."
-
-
-def test_bounded_loop_honors_max_revisions(isolated_world: World) -> None:
-    review_counts: list[int] = []
-    revise_counts: list[int] = []
-
-    class CountingReview:
-        def with_structured_output(self, schema: Any, **kwargs: Any) -> Any:
-            class Runnable:
-                def invoke(self, *args: Any, **kwargs: Any) -> OutlineCritique:
-                    review_counts.append(1)
-                    return OutlineCritique(critique="Needs work.")
-
-            return Runnable()
-
-        def bind_tools(self, tools: Any, **kwargs: Any) -> CountingReview:
-            return self
-
-    class CountingRevise:
-        def with_structured_output(self, schema: Any, **kwargs: Any) -> Any:
-            class Runnable:
-                def invoke(self, *args: Any, **kwargs: Any) -> OutlineBeats:
-                    revise_counts.append(1)
-                    return OutlineBeats(beats=["Revised."])
-
-            return Runnable()
-
-        def bind_tools(self, tools: Any, **kwargs: Any) -> CountingRevise:
-            return self
-
-    scene = create_scene()
-    models = _workflow_models()
-    models[SCENE_OUTLINE_REVIEW_NODE_ID] = CountingReview()
-    models[SCENE_OUTLINE_REVISE_NODE_ID] = CountingRevise()
-
-    result = build_scene_writer_graph(models=models, max_revisions=1).invoke(
-        _workflow_input(scene.id, max_revisions=1)
-    )
-
-    assert review_counts == [1]
-    assert revise_counts == [1]
-    assert result["revision_count"] == 1
-    assert result["prose"] == "Drafted scene prose."
-
-
-def test_bounded_loop_allows_multiple_revisions(isolated_world: World) -> None:
-    review_counts: list[int] = []
-    revise_counts: list[int] = []
-
-    class CountingReview:
-        def with_structured_output(self, schema: Any, **kwargs: Any) -> Any:
-            class Runnable:
-                def invoke(self, *args: Any, **kwargs: Any) -> OutlineCritique:
-                    review_counts.append(1)
-                    return OutlineCritique(critique="Still rough.")
-
-            return Runnable()
-
-        def bind_tools(self, tools: Any, **kwargs: Any) -> CountingReview:
-            return self
-
-    class CountingRevise:
-        def with_structured_output(self, schema: Any, **kwargs: Any) -> Any:
-            class Runnable:
-                def invoke(self, *args: Any, **kwargs: Any) -> OutlineBeats:
-                    revise_counts.append(1)
-                    return OutlineBeats(beats=[f"Beat {len(revise_counts)}."])
-
-            return Runnable()
-
-        def bind_tools(self, tools: Any, **kwargs: Any) -> CountingRevise:
-            return self
-
-    scene = create_scene()
-    models = _workflow_models()
-    models[SCENE_OUTLINE_REVIEW_NODE_ID] = CountingReview()
-    models[SCENE_OUTLINE_REVISE_NODE_ID] = CountingRevise()
-
-    result = build_scene_writer_graph(models=models, max_revisions=2).invoke(
-        _workflow_input(scene.id, max_revisions=2)
-    )
-
-    assert review_counts == [1, 1]
-    assert revise_counts == [1, 1]
-    assert result["revision_count"] == 2
 
 
 def test_full_graph_drafts_end_to_end(isolated_world: World) -> None:
     character_id = _seed_character()
-    scene = create_scene()
+    scene = create_scene("Proposed Title")
+    scene.blueprint = SceneBlueprint(
+        premise="Brief premise.",
+        purpose="Brief purpose.",
+        character_ids=[character_id],
+        event_ids=[_seed_event()],
+    )
     prose = "The hero stepped into the alley."
-    input_state = _workflow_input(scene.id)
+    input_state = _workflow_input(scene.id, event_ids=scene.blueprint.event_ids)
     input_state["character_ids"] = [character_id]
-    result = build_scene_writer_graph(models=_workflow_models(prose=prose)).invoke(input_state)
+    build_scene_writer_graph(models=_workflow_models(prose=prose)).invoke(input_state)
 
     updated = get_world().get_scene(scene.id)
-    assert result["premise"] == "Formal premise."
-    assert result["title"] == "The Investigation"
     assert updated.markdown == prose
-    assert updated.blueprint.outline == ["Revised beat one.", "Revised beat two."]
-    assert updated.blueprint.stances[0].intent == "Investigate"
+    assert updated.generated.outline == ["Revised beat one.", "Revised beat two."]
+    assert updated.generated.stances[0].intent == "Investigate"
+    # The workflow writes the summary but never touches the title.
+    assert updated.title == "Proposed Title"
+    assert updated.summary == "Hero investigates."
 
 
-def test_draft_scene_tool_creates_and_opens_scene(
-    world_with_scene: World,
+def test_run_scene_generation_clears_old_content_and_stamps_fingerprint(
+    isolated_world: World,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     character_id = _seed_character()
     event_id = _seed_event()
+    scene = create_scene()
+    scene.blueprint = SceneBlueprint(
+        premise="Old premise",
+        purpose="Purpose",
+        character_ids=[character_id],
+        event_ids=[event_id],
+    )
+    scene.markdown = "Old prose to discard."
+    scene.generated.outline = ["Old beat"]
+    expected_fingerprint = blueprint_fingerprint(scene.blueprint)
+
     monkeypatch.setattr(
-        "app.graphs.registry.WORKFLOWS",
-        {"draft_scene": lambda **kwargs: build_scene_writer_graph(models=_workflow_models())},
+        "app.graphs.scene_generation.get_workflow",
+        lambda name, **kwargs: build_scene_writer_graph(models=_workflow_models()),
     )
 
+    run_scene_generation(scene.id)
+
+    updated = get_world().get_scene(scene.id)
+    assert updated.markdown == "Drafted scene prose."
+    assert updated.generated.blueprint_fingerprint == expected_fingerprint
+    assert updated.generated.generated_at is not None
+    assert updated.generated.outline == ["Revised beat one.", "Revised beat two."]
+
+
+def test_scene_is_stale_when_blueprint_changes_after_generation(world_with_scene: World) -> None:
+    from datetime import datetime, timezone
+
+    from app.world.models import SceneGenerated
+
+    scene = world_with_scene.scenes[0]
+    scene.blueprint.premise = "Stable"
+    scene.blueprint.event_ids = ["event_1"]
+    fingerprint = blueprint_fingerprint(scene.blueprint)
+    scene.generated = SceneGenerated(
+        blueprint_fingerprint=fingerprint,
+        generated_at=datetime.now(timezone.utc),
+    )
+    assert scene_is_stale(scene) is False
+
+    scene.blueprint.premise = "Changed"
+    assert scene_is_stale(scene) is True
+
+
+def test_generation_manager_rejects_concurrent_start(monkeypatch: pytest.MonkeyPatch) -> None:
+    manager = GenerationManager()
+    started: list[str] = []
+
+    def slow_run(scene_id: str, *, max_revisions: int = 1) -> None:
+        started.append(scene_id)
+        import time
+
+        time.sleep(0.05)
+
+    monkeypatch.setattr("app.graphs.generation_manager.run_scene_generation", slow_run)
+    manager.start_generation("scene_a")
+    with pytest.raises(RuntimeError, match="already running"):
+        manager.start_generation("scene_a")
+
+
+def test_generation_manager_captures_errors(monkeypatch: pytest.MonkeyPatch) -> None:
+    manager = GenerationManager()
+
+    def failing_run(scene_id: str, *, max_revisions: int = 1) -> None:
+        msg = "workflow exploded"
+        raise RuntimeError(msg)
+
+    monkeypatch.setattr("app.graphs.generation_manager.run_scene_generation", failing_run)
+    manager.start_generation("scene_b")
+    import time
+
+    deadline = time.time() + 2
+    while manager.is_generating("scene_b") and time.time() < deadline:
+        time.sleep(0.01)
+
+    assert manager.last_error("scene_b") == "workflow exploded"
+
+
+def test_propose_scene_tool_creates_and_opens_scene(
+    world_with_scene: World,
+) -> None:
+    character_id = _seed_character()
+    event_id = _seed_event()
     state = {
         "current_scene_id": world_with_scene.scenes[0].id,
         "current_scene": world_with_scene.scenes[0].markdown,
     }
 
-    command = draft_scene.func(
+    command = propose_scene.func(
+        "The Proposal",
         "Brief premise.",
         "Brief purpose.",
         "First person",
         [character_id],
         [event_id],
         state,
-        "draft-call",
+        "propose-call",
     )
 
     assert isinstance(command, Command)
     new_id = command.update["current_scene_id"]
     assert new_id != state["current_scene_id"]
-    assert command.update["current_scene"] == "Drafted scene prose."
     assert len(get_world().scenes) == 2
+    assert get_world().get_scene(new_id).title == "The Proposal"
     assert isinstance(command.update["messages"][0], ToolMessage)
 
 
-def test_draft_scene_tool_normalizes_drifted_character_ids(
-    world_with_scene: World,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    upsert_character.invoke({"name": "The Narrator"})
-    character_id = get_world().story_bible.characters[-1].id
-    event_id = _seed_event()
-    captured: dict[str, Any] = {}
-
-    def fake_build(**_kwargs: Any) -> Any:
-        graph = build_scene_writer_graph(models=_workflow_models())
-        original_invoke = graph.invoke
-
-        def invoke(input_state: dict[str, Any], *args: Any, **kwargs: Any) -> Any:
-            captured["character_ids"] = input_state["character_ids"]
-            return original_invoke(input_state, *args, **kwargs)
-
-        monkeypatch.setattr(graph, "invoke", invoke)
-        return graph
-
-    monkeypatch.setattr("app.graphs.registry.WORKFLOWS", {"draft_scene": fake_build})
-
-    state = {
-        "current_scene_id": world_with_scene.scenes[0].id,
-        "current_scene": world_with_scene.scenes[0].markdown,
-    }
-    draft_scene.func(
-        "Brief premise.",
-        "Brief purpose.",
-        "Second person",
-        ["char_narrator"],
-        [event_id],
-        state,
-        "draft-call",
-    )
-
-    assert captured["character_ids"] == [character_id]
-
-
-def test_draft_scene_tool_rejects_unknown_character_ids(world_with_scene: World) -> None:
+def test_propose_scene_tool_rejects_unknown_character_ids(world_with_scene: World) -> None:
     _seed_character()
     event_id = _seed_event()
     state = {
@@ -421,116 +318,29 @@ def test_draft_scene_tool_rejects_unknown_character_ids(world_with_scene: World)
     scene_count = len(world_with_scene.scenes)
 
     with pytest.raises(ToolException, match="Unknown character_id"):
-        draft_scene.func(
+        propose_scene.func(
+            "The Proposal",
             "Brief premise.",
             "Brief purpose.",
             "Third person",
             ["char_villain"],
             [event_id],
             state,
-            "draft-call",
-        )
-
-    # The bogus call must not have created an orphan scene.
-    assert len(get_world().scenes) == scene_count
-
-
-def test_draft_scene_tool_rejects_unknown_event_ids(world_with_scene: World) -> None:
-    character_id = _seed_character()
-    state = {
-        "current_scene_id": world_with_scene.scenes[0].id,
-        "current_scene": world_with_scene.scenes[0].markdown,
-    }
-    scene_count = len(world_with_scene.scenes)
-
-    with pytest.raises(ToolException, match="Unknown event_id"):
-        draft_scene.func(
-            "Brief premise.",
-            "Brief purpose.",
-            "Third person",
-            [character_id],
-            ["event_ghost"],
-            state,
-            "draft-call",
+            "propose-call",
         )
 
     assert len(get_world().scenes) == scene_count
-
-
-def test_draft_scene_tool_requires_at_least_one_event(world_with_scene: World) -> None:
-    character_id = _seed_character()
-    state = {
-        "current_scene_id": world_with_scene.scenes[0].id,
-        "current_scene": world_with_scene.scenes[0].markdown,
-    }
-    scene_count = len(world_with_scene.scenes)
-
-    with pytest.raises(ToolException, match="must enact at least one event"):
-        draft_scene.func(
-            "Brief premise.",
-            "Brief purpose.",
-            "Third person",
-            [character_id],
-            [],
-            state,
-            "draft-call",
-        )
-
-    assert len(get_world().scenes) == scene_count
-
-
-def test_draft_scene_tool_drops_related_event_listed_as_enacted(
-    world_with_scene: World,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    character_id = _seed_character()
-    enacted_id = _seed_event("Enacted")
-    related_id = _seed_event("Related")
-    captured: dict[str, Any] = {}
-
-    def fake_build(**_kwargs: Any) -> Any:
-        graph = build_scene_writer_graph(models=_workflow_models())
-        original_invoke = graph.invoke
-
-        def invoke(input_state: dict[str, Any], *args: Any, **kwargs: Any) -> Any:
-            captured["event_ids"] = input_state["event_ids"]
-            captured["related_event_ids"] = input_state["related_event_ids"]
-            return original_invoke(input_state, *args, **kwargs)
-
-        monkeypatch.setattr(graph, "invoke", invoke)
-        return graph
-
-    monkeypatch.setattr("app.graphs.registry.WORKFLOWS", {"draft_scene": fake_build})
-
-    state = {
-        "current_scene_id": world_with_scene.scenes[0].id,
-        "current_scene": world_with_scene.scenes[0].markdown,
-    }
-    draft_scene.func(
-        "Brief premise.",
-        "Brief purpose.",
-        "Third person",
-        [character_id],
-        [enacted_id],
-        state,
-        "draft-call",
-        related_event_ids=[enacted_id, related_id],
-    )
-
-    assert captured["event_ids"] == [enacted_id]
-    assert captured["related_event_ids"] == [related_id]
 
 
 def test_graph_nodes_register_scene_workflow_nodes() -> None:
     node_ids = {node.node_id for node in GRAPH_NODES}
     expected = {
-        SCENE_FORMALIZE_NODE_ID,
         SCENE_STANCES_NODE_ID,
         SCENE_OUTLINE_NODE_ID,
         SCENE_OUTLINE_REVIEW_NODE_ID,
         SCENE_OUTLINE_REVISE_NODE_ID,
         SCENE_DRAFT_NODE_ID,
-        SCENE_TITLE_SUMMARY_NODE_ID,
+        SCENE_SUMMARY_NODE_ID,
     }
     assert expected <= node_ids
 

@@ -2,9 +2,6 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from difflib import SequenceMatcher
-from math import ceil, floor
 from typing import Annotated, Any
 
 from langchain_core.messages import ToolMessage
@@ -12,17 +9,19 @@ from langchain_core.tools import InjectedToolCallId, ToolException, tool
 from langgraph.prebuilt import InjectedState
 from langgraph.types import Command
 
-from app.world.scene import (
-    create_scene as world_create_scene,
-)
+from app.world.models import Scene, SceneBlueprint, unique_slug
 from app.world.scene import (
     delete_scene as world_delete_scene,
 )
 from app.world.scene import (
+    scene_generation_status,
     set_scene_metadata,
     set_scene_text,
 )
-from app.world.store import get_world
+from app.world.scene import (
+    update_scene_blueprint as world_update_scene_blueprint,
+)
+from app.world.store import get_world, world_transaction
 
 
 @tool
@@ -61,34 +60,6 @@ def list_scenes(state: Annotated[dict[str, Any], InjectedState]) -> str:
         summary = f" - {scene.summary}" if scene.summary else ""
         lines.append(f"{position}. {scene.title} [id: {scene.id}]{marker}{summary}")
     return "\n".join(lines)
-
-
-@tool
-def create_scene(
-    title: str,
-    state: Annotated[dict[str, Any], InjectedState],
-    tool_call_id: Annotated[str, InjectedToolCallId],
-    summary: str = "",
-) -> Command:
-    """Create a new empty scene at the end of the scene list and open it.
-
-    After creating, use canvas tags or replace_scene_text to write its prose.
-    """
-
-    _persist_open_scene_text(state)
-    scene = world_create_scene(title, summary)
-    return Command(
-        update={
-            "current_scene_id": scene.id,
-            "current_scene": scene.markdown,
-            "messages": [
-                ToolMessage(
-                    content=f"Created scene '{scene.title}' (id: {scene.id}) and opened it.",
-                    tool_call_id=tool_call_id,
-                )
-            ],
-        }
-    )
 
 
 @tool
@@ -205,142 +176,11 @@ def _persist_open_scene_text(state: dict[str, Any]) -> None:
 
 
 @tool
-def replace_scene_text(
-    target: str,
-    replacement: str,
-    state: Annotated[dict[str, Any], InjectedState],
-    tool_call_id: Annotated[str, InjectedToolCallId],
-) -> Command:
-    """Replace a contiguous block of the current scene with new text.
-
-    `target` should be a verbatim quote from the scene. The system tolerates small
-    whitespace / punctuation drift via fuzzy matching, but refuses if `target`
-    matches zero or more than one block.
-    """
-
-    current_id = state.get("current_scene_id", "")
-    if not current_id:
-        raise ToolException("No scene is open; call create_scene or draft_scene first.")
-
-    current_scene = state.get("current_scene", "")
-    if not isinstance(current_scene, str):
-        current_scene = ""
-    new_scene = fuzzy_replace_once(current_scene, target, replacement)
-    return Command(
-        update={
-            "current_scene": new_scene,
-            "messages": [
-                ToolMessage(
-                    content=(f"Replaced {len(target)} chars; scene is now {len(new_scene)} chars."),
-                    tool_call_id=tool_call_id,
-                )
-            ],
-        }
-    )
-
-
-def fuzzy_replace_once(
-    document: str,
-    target: str,
-    replacement: str,
-    *,
-    similarity_threshold: float = 0.85,
-) -> str:
-    """Replace a single exact or fuzzy match for ``target`` in ``document``."""
-
-    if not target:
-        raise ToolException("target must not be empty")
-
-    exact_count = document.count(target)
-    if exact_count == 1:
-        return document.replace(target, replacement, 1)
-    if exact_count > 1:
-        raise ToolException(
-            f"target matches {exact_count} locations; include more surrounding context to "
-            "disambiguate"
-        )
-
-    candidate = _find_single_fuzzy_candidate(
-        document,
-        target,
-        similarity_threshold=similarity_threshold,
-    )
-    return document[: candidate.start] + replacement + document[candidate.end :]
-
-
-@dataclass(frozen=True)
-class _FuzzyCandidate:
-    start: int
-    end: int
-    score: float
-
-    @property
-    def length(self) -> int:
-        return self.end - self.start
-
-
-def _find_single_fuzzy_candidate(
-    document: str,
-    target: str,
-    *,
-    similarity_threshold: float,
-    epsilon: float = 0.02,
-) -> _FuzzyCandidate:
-    target_length = len(target)
-    min_length = max(1, floor(target_length * 0.8))
-    max_length = max(min_length, ceil(target_length * 1.2))
-    candidates: list[_FuzzyCandidate] = []
-
-    for start in range(len(document)):
-        for window_length in range(min_length, max_length + 1):
-            end = start + window_length
-            if end > len(document):
-                break
-            score = SequenceMatcher(None, target, document[start:end]).ratio()
-            if score >= similarity_threshold:
-                candidates.append(_FuzzyCandidate(start, end, score))
-
-    if not candidates:
-        raise ToolException("no match for target; call read_scene to confirm exact wording")
-
-    best_score = max(candidate.score for candidate in candidates)
-    top_candidates = [
-        candidate for candidate in candidates if candidate.score >= best_score - epsilon
-    ]
-    match_groups = _group_overlapping_candidates(top_candidates)
-    if len(match_groups) > 1:
-        raise ToolException("multiple fuzzy matches found; quote target more precisely")
-
-    return max(
-        match_groups[0],
-        key=lambda candidate: (candidate.score, -abs(candidate.length - target_length)),
-    )
-
-
-def _group_overlapping_candidates(
-    candidates: list[_FuzzyCandidate],
-) -> list[list[_FuzzyCandidate]]:
-    groups: list[list[_FuzzyCandidate]] = []
-    current_group: list[_FuzzyCandidate] = []
-    current_end = -1
-
-    for candidate in sorted(candidates, key=lambda item: (item.start, item.end)):
-        if not current_group or candidate.start > current_end:
-            current_group = [candidate]
-            groups.append(current_group)
-        else:
-            current_group.append(candidate)
-        current_end = max(current_end, candidate.end)
-
-    return groups
-
-
-@tool
 def read_scene_blueprint(
     state: Annotated[dict[str, Any], InjectedState],
     scene_id: str = "",
 ) -> str:
-    """Return a scene's blueprint: premise, purpose, outline beats, and per-character stances.
+    """Return a scene's blueprint, generated artifacts, and generation status.
 
     Without `scene_id`, reads the scene currently open in the workspace.
     """
@@ -355,33 +195,71 @@ def read_scene_blueprint(
         raise ToolException(f"No scene with id {target_id}; call list_scenes for valid ids.")
 
     blueprint = scene.blueprint
+    generated = scene.generated
     bible = world.story_bible
+    status = scene_generation_status(scene)
     lines = [
-        f"# Blueprint: {scene.title or 'Untitled'} [scene id: {scene.id}]",
+        f"# Scene card: {scene.title or 'Untitled'} [scene id: {scene.id}]",
         "",
-        "## Premise",
+        f"Generation status: {status}",
+        "",
+        "## Blueprint (editable inputs)",
+        "",
+        f"POV: {blueprint.pov.strip() or '(not set)'}",
+        "",
+        "### Premise",
         blueprint.premise.strip() or "(not set)",
         "",
-        "## Purpose",
+        "### Purpose",
         blueprint.purpose.strip() or "(not set)",
         "",
-        "## Outline",
+        "### Arc beats",
     ]
-    if not blueprint.outline:
+    if not blueprint.arc:
         lines.append("(none)")
     else:
-        for position, beat in enumerate(blueprint.outline, start=1):
-            text = beat.strip() or "(empty)"
-            lines.append(f"{position}. {text}")
+        for position, beat in enumerate(blueprint.arc, start=1):
+            lines.append(f"{position}. {beat.strip() or '(empty)'}")
+
+    lines.extend(["", "### Participating characters"])
+    if not blueprint.character_ids:
+        lines.append("(none)")
+    else:
+        for character_id in blueprint.character_ids:
+            character = bible.get_character(character_id)
+            name = character.identity.name if character else f"unknown ({character_id})"
+            lines.append(f"- {name} [character id: {character_id}]")
+
+    lines.extend(["", "### Enacted events"])
+    lines.extend(_event_lines(blueprint.event_ids, bible))
+    lines.extend(["", "### Related events (context only)"])
+    lines.extend(_event_lines(blueprint.related_event_ids, bible))
+
+    lines.extend(
+        [
+            "",
+            f"Constraints: {blueprint.constraints.strip() or '(none)'}",
+            f"Notes: {blueprint.notes.strip() or '(none)'}",
+            "",
+            "## Generated (from workflow; regenerate overwrites)",
+            "",
+            "### Outline",
+        ]
+    )
+    if not generated.outline:
+        lines.append("(none)")
+    else:
+        for position, beat in enumerate(generated.outline, start=1):
+            lines.append(f"{position}. {beat.strip() or '(empty)'}")
 
     lines.append("")
-    lines.append("## Character Stances")
-    if not blueprint.stances:
+    lines.append("### Character Stances")
+    if not generated.stances:
         lines.append("(none)")
-    for stance in blueprint.stances:
+    for stance in generated.stances:
         character = bible.get_character(stance.character_id)
         name = character.identity.name if character else f"unknown ({stance.character_id})"
-        lines.append(f"### {name} [character id: {stance.character_id}]")
+        lines.append(f"#### {name} [character id: {stance.character_id}]")
         if stance.mood:
             lines.append("Mood:")
             for statement in stance.mood:
@@ -396,8 +274,23 @@ def read_scene_blueprint(
     return "\n".join(lines).rstrip()
 
 
+def _event_lines(event_ids: list[str], bible: Any) -> list[str]:
+    if not event_ids:
+        return ["(none)"]
+    lines: list[str] = []
+    for event_id in event_ids:
+        event = bible.get_event(event_id)
+        if event is None:
+            lines.append(f"- unknown id: {event_id}")
+        else:
+            title = event.title or "Untitled"
+            lines.append(f"- {title} [event id: {event_id}]")
+    return lines
+
+
 @tool
-def draft_scene(
+def propose_scene(
+    title: str,
     premise: str,
     purpose: str,
     pov: str,
@@ -405,53 +298,53 @@ def draft_scene(
     event_ids: list[str],
     state: Annotated[dict[str, Any], InjectedState],
     tool_call_id: Annotated[str, InjectedToolCallId],
+    arc: list[str] | None = None,
     related_event_ids: list[str] | None = None,
     constraints: str = "",
+    notes: str = "",
 ) -> Command:
-    """Run the full scene-writing workflow and open the resulting new scene.
+    """Create a new titled scene with a populated blueprint and open it.
 
-    Always creates a new scene, formalizes the brief into blueprint fields,
-    outlines, drafts prose, and sets title and summary.
-
-    A scene enacts one or more plot events. `event_ids` are the timeline events
-    this scene depicts (at least one is required); `related_event_ids` are extra
-    events that provide relevant context without being enacted (for example, a
-    past event the characters discuss). Both lists must come from read_timeline;
-    unknown ids are rejected. `character_ids` must come from read_story_bible.
+    ``title`` identifies the proposed scene in the UI before any prose exists.
+    Does not run generation; the user triggers that from the scene editor.
+    ``event_ids`` must include at least one enacted timeline event.
+    ``character_ids`` and event ids are validated against the Story Bible.
     """
 
-    character_ids = _resolve_scene_character_ids(character_ids)
+    if not title.strip():
+        raise ToolException("Provide a non-empty scene title.")
+    resolved_characters = _resolve_scene_character_ids(character_ids)
     enacted_ids, related_ids = _resolve_scene_event_ids(event_ids, related_event_ids or [])
 
     _persist_open_scene_text(state)
-    scene = world_create_scene()
-    from app.graphs.registry import get_workflow
+    with world_transaction() as world:
+        scene = Scene(
+            title=title.strip(),
+            blueprint=SceneBlueprint(
+                premise=premise,
+                purpose=purpose,
+                pov=pov,
+                arc=list(arc or []),
+                character_ids=resolved_characters,
+                event_ids=enacted_ids,
+                related_event_ids=related_ids,
+                constraints=constraints,
+                notes=notes,
+            ),
+        )
+        scene.id = unique_slug("scene_", scene.title, {item.id for item in world.scenes})
+        world.scenes.append(scene)
 
-    workflow = get_workflow("draft_scene")
-    workflow.invoke(
-        {
-            "premise": premise,
-            "purpose": purpose,
-            "pov": pov,
-            "character_ids": character_ids,
-            "event_ids": enacted_ids,
-            "related_event_ids": related_ids,
-            "constraints": constraints,
-            "scene_id": scene.id,
-            "revision_count": 0,
-            "max_revisions": 1,
-        }
-    )
-    drafted_scene = get_world().get_scene(scene.id)
-    prose = drafted_scene.markdown if drafted_scene is not None else scene.markdown
-    title = drafted_scene.title if drafted_scene is not None else scene.title
     return Command(
         update={
             "current_scene_id": scene.id,
-            "current_scene": prose,
+            "current_scene": scene.markdown,
             "messages": [
                 ToolMessage(
-                    content=(f"Drafted scene '{title}' (id: {scene.id}) and opened it."),
+                    content=(
+                        f"Proposed scene '{scene.title}' (id: {scene.id}) with blueprint "
+                        "and opened it. The user can generate prose from the editor."
+                    ),
                     tool_call_id=tool_call_id,
                 )
             ],
@@ -459,12 +352,82 @@ def draft_scene(
     )
 
 
-def _resolve_scene_character_ids(character_ids: list[str]) -> list[str]:
-    """Resolve provided ids to real character ids, rejecting unknown ones.
+@tool
+def update_scene_blueprint(
+    state: Annotated[dict[str, Any], InjectedState],
+    scene_id: str = "",
+    premise: str | None = None,
+    purpose: str | None = None,
+    pov: str | None = None,
+    arc: list[str] | None = None,
+    character_ids: list[str] | None = None,
+    event_ids: list[str] | None = None,
+    related_event_ids: list[str] | None = None,
+    constraints: str | None = None,
+    notes: str | None = None,
+) -> str:
+    """Partially update a scene blueprint on an existing scene.
 
-    Tolerates minor drift (e.g. a dropped article) so the workflow always
-    receives canonical ids and never writes dangling stance references.
+    Without ``scene_id``, updates the scene currently open in the workspace.
+    Changing the blueprint after generation marks the scene stale until regenerated.
     """
+
+    target_id = scene_id or state.get("current_scene_id", "")
+    if not target_id:
+        raise ToolException("No scene specified and none is open; call list_scenes.")
+
+    scene = get_world().get_scene(target_id)
+    if scene is None:
+        raise ToolException(f"No scene with id {target_id}; call list_scenes for valid ids.")
+
+    resolved_characters = (
+        _resolve_scene_character_ids(character_ids) if character_ids is not None else None
+    )
+    resolved_enacted: list[str] | None = None
+    resolved_related: list[str] | None = None
+    if event_ids is not None:
+        related = related_event_ids if related_event_ids is not None else []
+        resolved_enacted, resolved_related = _resolve_scene_event_ids(event_ids, related)
+    elif related_event_ids is not None:
+        resolved_related = _validate_event_ids(related_event_ids)
+        enacted_set = set(get_world().get_scene(target_id).blueprint.event_ids)
+        resolved_related = [
+            event_id for event_id in resolved_related if event_id not in enacted_set
+        ]
+
+    if (
+        premise is None
+        and purpose is None
+        and pov is None
+        and arc is None
+        and character_ids is None
+        and event_ids is None
+        and related_event_ids is None
+        and constraints is None
+        and notes is None
+    ):
+        return "No changes requested."
+
+    world_update_scene_blueprint(
+        target_id,
+        premise=premise,
+        purpose=purpose,
+        pov=pov,
+        arc=arc,
+        character_ids=resolved_characters,
+        event_ids=resolved_enacted,
+        related_event_ids=resolved_related,
+        constraints=constraints,
+        notes=notes,
+    )
+    return (
+        f"Updated blueprint for scene '{scene.title}' (id: {scene.id}). "
+        f"Generation status is now: {scene_generation_status(get_world().get_scene(target_id))}."
+    )
+
+
+def _resolve_scene_character_ids(character_ids: list[str]) -> list[str]:
+    """Resolve provided ids to real character ids, rejecting unknown ones."""
 
     bible = get_world().story_bible
     resolved: list[str] = []
@@ -500,13 +463,7 @@ def _resolve_scene_event_ids(
     event_ids: list[str],
     related_event_ids: list[str],
 ) -> tuple[list[str], list[str]]:
-    """Validate enacted and related event ids, rejecting unknown ones.
-
-    Events use exact-match ids (there is no fuzzy event resolver). Returns
-    de-duplicated ``(enacted, related)`` lists; a scene must enact at least one
-    event, and an id listed as enacted is dropped from the related list so the
-    two never overlap.
-    """
+    """Validate enacted and related event ids, rejecting unknown ones."""
 
     enacted = _validate_event_ids(event_ids)
     if not enacted:
@@ -554,11 +511,10 @@ def _unknown_event_detail(unknown_ids: list[str]) -> str:
 SCENE_TOOLS = [
     read_scene,
     read_scene_blueprint,
-    replace_scene_text,
     list_scenes,
-    create_scene,
+    propose_scene,
+    update_scene_blueprint,
     select_scene,
     update_scene,
     delete_scene,
-    draft_scene,
 ]

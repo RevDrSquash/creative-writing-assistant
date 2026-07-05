@@ -12,8 +12,7 @@ from pydantic import ValidationError
 from app.graphs import get_chat_agent
 from app.models import ModelSettings
 from app.persistence import ChatConversation, StoredChatMessage, get_chat_conversation
-from app.ui.components.canvas_stream_parser import CanvasStreamParser, ParseEvents
-from app.ui.scene_selection import get_current_scene, set_current_scene_id
+from app.ui.scene_selection import set_current_scene_id
 from app.world.scene import resolve_scene, set_scene_text
 
 
@@ -83,14 +82,8 @@ def render_chat(conversation: ChatConversation | None = None) -> None:
                 spinner = ui.spinner(size="sm")
 
         assistant_text = ""
-        start_scene = get_current_scene()
-        # Tracks which scene the run is editing and its last authoritative text
-        # (graph-state updates). Optimistic canvas appends layer on top of it.
-        run_scene: dict[str, str] = {
-            "id": start_scene.id if start_scene is not None else "",
-            "authoritative_text": start_scene.markdown if start_scene is not None else "",
-        }
-        parser = CanvasStreamParser()
+        start_scene = resolve_scene()
+        run_scene_id = start_scene.id if start_scene is not None else ""
         stream_failed = False
         try:
             messages = conversation.agent_messages()
@@ -98,12 +91,12 @@ def render_chat(conversation: ChatConversation | None = None) -> None:
                 {
                     "messages": messages,
                     "current_scene": start_scene.markdown if start_scene is not None else "",
-                    "current_scene_id": start_scene.id if start_scene is not None else "",
+                    "current_scene_id": run_scene_id,
                 },
                 stream_mode=["messages", "updates"],
             ):
                 if stream_name == "updates":
-                    _write_scene_updates_from_payload(payload, run_scene)
+                    run_scene_id = _scene_id_from_payload(payload, run_scene_id)
                     continue
                 if stream_name != "messages":
                     continue
@@ -112,29 +105,12 @@ def render_chat(conversation: ChatConversation | None = None) -> None:
                 content = _token_text(token)
                 if not content:
                     continue
-                events = parser.feed(content)
-                if events.canvas_text:
-                    # Optimistic in-memory append so the editor streams live;
-                    # the authoritative text (and disk save) comes through the
-                    # updates stream once the model turn completes.
-                    resolved = resolve_scene(run_scene["id"])
-                    if resolved is not None:
-                        resolved.markdown += events.canvas_text
                 assistant_text = _append_streamed_chat_text(
                     assistant_text,
-                    events.chat_text,
+                    content,
                     assistant_markdown,
                 )
 
-            flush_events = parser.flush()
-            if _apply_canvas_flush_events(flush_events, run_scene):
-                pass
-            else:
-                assistant_text = _append_streamed_chat_text(
-                    assistant_text,
-                    flush_events.chat_text,
-                    assistant_markdown,
-                )
         except Exception as exc:
             stream_failed = True
             error_text = f"Chat agent error: {exc}"
@@ -142,28 +118,21 @@ def render_chat(conversation: ChatConversation | None = None) -> None:
             _safe_ui_update(lambda: ui.notify(error_text, type="negative"))
         finally:
             _safe_ui_update(spinner.delete)
-            # Only persist genuine assistant output; never store error messages
-            # as assistant turns, since they would poison subsequent model context.
             if assistant_text and not stream_failed:
                 conversation.add_assistant_message(assistant_text)
             _safe_ui_update(message_input.enable)
             _safe_ui_update(send_button.enable)
             is_streaming = False
 
-        if run_scene["id"] and (start_scene is None or run_scene["id"] != start_scene.id):
-            set_current_scene_id(run_scene["id"])
-            _safe_ui_update(lambda: ui.navigate.to(f"/workspace/scenes/{run_scene['id']}"))
+        if run_scene_id and (start_scene is None or run_scene_id != start_scene.id):
+            set_current_scene_id(run_scene_id)
+            _safe_ui_update(lambda: ui.navigate.to(f"/workspace/scenes/{run_scene_id}"))
 
     send_button.on_click(send_message)
 
 
 def _safe_ui_update(action: Callable[[], None]) -> None:
-    """Apply a UI update that may race page teardown.
-
-    The chat stream outlives its page when the user navigates away mid-run;
-    NiceGUI raises RuntimeError when touching elements whose parent slot was
-    deleted, which must not abort message persistence or stream cleanup.
-    """
+    """Apply a UI update that may race page teardown."""
 
     try:
         action()
@@ -195,11 +164,6 @@ def _message_classes(role: str) -> str:
 
 
 def _token_text(token: BaseMessageChunk | Any) -> str:
-    # stream_mode="messages" emits every message added to the graph's
-    # `messages` channel, including the SystemMessage our middleware writes
-    # in `before_model`. Only LLM-generated `AIMessageChunk`s should reach
-    # the assistant markdown; everything else (system/remove/tool messages)
-    # is graph plumbing, not assistant output.
     if not isinstance(token, AIMessageChunk):
         return ""
     content = getattr(token, "content", "")
@@ -214,9 +178,6 @@ def _append_streamed_chat_text(
     if not content:
         return assistant_text
     if not assistant_text:
-        # Models frequently start a stream with a stray leading space. NiceGUI's
-        # markdown auto-dedent would then chew the first character off every
-        # subsequent line during live rendering, so trim it before storing.
         content = content.lstrip()
         if not content:
             return assistant_text
@@ -226,41 +187,23 @@ def _append_streamed_chat_text(
     return assistant_text
 
 
-def _apply_canvas_flush_events(
-    events: ParseEvents,
-    run_scene: dict[str, str],
-    scene_setter: Callable[[str, str], None] = set_scene_text,
-) -> bool:
-    """Roll back an unterminated canvas block to the last authoritative text."""
-
-    if not events.unterminated_canvas:
-        return False
-
-    scene_setter(run_scene["id"], run_scene["authoritative_text"])
-    return True
-
-
-def _write_scene_updates_from_payload(
+def _scene_id_from_payload(
     payload: Any,
-    run_scene: dict[str, str],
+    current_id: str,
     scene_setter: Callable[[str, str], None] = set_scene_text,
-) -> None:
-    """Write graph-state scene updates through to the world.
-
-    Scene-switching tools emit ``current_scene_id`` before/with the new scene
-    text, so the id is applied first and the text targets the new scene.
-    """
+) -> str:
+    """Return the scene id from graph updates, persisting scene text when present."""
 
     if not isinstance(payload, dict):
-        return
+        return current_id
 
     for node_updates in payload.values():
         if not isinstance(node_updates, dict):
             continue
         new_id = node_updates.get("current_scene_id")
         if isinstance(new_id, str) and new_id:
-            run_scene["id"] = new_id
+            current_id = new_id
         new_scene = node_updates.get("current_scene")
         if isinstance(new_scene, str):
-            run_scene["authoritative_text"] = new_scene
-            scene_setter(run_scene["id"], new_scene)
+            scene_setter(current_id, new_scene)
+    return current_id

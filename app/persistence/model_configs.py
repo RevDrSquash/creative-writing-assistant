@@ -16,12 +16,11 @@ from app.models.config import (
     DEFAULT_MODEL_CONFIG_MAP,
     DEFAULT_MODEL_CONFIGS,
     SCENE_DRAFT_NODE_ID,
-    SCENE_FORMALIZE_NODE_ID,
     SCENE_OUTLINE_NODE_ID,
     SCENE_OUTLINE_REVIEW_NODE_ID,
     SCENE_OUTLINE_REVISE_NODE_ID,
     SCENE_STANCES_NODE_ID,
-    SCENE_TITLE_SUMMARY_NODE_ID,
+    SCENE_SUMMARY_NODE_ID,
     STANDARD_CONFIG_ID,
     ModelConfig,
     get_graph_node,
@@ -40,13 +39,12 @@ def _default_configs() -> list[ModelConfig]:
 def _default_selections() -> dict[str, str]:
     return {
         CHAT_NODE_ID: STANDARD_CONFIG_ID,
-        SCENE_FORMALIZE_NODE_ID: STANDARD_CONFIG_ID,
         SCENE_STANCES_NODE_ID: STANDARD_CONFIG_ID,
         SCENE_OUTLINE_NODE_ID: STANDARD_CONFIG_ID,
         SCENE_OUTLINE_REVIEW_NODE_ID: "small",
         SCENE_OUTLINE_REVISE_NODE_ID: STANDARD_CONFIG_ID,
         SCENE_DRAFT_NODE_ID: "large",
-        SCENE_TITLE_SUMMARY_NODE_ID: "small",
+        SCENE_SUMMARY_NODE_ID: "small",
     }
 
 

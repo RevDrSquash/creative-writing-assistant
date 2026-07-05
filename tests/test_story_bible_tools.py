@@ -20,7 +20,6 @@ from app.tools.story_bible import (
     read_world_fact,
     read_world_state,
     remove_event_relation,
-    update_character_stance,
     update_event,
     update_narrative_style,
     upsert_character,
@@ -235,20 +234,6 @@ def test_read_character_includes_identity_baseline_and_derived_state(
     assert "## Stance" not in detail
 
 
-def test_update_character_stance_changes_only_provided_fields(world_with_scene: World) -> None:
-    upsert_character.func(name="Mira")
-    character = world_with_scene.story_bible.characters[0]
-    scene = world_with_scene.scenes[0]
-    scene.blueprint.stances.append(SceneCharacterStance(character_id=character.id, mood=["Calm"]))
-    state = {"current_scene_id": scene.id}
-
-    update_character_stance.func(character.id, state, intent="Win the argument")
-
-    stance = scene.blueprint.stances[0]
-    assert stance.mood == ["Calm"]
-    assert stance.intent == "Win the argument"
-
-
 def test_read_scene_blueprint_includes_premise_outline_and_stances(
     world_with_scene: World,
 ) -> None:
@@ -256,8 +241,8 @@ def test_read_scene_blueprint_includes_premise_outline_and_stances(
     character = world_with_scene.story_bible.characters[0]
     scene = world_with_scene.scenes[0]
     scene.blueprint.premise = "A tense negotiation"
-    scene.blueprint.outline = ["Mira arrives", "Terms are refused"]
-    scene.blueprint.stances.append(
+    scene.generated.outline = ["Mira arrives", "Terms are refused"]
+    scene.generated.stances.append(
         SceneCharacterStance(
             character_id=character.id,
             mood=["Wary"],
@@ -272,6 +257,7 @@ def test_read_scene_blueprint_includes_premise_outline_and_stances(
     assert "Mira arrives" in detail
     assert "Wary" in detail
     assert "Secure passage" in detail
+    assert "Generated" in detail
 
 
 def test_delete_character_keeps_events(isolated_world: World) -> None:

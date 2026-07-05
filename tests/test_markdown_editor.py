@@ -89,7 +89,7 @@ def test_scene_blueprint_expansions_collapsed_by_default(isolated_world) -> None
     elements = _render_new_elements(lambda: render_scene_blueprint_form(scene, edit_state))
     expansions = [element for element in elements if isinstance(element, Expansion)]
     titles = {expansion.text for expansion in expansions}
-    assert titles == {"Blueprint", "Linked Events", "Outline", "Character Stances"}
+    assert titles == {"Blueprint", "Generated"}
     assert all(expansion.value is False for expansion in expansions)
 
 

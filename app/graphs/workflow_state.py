@@ -18,11 +18,12 @@ class SceneWorkflowState(TypedDict, total=False):
     related_event_ids: list[str]
     constraints: str
     scene_id: str
+    arc: list[str]
+    notes: str
     stances: list[SceneCharacterStance]
     outline: list[str]
     critique: str
     revision_count: int
     prose: str
-    title: str
     summary: str
     max_revisions: int

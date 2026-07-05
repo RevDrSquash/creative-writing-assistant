@@ -89,12 +89,11 @@ start of the timeline; events add, update, or remove entries as the story progre
 - **Baseline State**: a list of Intimacies as they stand at the start of the timeline.
 
 A character no longer carries a stance. Stance is ephemeral, per-scene posture and is stored on
-the scene as a sparse per-character list (`SceneCharacterStance`: `character_id`, `mood`,
-`intent`, `tactics`, `stakes`), where `mood` is a list of short statements and the rest are single
-strings. It is freely editable, is not event-sourced, and is excluded from replay. Authoring
-stance is an agent workflow concern (the scene-writing workflow, Phase 6b); see the Scene model in
-[forms_and_data_models.md](forms_and_data_models.md) and
-[architecture_agent_workflows.md](architecture_agent_workflows.md).
+``Scene.generated.stances`` as a sparse per-character list (`SceneCharacterStance`: `character_id`,
+`mood`, `intent`, `tactics`, `stakes`), where `mood` is a list of short statements and the rest are
+single strings. Generated stances are workflow output (see
+[architecture_agent_workflows.md](architecture_agent_workflows.md)); they are freely editable in the
+UI but regenerate overwrites them. Stance is not event-sourced and is excluded from replay.
 
 A scene links to the events it depicts through its blueprint: `event_ids` (the events the scene
 enacts; a scene represents one or more plot events) and `related_event_ids` (context-only events

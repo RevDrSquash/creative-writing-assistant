@@ -17,6 +17,7 @@ import app.graphs.chat_agent as chat_agent_module
 from app.graphs.chat_agent import build_chat_agent
 from app.graphs.context import DEFAULT_SYSTEM_PROMPT, ContextAssembler
 from app.models.config import CHAT_NODE_ID, ModelConfig
+from app.world.store import get_world
 
 
 class ToolAwareFakeChatModel(GenericFakeChatModel):
@@ -124,10 +125,23 @@ def test_get_chat_agent_uses_resolved_config_and_rebuilds_on_prefix_change(
     assert captured_configs[1].system_prompt_prefix == "Second prefix."
 
 
-def test_chat_agent_with_create_scene_tool_switches_open_scene(world_with_scene) -> None:
+def test_chat_agent_with_propose_scene_tool_switches_open_scene(world_with_scene) -> None:
+    from app.tools.story_bible import add_event, upsert_character
+
+    upsert_character.invoke({"name": "Hero"})
+    character_id = world_with_scene.story_bible.characters[-1].id
+    add_event.invoke({"title": "Arrival"})
+    event_id = world_with_scene.story_bible.timeline[-1].id
     tool_call = {
-        "name": "create_scene",
-        "args": {"title": "Chapter 2", "summary": "A fresh start"},
+        "name": "propose_scene",
+        "args": {
+            "title": "Chapter Two",
+            "premise": "Hero arrives.",
+            "purpose": "Introduce hero.",
+            "pov": "Third person",
+            "character_ids": [character_id],
+            "event_ids": [event_id],
+        },
         "id": "tool-call-1",
         "type": "tool_call",
     }
@@ -135,7 +149,7 @@ def test_chat_agent_with_create_scene_tool_switches_open_scene(world_with_scene)
         messages=iter(
             [
                 AIMessage(content="", tool_calls=[tool_call]),
-                AIMessage(content="Created the new scene."),
+                AIMessage(content="Proposed the new scene."),
             ]
         )
     )
@@ -153,11 +167,50 @@ def test_chat_agent_with_create_scene_tool_switches_open_scene(world_with_scene)
         }
     )
 
-    new_scene = world_with_scene.scenes[1]
-    assert new_scene.title == "Chapter 2"
+    new_scene = world_with_scene.scenes[-1]
+    assert new_scene.title == "Chapter Two"
+    assert new_scene.blueprint.premise == "Hero arrives."
     assert result["current_scene_id"] == new_scene.id
-    assert result["current_scene"] == ""
-    assert result["messages"][-1].content == "Created the new scene."
+    assert result["current_scene"] == new_scene.markdown
+    assert result["messages"][-1].content == "Proposed the new scene."
+
+
+def test_chat_agent_with_update_scene_blueprint_tool(world_with_scene) -> None:
+    from app.tools.story_bible import add_event
+
+    add_event.invoke({"title": "Arrival"})
+    event_id = get_world().story_bible.timeline[-1].id
+    scene = world_with_scene.scenes[0]
+    scene.blueprint.event_ids = [event_id]
+    tool_call = {
+        "name": "update_scene_blueprint",
+        "args": {"premise": "Revised premise."},
+        "id": "tool-call-1",
+        "type": "tool_call",
+    }
+    fake_model = ToolAwareFakeChatModel(
+        messages=iter(
+            [
+                AIMessage(content="", tool_calls=[tool_call]),
+                AIMessage(content="Updated the blueprint."),
+            ]
+        )
+    )
+    agent = build_chat_agent(
+        model=fake_model,
+        assembler=ContextAssembler(system_prompt="System instructions"),
+    )
+
+    result = agent.invoke(
+        {
+            "messages": [HumanMessage(content="Tighten the premise.")],
+            "current_scene": scene.markdown,
+            "current_scene_id": scene.id,
+        }
+    )
+
+    assert scene.blueprint.premise == "Revised premise."
+    assert result["messages"][-1].content == "Updated the blueprint."
 
 
 def test_chat_agent_surfaces_tool_failure_and_continues(isolated_world) -> None:
@@ -284,38 +337,3 @@ async def test_chat_agent_applies_batched_tool_calls_in_emission_order_async(
         await agent.ainvoke({"messages": [HumanMessage(content="Add the events.")]})
 
         assert [event.title for event in isolated_world.story_bible.timeline] == titles
-
-
-def test_chat_agent_with_replace_scene_text_tool_updates_state() -> None:
-    tool_call = {
-        "name": "replace_scene_text",
-        "args": {
-            "target": "The old door creaked.",
-            "replacement": "The old door opened silently.",
-        },
-        "id": "tool-call-1",
-        "type": "tool_call",
-    }
-    fake_model = ToolAwareFakeChatModel(
-        messages=iter(
-            [
-                AIMessage(content="", tool_calls=[tool_call]),
-                AIMessage(content="I revised the sentence."),
-            ]
-        )
-    )
-    agent = build_chat_agent(
-        model=fake_model,
-        assembler=ContextAssembler(system_prompt="System instructions"),
-    )
-
-    result = agent.invoke(
-        {
-            "messages": [HumanMessage(content="Please revise the door sentence.")],
-            "current_scene": "The old door creaked.",
-            "current_scene_id": "scene-1",
-        }
-    )
-
-    assert result["current_scene"] == "The old door opened silently."
-    assert result["messages"][-1].content == "I revised the sentence."

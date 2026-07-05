@@ -7,7 +7,6 @@ from langchain.agents.middleware import ToolRetryMiddleware
 from langchain_core.language_models import BaseChatModel
 from langgraph.graph.state import CompiledStateGraph
 
-from app.graphs.canvas_middleware import CanvasAppendMiddleware
 from app.graphs.context import ContextAssembler
 from app.graphs.serialize_tools_middleware import SerializeToolCallsMiddleware
 from app.graphs.state import WritingAgentState
@@ -35,7 +34,6 @@ def build_chat_agent(
         state_schema=WritingAgentState,
         system_prompt=assembler.system_prompt,
         middleware=[
-            CanvasAppendMiddleware(),
             SerializeToolCallsMiddleware(),
             _tool_failure_middleware(),
         ],

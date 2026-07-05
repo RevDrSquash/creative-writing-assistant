@@ -156,6 +156,32 @@ def test_store_load_migrates_v6_to_v7_adds_blueprint_event_links(tmp_path: Path)
     assert world.scenes[0].blueprint.related_event_ids == []
 
 
+def test_store_load_migrates_v7_to_v8_moves_stances_and_outline(tmp_path: Path) -> None:
+    from app.world.models import SceneCharacterStance, blueprint_fingerprint
+
+    path = tmp_path / "world.json"
+    payload = default_world().model_dump(mode="json")
+    scene_payload = Scene(title="Chapter", markdown="# Chapter\n\nProse here.").model_dump(
+        mode="json"
+    )
+    scene_payload["blueprint"]["stances"] = [
+        SceneCharacterStance(character_id="char_a", mood=["Wary"]).model_dump(mode="json")
+    ]
+    scene_payload["blueprint"]["outline"] = ["Beat one"]
+    payload["scenes"] = [scene_payload]
+    payload["schema_version"] = 7
+    path.write_text(json.dumps(payload), encoding="utf-8")
+
+    world = JsonFileWorldStore(path).load()
+
+    assert world.schema_version == SCHEMA_VERSION
+    scene = world.scenes[0]
+    assert len(scene.generated.stances) == 1
+    assert scene.generated.outline == ["Beat one"]
+    assert scene.generated.generated_at is not None
+    assert scene.generated.blueprint_fingerprint == blueprint_fingerprint(scene.blueprint)
+
+
 def test_get_world_singleton_loads_once_and_save_world_persists(
     isolated_world: World,
     isolated_data_dir: Path,

@@ -2,21 +2,59 @@
 
 from __future__ import annotations
 
-from app.persistence.world import DEFAULT_SCENE_MARKDOWN, DEFAULT_SCENE_TITLE
-from app.world.models import Scene, SceneCharacterStance, unique_slug
+from app.world.models import (
+    Scene,
+    SceneCharacterStance,
+    SceneGenerated,
+    blueprint_fingerprint,
+    unique_slug,
+    utc_now,
+)
 from app.world.store import get_world, world_transaction
+
+DEFAULT_SCENE_TITLE = "New Scene"
+DEFAULT_SCENE_MARKDOWN = "# New Scene\n\nStart writing..."
 
 __all__ = [
     "DEFAULT_SCENE_MARKDOWN",
     "DEFAULT_SCENE_TITLE",
+    "blueprint_fingerprint",
     "create_scene",
     "delete_scene",
     "get_scene_text",
     "resolve_scene",
+    "scene_generation_status",
+    "scene_is_generatable",
+    "scene_is_stale",
     "set_scene_metadata",
     "set_scene_text",
     "update_scene_blueprint",
+    "update_scene_generated",
 ]
+
+
+def scene_is_stale(scene: Scene) -> bool:
+    """Return True when generated content exists but the blueprint has changed since."""
+
+    if scene.generated.generated_at is None:
+        return False
+    return scene.generated.blueprint_fingerprint != blueprint_fingerprint(scene.blueprint)
+
+
+def scene_is_generatable(scene: Scene) -> bool:
+    """Return True when the blueprint has enough input to run generation."""
+
+    return bool(scene.blueprint.premise.strip()) and bool(scene.blueprint.event_ids)
+
+
+def scene_generation_status(scene: Scene) -> str:
+    """Return a human-readable generation status for tools and UI."""
+
+    if scene.generated.generated_at is None:
+        return "never generated"
+    if scene_is_stale(scene):
+        return "stale"
+    return "up to date"
 
 
 def resolve_scene(scene_id: str | None = None) -> Scene | None:
@@ -55,12 +93,15 @@ def update_scene_blueprint(
     *,
     premise: str | None = None,
     purpose: str | None = None,
-    stances: list[SceneCharacterStance] | None = None,
-    outline: list[str] | None = None,
+    pov: str | None = None,
+    arc: list[str] | None = None,
+    character_ids: list[str] | None = None,
     event_ids: list[str] | None = None,
     related_event_ids: list[str] | None = None,
+    constraints: str | None = None,
+    notes: str | None = None,
 ) -> None:
-    """Partially update a scene blueprint and write the world through to disk."""
+    """Partially update blueprint inputs and write the world through to disk."""
 
     with world_transaction():
         scene = resolve_scene(scene_id)
@@ -72,14 +113,51 @@ def update_scene_blueprint(
             blueprint.premise = premise
         if purpose is not None:
             blueprint.purpose = purpose
-        if stances is not None:
-            blueprint.stances = stances
-        if outline is not None:
-            blueprint.outline = outline
+        if pov is not None:
+            blueprint.pov = pov
+        if arc is not None:
+            blueprint.arc = arc
+        if character_ids is not None:
+            blueprint.character_ids = character_ids
         if event_ids is not None:
             blueprint.event_ids = event_ids
         if related_event_ids is not None:
             blueprint.related_event_ids = related_event_ids
+        if constraints is not None:
+            blueprint.constraints = constraints
+        if notes is not None:
+            blueprint.notes = notes
+
+
+def update_scene_generated(
+    scene_id: str,
+    *,
+    stances: list[SceneCharacterStance] | None = None,
+    outline: list[str] | None = None,
+    blueprint_fingerprint_value: str | None = None,
+    generated_at: bool | None = None,
+    clear: bool = False,
+) -> None:
+    """Partially update generated artifacts or reset them before a new run."""
+
+    with world_transaction():
+        scene = resolve_scene(scene_id)
+        if scene is None:
+            msg = f"Scene not found: {scene_id}"
+            raise ValueError(msg)
+        if clear:
+            scene.generated = SceneGenerated()
+            scene.markdown = ""
+            return
+        generated = scene.generated
+        if stances is not None:
+            generated.stances = stances
+        if outline is not None:
+            generated.outline = outline
+        if blueprint_fingerprint_value is not None:
+            generated.blueprint_fingerprint = blueprint_fingerprint_value
+        if generated_at:
+            generated.generated_at = utc_now()
 
 
 def set_scene_metadata(

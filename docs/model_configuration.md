@@ -35,15 +35,14 @@ The first registry entry is:
 
 * `chat` - "Chat Agent", defaulting to `standard`.
 
-Scene-writing workflow nodes (`draft_scene`):
+Scene-writing workflow nodes (`generate_scene`):
 
-* `scene_formalize` - "Scene: Formalize Details", defaulting to `standard`.
 * `scene_stances` - "Scene: Author Stances", defaulting to `standard`.
 * `scene_outline` - "Scene: Outline", defaulting to `standard`.
 * `scene_outline_review` - "Scene: Review Outline", defaulting to `small`.
 * `scene_outline_revise` - "Scene: Revise Outline", defaulting to `standard`.
 * `scene_draft` - "Scene: Draft Prose", defaulting to `large`.
-* `scene_title_summary` - "Scene: Title & Summary", defaulting to `small`.
+* `scene_summary` - "Scene: Summary", defaulting to `small`.
 
 Future graph nodes should be added to the registry with their own defaults before the UI exposes selectors for them.
 

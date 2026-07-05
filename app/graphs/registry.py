@@ -12,7 +12,7 @@ from app.graphs.scene_workflow import build_scene_writer_graph
 WorkflowBuilder = Callable[..., CompiledStateGraph]
 
 WORKFLOWS: dict[str, WorkflowBuilder] = {
-    "draft_scene": build_scene_writer_graph,
+    "generate_scene": build_scene_writer_graph,
 }
 
 
