@@ -118,4 +118,9 @@ Originally Phase 8 of the phased plan.
 * Tool-Call Display: Render tool calls clearly in the chat history.
 * Tool Confirmations: Add tool confirmations to the chat window, including diffs where agent tools
   edit scene Markdown or Story Bible data.
-* Stop/Cancel: Add controls to stop or cancel in-flight agent and sub-agent runs.
+* Stop/Cancel: Add controls to stop or cancel in-flight agent and sub-agent runs. `JobManager`
+  records a `cancel_requested` flag on each job; wiring cancellation into the scene workflow
+  (between nodes) and chat stream (between chunks) is deferred — see
+  [architecture_async_jobs.md](architecture_async_jobs.md).
+* Jobs page: A top-level page listing all jobs with status and cancel becomes trivial once
+  `JobManager` exists; the header running-jobs indicator covers visibility for now.

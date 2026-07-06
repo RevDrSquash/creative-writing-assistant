@@ -5,8 +5,9 @@ from __future__ import annotations
 import re
 from collections.abc import Iterable
 
-from nicegui import events, ui
+from nicegui import app, events, ui
 
+from app.graphs.jobs import get_job_manager
 from app.persistence.world_zip import export_world_zip, import_world_zip
 from app.ui.config import APP_TITLE
 from app.ui.navigation import HEADER_NAV_ITEMS, NavigationItem
@@ -22,6 +23,8 @@ def find_item(
 
 
 def render_header(active_path: str) -> None:
+    manager = get_job_manager()
+
     with ui.header().classes("items-center justify-between"):
         with ui.row().classes("items-center gap-2"):
             ui.label(APP_TITLE).classes("text-lg font-semibold mr-4")
@@ -32,6 +35,17 @@ def render_header(active_path: str) -> None:
                 else:
                     button.props("flat color=white")
 
+            @ui.refreshable
+            def running_jobs_indicator() -> None:
+                count = len(manager.running_jobs())
+                if count:
+                    with ui.row().classes("items-center gap-1 ml-2"):
+                        ui.spinner(size="sm").mark("header-jobs-spinner")
+                        ui.label(str(count)).classes("text-sm").mark("header-jobs-count")
+
+            running_jobs_indicator()
+            ui.timer(1.0, running_jobs_indicator.refresh)
+
         overflow_button = ui.button(icon="more_vert").props("flat round color=white")
         overflow_button.mark("header-overflow-menu")
         with overflow_button:
@@ -40,6 +54,34 @@ def render_header(active_path: str) -> None:
                 ui.menu_item("Export World", on_click=_export_world)
                 clear_item = ui.menu_item("Clear State...", on_click=_open_clear_dialog)
                 clear_item.mark("clear-state-menu-item")
+
+    _render_job_completion_toasts()
+
+
+def _render_job_completion_toasts() -> None:
+    manager = get_job_manager()
+    notified: list[str] = app.storage.user.setdefault("notified_job_ids", [])
+
+    def poll_finished_jobs() -> None:
+        for job in manager.finished_jobs():
+            if job.id in notified:
+                continue
+            notified.append(job.id)
+            if job.status == "finished":
+                if job.kind == "scene_generation":
+                    ui.notify(f"{job.label} generated", type="positive")
+                elif job.kind == "chat_turn":
+                    ui.notify("Agent reply ready", type="positive")
+            elif job.status == "failed":
+                if job.kind == "scene_generation":
+                    ui.notify(
+                        f"Scene generation failed: {job.error or 'unknown error'}",
+                        type="negative",
+                    )
+                elif job.kind == "chat_turn":
+                    ui.notify(job.error or "Chat agent error", type="negative")
+
+    ui.timer(1.0, poll_finished_jobs)
 
 
 def _export_world() -> None:

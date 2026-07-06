@@ -10,7 +10,7 @@ from langchain_core.messages import AIMessage, ToolMessage
 from langchain_core.tools import ToolException
 from langgraph.types import Command
 
-from app.graphs.generation_manager import GenerationManager
+from app.graphs.jobs import JobManager
 from app.graphs.scene_generation import run_scene_generation
 from app.graphs.scene_workflow import (
     OutlineBeats,
@@ -246,7 +246,7 @@ def test_scene_is_stale_when_blueprint_changes_after_generation(world_with_scene
 
 
 def test_generation_manager_rejects_concurrent_start(monkeypatch: pytest.MonkeyPatch) -> None:
-    manager = GenerationManager()
+    manager = JobManager()
     started: list[str] = []
 
     def slow_run(scene_id: str, *, max_revisions: int = 1) -> None:
@@ -255,21 +255,21 @@ def test_generation_manager_rejects_concurrent_start(monkeypatch: pytest.MonkeyP
 
         time.sleep(0.05)
 
-    monkeypatch.setattr("app.graphs.generation_manager.run_scene_generation", slow_run)
-    manager.start_generation("scene_a")
+    monkeypatch.setattr("app.graphs.scene_generation.run_scene_generation", slow_run)
+    manager.start_scene_generation("scene_a")
     with pytest.raises(RuntimeError, match="already running"):
-        manager.start_generation("scene_a")
+        manager.start_scene_generation("scene_a")
 
 
 def test_generation_manager_captures_errors(monkeypatch: pytest.MonkeyPatch) -> None:
-    manager = GenerationManager()
+    manager = JobManager()
 
     def failing_run(scene_id: str, *, max_revisions: int = 1) -> None:
         msg = "workflow exploded"
         raise RuntimeError(msg)
 
-    monkeypatch.setattr("app.graphs.generation_manager.run_scene_generation", failing_run)
-    manager.start_generation("scene_b")
+    monkeypatch.setattr("app.graphs.scene_generation.run_scene_generation", failing_run)
+    manager.start_scene_generation("scene_b")
     import time
 
     deadline = time.time() + 2

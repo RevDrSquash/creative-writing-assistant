@@ -56,6 +56,9 @@ The app is a local-first Python writing workspace built around one in-memory `Wo
 
 - **LangGraph Orchestration**
   - All AI behavior runs through LangGraph.
+  - Background scene generation and chat turns are tracked by `JobManager`
+    (`app/graphs/jobs.py`) with resource claims; see
+    [architecture_async_jobs.md](architecture_async_jobs.md).
   - The default workflow is a single ReAct loop for free-form chat.
   - Named multi-step workflows compose several nodes for tasks like outlining, critiquing,
     revising, and drafting. Each is an enforced LangGraph workflow graph (graph edges fix the
@@ -100,6 +103,7 @@ The app is a local-first Python writing workspace built around one in-memory `Wo
 ## Related Docs
 
 - Multi-step agent workflows (scene writing, plus the planned intimacy review): see [architecture_agent_workflows.md](architecture_agent_workflows.md).
+- Async jobs, resource claims, and background execution: see [architecture_async_jobs.md](architecture_async_jobs.md).
 - LLM call logging and the Debug page: see [architecture_llm_debug_logging.md](architecture_llm_debug_logging.md).
 - Model configuration and per-node model selection: see [model_configuration.md](model_configuration.md).
 - Known / open issues and architectural debt: see [known_issues.md](known_issues.md).

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import time
 from pathlib import Path
 from typing import Protocol
 
@@ -65,7 +66,15 @@ class JsonFileWorldStore:
             json.dumps(world.model_dump(mode="json"), indent=2) + "\n",
             encoding="utf-8",
         )
-        os.replace(tmp_path, self.path)
+        max_attempts = 5
+        for attempt in range(max_attempts):
+            try:
+                os.replace(tmp_path, self.path)
+                return
+            except PermissionError:
+                if attempt >= max_attempts - 1:
+                    raise
+                time.sleep(0.05 * (2**attempt))
 
 
 def migrate_world_payload(data: dict) -> dict:

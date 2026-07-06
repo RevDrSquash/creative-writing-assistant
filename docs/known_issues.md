@@ -44,11 +44,13 @@ fix so the context is not lost between phases.
   next successful save. Agent tools do not have this problem: they mutate inside
   `world_transaction()`, which rolls the mutation back when the save fails.
 - **Why it usually doesn't bite:** The save lock in `app/world/store.py` eliminates
-  intra-process save races (the only observed failure cause); external file locks are rare and
-  the next keystroke resaves the full world anyway.
+  intra-process save races; `JsonFileWorldStore.save()` now retries `os.replace` on transient
+  external locks (Windows antivirus/indexers). UI handlers notify on final failure via
+  `save_world_ui()`. The next keystroke still resaves the full world when the lock clears.
 - **Possible fix:** Route UI edits through id-based accessors instead of direct object bindings
   so they can use `world_transaction()` too, or add a save-failure notification that prompts a
-  manual resave.
+  manual resave. (User notification on failure is implemented; full transactional UI edits remain
+  open.)
 
 ## 4. Unterminated-canvas rollback can miss appends after a mid-run scene switch
 
@@ -131,7 +133,21 @@ fix so the context is not lost between phases.
   (tracked in `docs/future_work.md`), which would let the workflow pull continuity-group neighbors
   and list-ordered predecessors by relationship rather than always the previous scene.
 
-## 9. Scene blueprint event links can go stale
+## 9. Save retry blocks the NiceGUI event loop on transient file locks
+
+- **Severity:** Low (latency, not correctness)
+- **Location:** `app/persistence/world.py` — `JsonFileWorldStore.save()` retry loop
+- **Introduced:** Phase 5 (transient Windows lock retries)
+- **Symptom:** When `os.replace` fails with a transient external file lock, the save helper
+  retries with `time.sleep` (up to ~0.75s total). `save()` is called from sync UI handlers
+  and the async chat task, both on the NiceGUI event loop, so all sessions can freeze for the
+  duration of the retry window.
+- **Why it usually doesn't bite:** Retries only run when an external process briefly holds the
+  lock (Windows antivirus/indexers); the happy path is a single non-blocking replace.
+- **Possible fix:** Offload saves to a worker thread, or make the retry async-aware at the UI
+  boundary so the event loop is not blocked while waiting.
+
+## 10. Scene blueprint event links can go stale
 
 - **Severity:** Low (advisory scaffolding, not source-of-truth data)
 - **Location:** `app/world/models.py` (`SceneBlueprint.event_ids`,

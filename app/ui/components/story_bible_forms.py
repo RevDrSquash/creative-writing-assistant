@@ -11,6 +11,7 @@ from collections.abc import Callable
 
 from nicegui import ui
 
+from app.ui.save_helpers import save_world_ui
 from app.world.models import (
     AddIntimacy,
     AddWorldStateEntry,
@@ -39,7 +40,7 @@ from app.world.relations import (
     relation_diagnostics,
 )
 from app.world.replay import derive_state_at, effect_diagnostics
-from app.world.store import get_world, save_world
+from app.world.store import get_world
 
 _STRENGTH_OPTIONS = {"minor": "Minor", "major": "Major", "defining": "Defining"}
 _WORLD_STATE_KIND_OPTIONS = {
@@ -64,7 +65,7 @@ _RELATION_DIRECTION_OPTIONS = {
 
 
 def _save_on_change(element: ui.element) -> None:
-    element.on_value_change(lambda _: save_world())
+    element.on_value_change(lambda _: save_world_ui())
 
 
 def _bound_input(target: object, field: str, *, placeholder: str = "") -> ui.input:
@@ -114,7 +115,7 @@ def _render_tags_input(target: object, field: str = "tags") -> None:
     def apply(event) -> None:
         raw = event.value or ""
         setattr(target, field, [tag.strip() for tag in raw.split(",") if tag.strip()])
-        save_world()
+        save_world_ui()
 
     tags_input.on_value_change(apply)
 
@@ -184,7 +185,7 @@ def render_world_form() -> None:
         fact = WorldFact()
         fact.id = unique_slug("fact_", "", {item.id for item in bible.world_facts})
         bible.world_facts.append(fact)
-        save_world()
+        save_world_ui()
         facts_section.refresh()
 
     ui.button("Add world fact", icon="add", on_click=add_fact).props("flat")
@@ -214,7 +215,7 @@ def render_world_form() -> None:
             {item.id for item in bible.baseline_world_state},
         )
         bible.baseline_world_state.append(entry)
-        save_world()
+        save_world_ui()
         baseline_section.refresh()
 
     ui.button("Add world state entry", icon="add", on_click=add_entry).props("flat")
@@ -233,7 +234,7 @@ def _render_world_fact_card(fact: WorldFact, refresh: Callable[[], None]) -> Non
             def delete_fact(fact: WorldFact = fact) -> None:
                 bible = get_world().story_bible
                 bible.world_facts = [item for item in bible.world_facts if item.id != fact.id]
-                save_world()
+                save_world_ui()
                 refresh()
 
             _delete_button(delete_fact, "Delete fact")
@@ -255,7 +256,7 @@ def _render_world_state_entry_row(
 
         def delete_entry(entry: WorldStateEntry = entry) -> None:
             entries[:] = [item for item in entries if item.id != entry.id]
-            save_world()
+            save_world_ui()
             refresh()
 
         _delete_button(delete_entry, "Remove entry")
@@ -347,7 +348,7 @@ def _render_character_list() -> None:
         character = Character()
         character.id = unique_slug("char_", "", {item.id for item in bible.characters})
         bible.characters.append(character)
-        save_world()
+        save_world_ui()
         ui.navigate.to(f"/workspace/characters/{character.id}")
 
     ui.button("Add character", icon="add", on_click=add_character).props("flat")
@@ -401,7 +402,7 @@ def _render_character_detail(character: Character) -> None:
                 {item.id for item in character.baseline_state.intimacies},
             )
             character.baseline_state.intimacies.append(intimacy)
-            save_world()
+            save_world_ui()
             intimacies_section.refresh()
 
         ui.button("Add intimacy", icon="add", on_click=add_intimacy).props("flat")
@@ -423,7 +424,7 @@ def _render_intimacy_row(
 
         def delete_intimacy(intimacy: Intimacy = intimacy) -> None:
             intimacies[:] = [item for item in intimacies if item.id != intimacy.id]
-            save_world()
+            save_world_ui()
             refresh()
 
         _delete_button(delete_intimacy, "Remove intimacy")
@@ -480,7 +481,7 @@ async def _confirm_delete_character(character: Character) -> None:
 
     bible = get_world().story_bible
     bible.characters = [item for item in bible.characters if item.id != character.id]
-    save_world()
+    save_world_ui()
     ui.navigate.to("/workspace/characters")
 
 
@@ -530,7 +531,7 @@ def _render_timeline_list() -> None:
         event = Event()
         event.id = unique_slug("event_", "", {item.id for item in bible.timeline})
         bible.timeline.insert(index, event)
-        save_world()
+        save_world_ui()
         ui.navigate.to(f"/workspace/events/{event.id}")
 
     @ui.refreshable
@@ -604,7 +605,7 @@ def _render_event_detail(event: Event) -> None:
 
         def add_effect(effect) -> None:
             event.world_state_effects.append(effect)
-            save_world()
+            save_world_ui()
             effects_section.refresh()
 
         with ui.button("Add effect", icon="add").props("flat"):
@@ -639,7 +640,7 @@ def _render_event_detail(event: Event) -> None:
             characters = get_world().story_bible.characters
             signal = Signal(character_id=characters[0].id if characters else "")
             event.signals.append(signal)
-            save_world()
+            save_world_ui()
             signals_section.refresh()
 
         ui.button("Add signal", icon="add", on_click=add_signal).props("flat")
@@ -733,7 +734,7 @@ def _render_event_detail(event: Event) -> None:
                         target_id=target_id,
                     )
                     bible.event_relations.append(relation)
-                    save_world()
+                    save_world_ui()
                     relations_section.refresh()
 
                 ui.button("Add relationship", icon="add", on_click=add_relation).props("flat")
@@ -891,7 +892,7 @@ def _render_event_relation_row(
             bible.event_relations = [
                 item for item in bible.event_relations if item.id != relation_id
             ]
-            save_world()
+            save_world_ui()
             refresh()
 
         _delete_button(delete_relation, "Remove relationship")
@@ -928,7 +929,7 @@ def _render_world_state_effect_row(
             event.world_state_effects = [
                 item for item in event.world_state_effects if item is not effect
             ]
-            save_world()
+            save_world_ui()
             refresh()
 
         _delete_button(delete_effect, "Remove effect")
@@ -956,14 +957,14 @@ def _render_signal_card(
             character_select.bind_value(signal, "character_id")
 
             def on_character_change(_event) -> None:
-                save_world()
+                save_world_ui()
                 refresh_signals()
 
             character_select.on_value_change(on_character_change)
 
             def delete_signal(signal: Signal = signal) -> None:
                 event.signals = [item for item in event.signals if item.id != signal.id]
-                save_world()
+                save_world_ui()
                 refresh_signals()
 
             _delete_button(delete_signal, "Remove signal")
@@ -990,7 +991,7 @@ def _render_signal_card(
 
         def add_effect(effect) -> None:
             signal.effects.append(effect)
-            save_world()
+            save_world_ui()
             effects_section.refresh()
 
         with ui.button("Add state effect", icon="add").props("flat"):
@@ -1042,7 +1043,7 @@ def _render_character_effect_row(
 
         def delete_effect(effect=effect) -> None:
             signal.effects = [item for item in signal.effects if item is not effect]
-            save_world()
+            save_world_ui()
             refresh()
 
         _delete_button(delete_effect, "Remove effect")
@@ -1066,7 +1067,7 @@ async def _confirm_delete_event(event: Event) -> None:
         for item in bible.event_relations
         if item.source_id != event.id and item.target_id != event.id
     ]
-    save_world()
+    save_world_ui()
     ui.navigate.to("/workspace/timeline")
 
 
@@ -1135,7 +1136,7 @@ def _render_string_list_editor(
 
         def delete_item(index: int = index) -> None:
             items.pop(index)
-            save_world()
+            save_world_ui()
             refresh()
 
         with ui.row().classes("w-full items-center no-wrap gap-2"):
@@ -1144,7 +1145,7 @@ def _render_string_list_editor(
 
             def apply_item(event, index: int = index) -> None:
                 items[index] = event.value or ""
-                save_world()
+                save_world_ui()
 
             text.on_value_change(apply_item)
             _delete_button(delete_item, "Remove")
@@ -1205,7 +1206,7 @@ def render_scene_blueprint_form(
 
             def add_arc_beat() -> None:
                 blueprint.arc.append("")
-                save_world()
+                save_world_ui()
                 arc_section.refresh()
 
             ui.button("Add arc beat", icon="add", on_click=add_arc_beat).props("flat")
@@ -1220,7 +1221,7 @@ def render_scene_blueprint_form(
 
             def on_characters_change(event) -> None:
                 blueprint.character_ids = list(event.value or [])
-                save_world()
+                save_world_ui()
 
             character_select.on_value_change(on_characters_change)
 
@@ -1238,7 +1239,7 @@ def render_scene_blueprint_form(
                 blueprint.related_event_ids = [
                     event_id for event_id in blueprint.related_event_ids if event_id not in enacted
                 ]
-                save_world()
+                save_world_ui()
 
             enacted_select.on_value_change(on_enacted_change)
 
@@ -1255,7 +1256,7 @@ def render_scene_blueprint_form(
                 blueprint.related_event_ids = [
                     event_id for event_id in (event.value or []) if event_id not in enacted
                 ]
-                save_world()
+                save_world_ui()
 
             related_select.on_value_change(on_related_change)
 
@@ -1294,7 +1295,7 @@ def render_scene_blueprint_form(
 
             def add_beat() -> None:
                 generated.outline.append("")
-                save_world()
+                save_world_ui()
                 outline_section.refresh()
 
             ui.button("Add beat", icon="add", on_click=add_beat).props("flat")
@@ -1322,7 +1323,7 @@ def render_scene_blueprint_form(
                 characters = bible.characters
                 character_id = characters[0].id if characters else ""
                 generated.stances.append(SceneCharacterStance(character_id=character_id))
-                save_world()
+                save_world_ui()
                 stances_section.refresh()
 
             ui.button("Add stance", icon="add", on_click=add_stance).props("flat")
@@ -1351,7 +1352,7 @@ def _render_scene_stance_card(
 
             def delete_stance(stance: SceneCharacterStance = stance) -> None:
                 stances[:] = [item for item in stances if item is not stance]
-                save_world()
+                save_world_ui()
                 refresh()
 
             _delete_button(delete_stance, "Remove stance")
@@ -1366,7 +1367,7 @@ def _render_scene_stance_card(
 
                 def delete_statement(index: int = index) -> None:
                     stance.mood.pop(index)
-                    save_world()
+                    save_world_ui()
                     mood_section.refresh()
 
                 with ui.row().classes("w-full items-center no-wrap gap-2"):
@@ -1378,7 +1379,7 @@ def _render_scene_stance_card(
 
                     def apply_statement(event, index: int = index) -> None:
                         stance.mood[index] = event.value or ""
-                        save_world()
+                        save_world_ui()
 
                     text.on_value_change(apply_statement)
                     _delete_button(delete_statement, "Remove statement")
@@ -1387,7 +1388,7 @@ def _render_scene_stance_card(
 
         def add_statement() -> None:
             stance.mood.append("")
-            save_world()
+            save_world_ui()
             mood_section.refresh()
 
         ui.button("Add mood statement", icon="add", on_click=add_statement).props("flat")

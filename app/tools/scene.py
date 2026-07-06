@@ -74,6 +74,9 @@ def select_scene(
     if scene is None:
         raise ToolException(f"No scene with id {scene_id}; call list_scenes for valid ids.")
 
+    current_id = state.get("current_scene_id", "")
+    if isinstance(current_id, str) and current_id:
+        _reject_if_scene_claimed(current_id)
     _persist_open_scene_text(state)
     return Command(
         update={
@@ -109,6 +112,8 @@ def update_scene(
     if scene is None:
         raise ToolException(f"No scene with id {target_id}; call list_scenes for valid ids.")
 
+    _reject_if_scene_claimed(target_id)
+
     if title is None and summary is None:
         return "No changes requested (provide title and/or summary)."
 
@@ -138,6 +143,8 @@ def delete_scene(
     scene = world.get_scene(scene_id)
     if scene is None:
         raise ToolException(f"No scene with id {scene_id}; call list_scenes for valid ids.")
+
+    _reject_if_scene_claimed(scene_id)
 
     try:
         world_delete_scene(scene_id)
@@ -172,6 +179,7 @@ def _persist_open_scene_text(state: dict[str, Any]) -> None:
         return
     scene = get_world().get_scene(current_id)
     if scene is not None and scene.markdown != current_text:
+        _reject_if_scene_claimed(current_id)
         set_scene_text(current_id, current_text)
 
 
@@ -316,6 +324,9 @@ def propose_scene(
     resolved_characters = _resolve_scene_character_ids(character_ids)
     enacted_ids, related_ids = _resolve_scene_event_ids(event_ids, related_event_ids or [])
 
+    current_id = state.get("current_scene_id", "")
+    if isinstance(current_id, str) and current_id:
+        _reject_if_scene_claimed(current_id)
     _persist_open_scene_text(state)
     with world_transaction() as world:
         scene = Scene(
@@ -379,6 +390,8 @@ def update_scene_blueprint(
     scene = get_world().get_scene(target_id)
     if scene is None:
         raise ToolException(f"No scene with id {target_id}; call list_scenes for valid ids.")
+
+    _reject_if_scene_claimed(target_id)
 
     resolved_characters = (
         _resolve_scene_character_ids(character_ids) if character_ids is not None else None
@@ -518,3 +531,19 @@ SCENE_TOOLS = [
     update_scene,
     delete_scene,
 ]
+
+
+def _reject_if_scene_claimed(scene_id: str) -> None:
+    """Raise when a running job holds a claim on ``scene_id``."""
+
+    from app.graphs.jobs import get_job_manager, scene_claim_key
+
+    job = get_job_manager().claim_for(scene_claim_key(scene_id))
+    if job is None:
+        return
+    world = get_world()
+    scene = world.get_scene(scene_id)
+    title = scene.title if scene is not None else scene_id
+    raise ToolException(
+        f"Scene '{title}' is currently being generated; wait for the job to finish."
+    )

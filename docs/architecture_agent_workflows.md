@@ -93,9 +93,11 @@ The drafting node keeps the default streaming model and still uses canvas tags i
 
 ### Background execution
 
-`app/graphs/generation_manager.py` exposes `start_generation(scene_id)`,
+`app/graphs/jobs.py` (`JobManager`) exposes `start_scene_generation(scene_id)`,
 `is_generating(scene_id)`, and `last_error(scene_id)`. A second concurrent run for the same scene
-is rejected. The scene editor polls generation state with `ui.timer` and the refreshable pattern.
+is rejected. Chat turns use `start_chat_turn()` with a `chat` resource claim. The scene editor and
+chat panel poll job state with `ui.timer` and the refreshable pattern. See
+[architecture_async_jobs.md](architecture_async_jobs.md) for claims, enforcement, and notifications.
 
 ## Planned Workflows
 

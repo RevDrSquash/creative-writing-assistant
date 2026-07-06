@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
+
 from nicegui import app, ui
 
-from app.graphs.generation_manager import get_generation_manager
+from app.graphs.jobs import get_job_manager
 from app.ui.components.chat import render_chat
 from app.ui.components.markdown_editor import (
     _toggle_icon,
@@ -20,10 +22,11 @@ from app.ui.components.story_bible_forms import (
 )
 from app.ui.layout import render_header
 from app.ui.navigation import NavigationItem
+from app.ui.save_helpers import save_world_ui
 from app.ui.scene_selection import get_current_scene, set_current_scene_id
 from app.world.models import Scene
 from app.world.scene import create_scene, delete_scene, scene_is_generatable, scene_is_stale
-from app.world.store import get_world, save_world
+from app.world.store import get_world
 
 WORKSPACE_SPLIT_KEY = "workspace_split"
 WORKSPACE_SPLIT_DEFAULT = 75
@@ -144,13 +147,17 @@ def _render_scenes_section(active_scene_id: str | None) -> None:
 
 
 def _render_scene_row(scene: Scene, active_scene_id: str | None) -> None:
+    manager = get_job_manager()
     path = f"/workspace/scenes/{scene.id}"
-    button = ui.button(
-        scene.title or "Untitled",
-        on_click=lambda path=path: ui.navigate.to(path),
-    )
-    button.classes("w-full justify-start")
-    button.props("unelevated color=primary" if scene.id == active_scene_id else "flat")
+    with ui.row().classes("w-full items-center no-wrap gap-1"):
+        button = ui.button(
+            scene.title or "Untitled",
+            on_click=lambda path=path: ui.navigate.to(path),
+        )
+        button.classes("grow justify-start")
+        button.props("unelevated color=primary" if scene.id == active_scene_id else "flat")
+        if manager.scene_is_claimed(scene.id):
+            ui.spinner(size="xs").mark(f"scene-generating-{scene.id}")
 
 
 async def _confirm_delete_scene(scene: Scene) -> None:
@@ -175,18 +182,22 @@ async def _confirm_delete_scene(scene: Scene) -> None:
         ui.navigate.to("/workspace")
 
 
-def _scene_snapshot() -> tuple[tuple[str, str], ...]:
-    return tuple((scene.id, scene.title) for scene in get_world().scenes)
+def _scene_snapshot() -> tuple[tuple[str, str, bool], ...]:
+    manager = get_job_manager()
+    return tuple(
+        (scene.id, scene.title, manager.scene_is_claimed(scene.id)) for scene in get_world().scenes
+    )
 
 
-def _scene_snapshot() -> tuple[tuple[str, str], ...]:
-    return tuple((scene.id, scene.title) for scene in get_world().scenes)
-
-
-def _render_generation_controls(scene: Scene) -> None:
+def _render_generation_controls(
+    scene: Scene,
+    edit_state: dict[str, object],
+    *,
+    on_generation_started: Callable[[], None] | None = None,
+) -> None:
     """Render Generate/Regenerate controls with stale badge and status polling."""
 
-    manager = get_generation_manager()
+    manager = get_job_manager()
 
     @ui.refreshable
     def controls() -> None:
@@ -237,11 +248,14 @@ def _render_generation_controls(scene: Scene) -> None:
             _start_generation(scene)
 
     def _start_generation(scene: Scene) -> None:
+        edit_state["edit_mode"] = False
         try:
-            manager.start_generation(scene.id)
+            manager.start_scene_generation(scene.id)
         except RuntimeError as exc:
             ui.notify(str(exc), type="warning")
             return
+        if on_generation_started is not None:
+            on_generation_started()
         controls.refresh()
 
     controls()
@@ -250,12 +264,14 @@ def _render_generation_controls(scene: Scene) -> None:
 
 def _render_scene_editor(scene: Scene) -> None:
     def save() -> None:
-        save_world()
+        save_world_ui()
+
+    manager = get_job_manager()
 
     # Scenes without generated prose open in edit mode with the blueprint
     # expanded, so the writer can review the card and trigger generation.
     never_generated = scene.generated.generated_at is None
-    edit_state = {"edit_mode": never_generated}
+    edit_state = {"edit_mode": never_generated and not manager.scene_is_claimed(scene.id)}
 
     def sync_edit_mode_visibility() -> None:
         edit_mode = edit_state["edit_mode"]
@@ -288,11 +304,33 @@ def _render_scene_editor(scene: Scene) -> None:
         )
 
         ui.space()
-        _render_generation_controls(scene)
+        gen_column = ui.column().classes("inline shrink-0")
+
         toggle_button = ui.button(icon=_toggle_icon(edit_state["edit_mode"]), on_click=toggle_mode)
         toggle_button.props("flat round dense")
         toggle_button.mark("scene-editor-toggle-button")
         toggle_tooltip = ui.tooltip(_toggle_tooltip(edit_state["edit_mode"]))
+
+        @ui.refreshable
+        def edit_lock() -> None:
+            claimed = manager.scene_is_claimed(scene.id)
+            if claimed:
+                if edit_state["edit_mode"]:
+                    edit_state["edit_mode"] = False
+                    toggle_button.set_icon(_toggle_icon(False))
+                    sync_edit_mode_visibility()
+                toggle_button.disable()
+                toggle_tooltip.set_text("Scene is being generated")
+            else:
+                toggle_button.enable()
+                toggle_tooltip.set_text(_toggle_tooltip(edit_state["edit_mode"]))
+
+        with gen_column:
+            _render_generation_controls(
+                scene,
+                edit_state,
+                on_generation_started=edit_lock.refresh,
+            )
         delete_button = ui.button(
             icon="delete",
             on_click=lambda scene=scene: _confirm_delete_scene(scene),
@@ -327,6 +365,9 @@ def _render_scene_editor(scene: Scene) -> None:
     )
 
     sync_edit_mode_visibility()
+
+    edit_lock()
+    ui.timer(1.0, edit_lock.refresh)
 
     with ui.expansion("Notes", icon="sticky_note_2").classes("w-full shrink-0"):
         notes_input = ui.textarea(placeholder="Scene notes...").classes("w-full")

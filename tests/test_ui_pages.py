@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
 from nicegui.testing import User
 
 from app.ui.components.story_bible_forms import _build_timeline_mermaid, _during_groups
@@ -530,3 +531,282 @@ def test_build_timeline_mermaid_marks_cycle_edges_red() -> None:
     source = _build_timeline_mermaid(bible)
 
     assert "linkStyle 0 stroke:#e53935" in source
+
+
+async def test_scene_page_renders_while_generation_in_progress(
+    user: User,
+    isolated_data_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import asyncio
+    import time
+
+    from app.graphs.jobs import get_job_manager, reset_job_manager
+    from app.persistence.world import JsonFileWorldStore, default_world
+    from app.world.models import Event, Scene, SceneBlueprint
+    from app.world.store import get_world, reset_world_cache
+
+    world = default_world()
+    world.story_bible.timeline.append(Event(id="event_arrival", title="The Arrival"))
+    world.scenes.append(
+        Scene(
+            id="scene_gen",
+            title="Mid Generation",
+            markdown="# Ready",
+            blueprint=SceneBlueprint(
+                premise="Something happens.",
+                event_ids=["event_arrival"],
+            ),
+        )
+    )
+    JsonFileWorldStore(isolated_data_dir / "world.json").save(world)
+
+    def slow_run(scene_id: str, *, max_revisions: int = 1) -> None:
+        time.sleep(0.3)
+
+    monkeypatch.setattr("app.graphs.scene_generation.run_scene_generation", slow_run)
+
+    reset_world_cache()
+    reset_job_manager()
+    get_world()
+    manager = get_job_manager()
+    manager.start_scene_generation("scene_gen")
+
+    await user.open("/workspace/scenes/scene_gen")
+    await user.should_see("Mid Generation")
+    await user.should_see("Generating...")
+    toggle = next(iter(user.find(marker="scene-editor-toggle-button").elements))
+    assert toggle.enabled is False
+
+    for _ in range(20):
+        if not manager.is_generating("scene_gen"):
+            break
+        await asyncio.sleep(0.05)
+
+
+async def test_scene_editor_disables_edit_toggle_while_generating(
+    user: User,
+    isolated_data_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import asyncio
+    import time
+
+    from app.persistence.world import JsonFileWorldStore, default_world
+    from app.world.models import Event, Scene, SceneBlueprint
+
+    world = default_world()
+    world.story_bible.timeline.append(Event(id="event_arrival", title="The Arrival"))
+    world.scenes.append(
+        Scene(
+            id="scene_gen",
+            title="Generating",
+            markdown="# Ready",
+            blueprint=SceneBlueprint(
+                premise="Something happens.",
+                event_ids=["event_arrival"],
+            ),
+        )
+    )
+    JsonFileWorldStore(isolated_data_dir / "world.json").save(world)
+
+    def slow_run(scene_id: str, *, max_revisions: int = 1) -> None:
+        time.sleep(0.3)
+
+    monkeypatch.setattr("app.graphs.scene_generation.run_scene_generation", slow_run)
+
+    await user.open("/workspace/scenes/scene_gen")
+    user.find(marker="scene-generate-button").click()
+    await user.should_see("Generating...")
+    await asyncio.sleep(0.05)
+    toggle = next(iter(user.find(marker="scene-editor-toggle-button").elements))
+    assert toggle.enabled is False
+
+
+async def test_chat_send_disabled_while_job_running(
+    user: User,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import asyncio
+
+    from langchain_core.messages import AIMessageChunk
+
+    async def fake_astream(*args, **kwargs):
+        yield "messages", (AIMessageChunk(content="Streaming"), {})
+        await asyncio.sleep(0.3)
+
+    class FakeAgent:
+        astream = staticmethod(fake_astream)
+
+    monkeypatch.setattr("app.graphs.get_chat_agent", lambda: FakeAgent())
+
+    await user.open("/workspace/narrative-style")
+    textarea = next(iter(user.find("Message the writing agent...").elements))
+    textarea.set_value("Hello agent")
+    user.find(marker="chat-send-button").click()
+    await asyncio.sleep(0.2)
+    send = next(iter(user.find(marker="chat-send-button").elements))
+    assert send.enabled is False
+
+
+async def test_chat_persists_assistant_message_after_navigation(
+    user: User,
+    isolated_data_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import asyncio
+    import json
+
+    from langchain_core.messages import AIMessageChunk
+
+    async def fake_astream(*args, **kwargs):
+        yield "messages", (AIMessageChunk(content="Persisted reply"), {})
+        await asyncio.sleep(0.15)
+
+    class FakeAgent:
+        astream = staticmethod(fake_astream)
+
+    monkeypatch.setattr("app.graphs.get_chat_agent", lambda: FakeAgent())
+
+    await user.open("/workspace/narrative-style")
+    textarea = next(iter(user.find("Message the writing agent...").elements))
+    textarea.set_value("Question")
+    user.find(marker="chat-send-button").click()
+    await asyncio.sleep(0.1)
+    await user.open("/workspace/world")
+    await user.should_see("World Facts")
+    await asyncio.sleep(0.3)
+
+    chat_path = isolated_data_dir / "chat_history.json"
+    stored = json.loads(chat_path.read_text(encoding="utf-8"))
+    assert any(
+        msg.get("role") == "assistant" and msg.get("content") == "Persisted reply" for msg in stored
+    )
+
+
+def _count_top_level_content_matches(user: User, text: str) -> int:
+    from nicegui import ElementFilter
+
+    with user.client:
+        elements = list(ElementFilter(content=text, only_visible=True))
+        return sum(
+            1
+            for element in elements
+            if not any(
+                element in other.descendants(include_self=False)
+                for other in elements
+                if other is not element
+            )
+        )
+
+
+def _message_column_child_index(message_column, element) -> int:
+    for index, child in enumerate(message_column.default_slot.children):
+        if element in child.descendants(include_self=True):
+            return index
+    msg = "element is not a descendant of the message column"
+    raise ValueError(msg)
+
+
+async def test_chat_finished_job_not_duplicated_on_page_remount(
+    user: User,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import asyncio
+
+    from langchain_core.messages import AIMessageChunk
+
+    reply_text = "Unique assistant reply for remount test"
+
+    async def fake_astream(*args, **kwargs):
+        yield "messages", (AIMessageChunk(content=reply_text), {})
+        await asyncio.sleep(0.05)
+
+    class FakeAgent:
+        astream = staticmethod(fake_astream)
+
+    monkeypatch.setattr("app.graphs.get_chat_agent", lambda: FakeAgent())
+
+    await user.open("/workspace/narrative-style")
+    textarea = next(iter(user.find("Message the writing agent...").elements))
+    textarea.set_value("Question")
+    user.find(marker="chat-send-button").click()
+    await asyncio.sleep(0.3)
+
+    await user.open("/workspace/world")
+    await asyncio.sleep(0.6)
+
+    assert _count_top_level_content_matches(user, reply_text) == 1
+
+
+async def test_chat_finished_job_does_not_replay_navigation_on_remount(
+    user: User,
+    isolated_data_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import asyncio
+
+    from langchain_core.messages import AIMessageChunk
+
+    from app.persistence.world import JsonFileWorldStore, default_world
+    from app.world.models import Scene
+
+    world = default_world()
+    world.scenes.append(Scene(id="scene_source", title="Source Scene", markdown="# Source"))
+    world.scenes.append(Scene(id="scene_target", title="Target Scene", markdown="# Target"))
+    JsonFileWorldStore(isolated_data_dir / "world.json").save(world)
+
+    async def fake_astream(*args, **kwargs):
+        yield "messages", (AIMessageChunk(content="Switching scenes"), {})
+        yield "updates", {"agent": {"current_scene_id": "scene_target"}}
+        await asyncio.sleep(0.05)
+
+    class FakeAgent:
+        astream = staticmethod(fake_astream)
+
+    monkeypatch.setattr("app.graphs.get_chat_agent", lambda: FakeAgent())
+
+    await user.open("/workspace/scenes/scene_source")
+    textarea = next(iter(user.find("Message the writing agent...").elements))
+    textarea.set_value("Go to target scene")
+    user.find(marker="chat-send-button").click()
+    await asyncio.sleep(0.3)
+
+    await user.open("/workspace/world")
+    await asyncio.sleep(0.6)
+    await user.should_see("World Facts")
+    await user.should_not_see("Notes")
+
+
+async def test_chat_live_message_renders_after_user_message(
+    user: User,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import asyncio
+
+    from langchain_core.messages import AIMessageChunk
+
+    user_text = "Slow stream ordering question"
+
+    async def fake_astream(*args, **kwargs):
+        yield "messages", (AIMessageChunk(content="Partial"), {})
+        await asyncio.sleep(0.3)
+
+    class FakeAgent:
+        astream = staticmethod(fake_astream)
+
+    monkeypatch.setattr("app.graphs.get_chat_agent", lambda: FakeAgent())
+
+    await user.open("/workspace/narrative-style")
+    textarea = next(iter(user.find("Message the writing agent...").elements))
+    textarea.set_value(user_text)
+    user.find(marker="chat-send-button").click()
+    await user.should_see(marker="chat-live-assistant", retries=10)
+
+    with user.client:
+        message_column = next(iter(user.find(marker="chat-message-column").elements))
+        user_message = next(iter(user.find(content=user_text).elements))
+        live_marker = next(iter(user.find(marker="chat-live-assistant").elements))
+        assert _message_column_child_index(
+            message_column, live_marker
+        ) > _message_column_child_index(message_column, user_message)
