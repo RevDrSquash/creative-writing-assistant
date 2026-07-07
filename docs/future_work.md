@@ -34,9 +34,9 @@ worth preserving. These are not committed to a specific phase yet.
   "husband and wife", "work together"). Open question: model these as fields on character
   identities or as a separate relationships table. A separate table would be easier to migrate
   to a graph database if relationships grow complex, though that is not needed yet.
-* Event relationships (remaining): Causality edges (`causes`), arc membership, and a per-character
-  perspective timeline view (events a character signals, in order). Typed ordering relationships
-  (`follows`, `directly_follows`, `during`) are implemented; see
+* Event relationships (remaining): Arc membership and a per-character perspective timeline view
+  (events a character signals, in order). Typed ordering relationships
+  (`follows`, `directly_follows`, `depends_on`, `during`) are implemented; see
   [story_bible_model.md](story_bible_model.md). Scene-to-event linking now exists as scene-local
   blueprint links (`event_ids` / `related_event_ids`); making workflows select relevant neighboring
   scenes by those links (rather than list adjacency) is the remaining follow-up. A "related" link is

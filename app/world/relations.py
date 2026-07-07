@@ -1,8 +1,9 @@
 """Event relationship validation and derived diagnostics.
 
-Relations define chronology (with the timeline list as tie-breaker); this module
-validates structural constraints, computes canonical order, and cycle warnings.
-See ``docs/story_bible_model.md``.
+Relations define chronology (with creation order in the timeline list as a
+tie-breaker); this module validates structural constraints, computes canonical
+order, and surfaces cycle and unanchored-event warnings. See
+``docs/story_bible_model.md``.
 """
 
 from __future__ import annotations
@@ -18,16 +19,17 @@ from app.world.models import (
     StoryBible,
 )
 
-DiagnosticKind = Literal["cycle"]
+DiagnosticKind = Literal["cycle", "unanchored"]
 
 
 @dataclass(frozen=True)
 class RelationDiagnostic:
-    """A derived warning about an event relationship."""
+    """A derived warning about an event relationship or anchoring."""
 
     kind: DiagnosticKind
-    relation_id: str
     message: str
+    relation_id: str = ""
+    event_id: str = ""
 
 
 class RelationValidationError(ValueError):
@@ -41,10 +43,8 @@ def _event_listing(bible: StoryBible) -> str:
     return f"Valid events: {listing}"
 
 
-def _relation_key(kind: EventRelationKind, source_id: str, target_id: str) -> tuple:
-    if kind == "during":
-        return (kind, tuple(sorted((source_id, target_id))))
-    return (kind, source_id, target_id)
+def _unordered_pair(source_id: str, target_id: str) -> tuple[str, str]:
+    return tuple(sorted((source_id, target_id)))
 
 
 def _directed_adjacency(bible: StoryBible) -> dict[str, list[str]]:
@@ -75,12 +75,55 @@ def _can_reach(adjacency: dict[str, list[str]], start: str, goal: str) -> bool:
     return False
 
 
+def _relation_conflicts(
+    bible: StoryBible,
+    kind: EventRelationKind,
+    source_id: str,
+    target_id: str,
+    *,
+    exclude_relation_id: str | None = None,
+) -> str | None:
+    """Return an error message when ``kind`` conflicts with an existing relation."""
+
+    new_pair = _unordered_pair(source_id, target_id)
+    for relation in bible.event_relations:
+        if relation.id == exclude_relation_id:
+            continue
+        existing_pair = _unordered_pair(relation.source_id, relation.target_id)
+        if existing_pair != new_pair:
+            continue
+
+        if kind == "during" and relation.kind == "during":
+            return (
+                f"Duplicate relation: during between '{source_id}' and '{target_id}' "
+                "already exists."
+            )
+        if kind in DIRECTED_EVENT_RELATION_KINDS and relation.kind in DIRECTED_EVENT_RELATION_KINDS:
+            if relation.source_id == source_id and relation.target_id == target_id:
+                return (
+                    f"Conflicting relation: a directed edge from '{source_id}' to "
+                    f"'{target_id}' already exists ({relation.kind}). "
+                    "Use one directed kind per ordered pair."
+                )
+        if kind == "during" and relation.kind in DIRECTED_EVENT_RELATION_KINDS:
+            return (
+                f"Conflicting relation: '{source_id}' and '{target_id}' already have a "
+                f"directed edge ({relation.kind}); cannot also mark them concurrent."
+            )
+        if kind in DIRECTED_EVENT_RELATION_KINDS and relation.kind == "during":
+            return (
+                f"Conflicting relation: '{source_id}' and '{target_id}' are already "
+                "marked concurrent (during); cannot also add a directed edge."
+            )
+    return None
+
+
 def chronological_order(bible: StoryBible) -> list[Event]:
     """Return events in canonical chronological order.
 
     Directed edges force ``target`` (earlier) before ``source`` (later). Among
-    events with no ordering constraint, list position is the tie-breaker.
-    Residual cycles (legacy data) are appended in list order.
+    events with no ordering constraint, timeline creation order is the tie-breaker.
+    Residual cycles (legacy data) are appended in creation order.
     """
 
     if not bible.timeline:
@@ -135,8 +178,11 @@ def normalize_relation(
     ``RelationValidationError`` for unknown ids, self-loops, duplicates, or cycles.
     """
 
-    if kind not in ("follows", "directly_follows", "during"):
-        msg = f"Unknown relation kind '{kind}'. Valid kinds: follows, directly_follows, during."
+    if kind not in ("follows", "directly_follows", "depends_on", "during"):
+        msg = (
+            f"Unknown relation kind '{kind}'. Valid kinds: follows, directly_follows, "
+            "depends_on, during."
+        )
         raise RelationValidationError(msg)
 
     if bible.get_event(source_id) is None:
@@ -150,17 +196,15 @@ def normalize_relation(
         msg = "An event cannot relate to itself."
         raise RelationValidationError(msg)
 
-    key = _relation_key(kind, source_id, target_id)
-    for relation in bible.event_relations:
-        if relation.id == exclude_relation_id:
-            continue
-        existing_key = _relation_key(relation.kind, relation.source_id, relation.target_id)
-        if existing_key == key:
-            msg = (
-                f"Duplicate relation: {kind} between "
-                f"'{source_id}' and '{target_id}' already exists."
-            )
-            raise RelationValidationError(msg)
+    conflict = _relation_conflicts(
+        bible,
+        kind,
+        source_id,
+        target_id,
+        exclude_relation_id=exclude_relation_id,
+    )
+    if conflict:
+        raise RelationValidationError(conflict)
 
     if kind in DIRECTED_EVENT_RELATION_KINDS:
         adjacency = _directed_adjacency(bible)
@@ -175,8 +219,34 @@ def normalize_relation(
     return source_id, target_id
 
 
+def _unanchored_event_diagnostics(bible: StoryBible) -> list[RelationDiagnostic]:
+    if len(bible.timeline) <= 1:
+        return []
+
+    connected: set[str] = set()
+    for relation in bible.event_relations:
+        connected.add(relation.source_id)
+        connected.add(relation.target_id)
+
+    diagnostics: list[RelationDiagnostic] = []
+    for event in bible.timeline:
+        if event.id in connected:
+            continue
+        diagnostics.append(
+            RelationDiagnostic(
+                kind="unanchored",
+                event_id=event.id,
+                message=(
+                    f"Event '{event.title or 'Untitled'}' [{event.id}] has no "
+                    "relationships to other events."
+                ),
+            )
+        )
+    return diagnostics
+
+
 def relation_diagnostics(bible: StoryBible) -> list[RelationDiagnostic]:
-    """Return cycle warnings for directed relations (safety net for legacy data)."""
+    """Return cycle warnings and unanchored-event warnings."""
 
     diagnostics: list[RelationDiagnostic] = []
     adjacency = _directed_adjacency(bible)
@@ -201,6 +271,7 @@ def relation_diagnostics(bible: StoryBible) -> list[RelationDiagnostic]:
                 )
             )
 
+    diagnostics.extend(_unanchored_event_diagnostics(bible))
     return diagnostics
 
 

@@ -3,11 +3,10 @@
 LangGraph's tool node executes the tool calls from a single AI message
 concurrently: ``asyncio.gather`` in the async path and a thread pool in the
 sync path. Several of our tools mutate shared, order-sensitive world state -
-``add_event`` appends to the timeline and ``update_event`` inserts at a
-position - so concurrent execution races on ordering. The timeline can then be
-persisted in a different order than the model emitted, which breaks
-event-sourced replay whenever one event references state created by an earlier
-one (e.g. ``set_intimacy_strength`` for an intimacy added by a prior event).
+``add_event`` may reference event ids created earlier in the same batch via
+inline ``relations`` - so concurrent execution races on validation. A later
+call can fail because an earlier sibling has not appended its event yet, or
+relations can be validated against a partial timeline.
 
 A simple mutex is not enough: the tool node performs awaits (state injection,
 etc.) before the wrap hook runs, so coroutines reach a plain lock out of order.

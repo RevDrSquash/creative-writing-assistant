@@ -40,14 +40,34 @@ def test_normalize_relation_rejects_self_loop() -> None:
         normalize_relation(bible, "follows", "event_a", "event_a")
 
 
-def test_normalize_relation_rejects_duplicate_edge() -> None:
+def test_normalize_relation_rejects_duplicate_directed_edge() -> None:
     bible = _timeline_with_three_events()
     bible.event_relations.append(
         EventRelation(kind="follows", source_id="event_b", target_id="event_a")
     )
 
-    with pytest.raises(RelationValidationError, match="Duplicate relation"):
+    with pytest.raises(RelationValidationError, match="Conflicting relation"):
+        normalize_relation(bible, "depends_on", "event_b", "event_a")
+
+
+def test_normalize_relation_rejects_directed_when_during_exists() -> None:
+    bible = _timeline_with_three_events()
+    bible.event_relations.append(
+        EventRelation(kind="during", source_id="event_a", target_id="event_b")
+    )
+
+    with pytest.raises(RelationValidationError, match="already marked concurrent"):
         normalize_relation(bible, "follows", "event_b", "event_a")
+
+
+def test_normalize_relation_rejects_during_when_directed_exists() -> None:
+    bible = _timeline_with_three_events()
+    bible.event_relations.append(
+        EventRelation(kind="depends_on", source_id="event_b", target_id="event_a")
+    )
+
+    with pytest.raises(RelationValidationError, match="already have a directed edge"):
+        normalize_relation(bible, "during", "event_a", "event_b")
 
 
 def test_normalize_relation_treats_during_as_unordered_for_dedup() -> None:
@@ -60,7 +80,7 @@ def test_normalize_relation_treats_during_as_unordered_for_dedup() -> None:
         normalize_relation(bible, "during", "event_b", "event_a")
 
 
-def test_chronological_order_follows_directed_edges_over_list_order() -> None:
+def test_chronological_order_follows_directed_edges_over_creation_order() -> None:
     bible = _timeline_with_three_events()
     bible.event_relations.append(
         EventRelation(kind="follows", source_id="event_a", target_id="event_b")
@@ -71,12 +91,23 @@ def test_chronological_order_follows_directed_edges_over_list_order() -> None:
     assert ordered_ids == ["event_b", "event_a", "event_c"]
 
 
-def test_chronological_order_uses_list_index_as_tie_breaker() -> None:
+def test_chronological_order_uses_creation_order_as_tie_breaker() -> None:
     bible = _timeline_with_three_events()
 
     ordered_ids = [event.id for event in chronological_order(bible)]
 
     assert ordered_ids == ["event_a", "event_b", "event_c"]
+
+
+def test_chronological_order_treats_depends_on_as_directed() -> None:
+    bible = _timeline_with_three_events()
+    bible.event_relations.append(
+        EventRelation(kind="depends_on", source_id="event_c", target_id="event_a")
+    )
+
+    ordered_ids = [event.id for event in chronological_order(bible)]
+
+    assert ordered_ids.index("event_a") < ordered_ids.index("event_c")
 
 
 def test_normalize_relation_rejects_cycle() -> None:
@@ -91,7 +122,7 @@ def test_normalize_relation_rejects_cycle() -> None:
     )
 
     with pytest.raises(RelationValidationError, match="would create a cycle"):
-        normalize_relation(bible, "follows", "event_b", "event_a")
+        normalize_relation(bible, "depends_on", "event_b", "event_a")
 
 
 def test_relation_diagnostics_detects_cycle() -> None:
@@ -112,3 +143,16 @@ def test_relation_diagnostics_detects_cycle() -> None:
 
     cycle_ids = {item.relation_id for item in diagnostics if item.kind == "cycle"}
     assert cycle_ids == {"rel_ab", "rel_ba"}
+
+
+def test_relation_diagnostics_flags_unanchored_events() -> None:
+    bible = _timeline_with_three_events()
+    bible.event_relations.append(
+        EventRelation(kind="follows", source_id="event_b", target_id="event_a")
+    )
+
+    diagnostics = relation_diagnostics(bible)
+
+    unanchored = [item for item in diagnostics if item.kind == "unanchored"]
+    assert len(unanchored) == 1
+    assert unanchored[0].event_id == "event_c"

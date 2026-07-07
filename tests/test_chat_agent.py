@@ -17,6 +17,7 @@ import app.graphs.chat_agent as chat_agent_module
 from app.graphs.chat_agent import build_chat_agent
 from app.graphs.context import DEFAULT_SYSTEM_PROMPT, ContextAssembler
 from app.models.config import CHAT_NODE_ID, ModelConfig
+from app.world.models import unique_slug
 from app.world.store import get_world
 
 
@@ -286,15 +287,22 @@ async def test_chat_agent_surfaces_tool_failure_in_async_stream(isolated_world) 
 
 
 def _batched_add_event_message(titles: list[str]) -> AIMessage:
-    tool_calls = [
-        {
-            "name": "add_event",
-            "args": {"title": title},
-            "id": f"add-event-{index}",
-            "type": "tool_call",
-        }
-        for index, title in enumerate(titles)
-    ]
+    tool_calls = []
+    assigned_ids: list[str] = []
+    for index, title in enumerate(titles):
+        args: dict = {"title": title}
+        if index > 0:
+            args["relations"] = [{"kind": "follows", "event_id": assigned_ids[index - 1]}]
+        event_id = unique_slug("event_", title, set(assigned_ids))
+        assigned_ids.append(event_id)
+        tool_calls.append(
+            {
+                "name": "add_event",
+                "args": args,
+                "id": f"add-event-{index}",
+                "type": "tool_call",
+            }
+        )
     return AIMessage(content="", tool_calls=tool_calls)
 
 
@@ -324,6 +332,7 @@ async def test_chat_agent_applies_batched_tool_calls_in_emission_order_async(
     # luck; repeat to make the ordering guarantee a reliable regression guard.
     for _ in range(10):
         isolated_world.story_bible.timeline = []
+        isolated_world.story_bible.event_relations = []
         fake_model = ToolAwareFakeChatModel(
             messages=iter(
                 [_batched_add_event_message(titles), AIMessage(content="Added the timeline.")]

@@ -500,6 +500,17 @@ def test_build_timeline_mermaid_flows_chronologically_left_to_right() -> None:
     assert "|follows|" not in source
 
 
+def test_build_timeline_mermaid_renders_depends_on_as_dotted_edge() -> None:
+    bible = _three_event_bible()
+    bible.event_relations.append(
+        EventRelation(kind="depends_on", source_id="evt_b", target_id="evt_a")
+    )
+
+    source = _build_timeline_mermaid(bible)
+
+    assert "evt_a -.-> evt_b" in source
+
+
 def test_build_timeline_mermaid_groups_during_events_without_an_edge() -> None:
     bible = _three_event_bible()
     bible.event_relations.append(EventRelation(kind="during", source_id="evt_a", target_id="evt_b"))

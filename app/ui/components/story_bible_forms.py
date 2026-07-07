@@ -51,6 +51,7 @@ _WORLD_STATE_KIND_OPTIONS = {
 _RELATION_KIND_OPTIONS = {
     "follows": "Follows (loose order)",
     "directly_follows": "Directly follows (tight continuity)",
+    "depends_on": "Depends on (causal)",
     "during": "During (concurrent)",
 }
 # For directed kinds the user picks which event is the follower (the later one)
@@ -506,8 +507,8 @@ def _render_timeline_list() -> None:
     bible = get_world().story_bible
     ui.label("Timeline").classes("text-xl font-semibold")
     ui.label(
-        "Ordered story events. Relationships drive chronology; list order breaks ties "
-        "among unconnected events."
+        "Story events linked by relationships. Chronology is derived from relations; "
+        "unrelated events fall back to creation order."
     ).classes("text-grey-7")
 
     if bible.timeline:
@@ -527,10 +528,10 @@ def _render_timeline_list() -> None:
                 for warning in effect_warnings:
                     ui.label(warning.message).classes("text-sm")
 
-    def insert_event(index: int) -> None:
+    def append_event() -> None:
         event = Event()
         event.id = unique_slug("event_", "", {item.id for item in bible.timeline})
-        bible.timeline.insert(index, event)
+        bible.timeline.append(event)
         save_world_ui()
         ui.navigate.to(f"/workspace/events/{event.id}")
 
@@ -540,17 +541,10 @@ def _render_timeline_list() -> None:
         if not ordered:
             ui.label("No events yet.").classes("text-grey-7")
         for chron_index, event in enumerate(ordered):
-            list_index = bible.event_index(event.id) or 0
             with ui.card().classes("w-full"):
                 with ui.row().classes("w-full items-center no-wrap gap-2"):
                     ui.label(f"{chron_index + 1}.").classes("text-grey-7 font-mono")
                     ui.label(event.title or "Untitled event").classes("grow font-semibold")
-                    insert_button = ui.button(
-                        icon="north",
-                        on_click=lambda index=list_index: insert_event(index),
-                    )
-                    insert_button.props("flat round dense size=sm color=grey-7")
-                    insert_button.tooltip("Insert event before this one")
                     ui.button(
                         "Open",
                         on_click=lambda event=event: ui.navigate.to(
@@ -562,7 +556,7 @@ def _render_timeline_list() -> None:
     ui.button(
         "Add event",
         icon="add",
-        on_click=lambda: insert_event(len(bible.timeline)),
+        on_click=append_event,
     ).props("flat")
 
 
@@ -648,8 +642,9 @@ def _render_event_detail(event: Event) -> None:
     with ui.card().classes("w-full"):
         ui.label("Relationships").classes("text-lg font-semibold")
         ui.label(
-            "Typed links to other events. For 'follows' kinds, choose which event is the "
-            "follower (the later one); 'during' marks concurrent events."
+            "Typed links to other events. For directed kinds, choose which event is "
+            "the follower (the later one); depends_on marks causal dependency; "
+            "during marks concurrent events."
         ).classes("text-grey-7 text-sm")
 
         @ui.refreshable
@@ -823,6 +818,8 @@ def _build_timeline_mermaid(bible: StoryBible) -> str:
             lines.append(f"  {relation.target_id} --> {relation.source_id}")
         elif relation.kind == "directly_follows":
             lines.append(f"  {relation.target_id} ==> {relation.source_id}")
+        elif relation.kind == "depends_on":
+            lines.append(f"  {relation.target_id} -.-> {relation.source_id}")
         else:
             continue
         if relation.id in conflict_ids:
@@ -844,6 +841,7 @@ def _render_timeline_legend() -> None:
     items = (
         ("follows", "display:inline-block;width:28px;border-top:2px solid #555;"),
         ("directly follows", "display:inline-block;width:28px;border-top:4px solid #555;"),
+        ("depends on", "display:inline-block;width:28px;border-top:2px dotted #555;"),
         (
             "during",
             "display:inline-block;width:24px;height:14px;"

@@ -29,12 +29,29 @@ from app.tools.story_bible import (
 from app.world.models import (
     AddIntimacy,
     AddWorldStateEntry,
+    EventRelationSpec,
     Intimacy,
     SceneCharacterStance,
     Signal,
     World,
     WorldStateEntry,
 )
+
+
+def _add_follows_event(title: str, after_id: str, **kwargs) -> str:
+    return add_event.func(
+        title,
+        relations=[EventRelationSpec(kind="follows", event_id=after_id)],
+        **kwargs,
+    )
+
+
+def _add_during_event(title: str, other_id: str, **kwargs) -> str:
+    return add_event.func(
+        title,
+        relations=[EventRelationSpec(kind="during", event_id=other_id)],
+        **kwargs,
+    )
 
 
 def test_upsert_world_fact_creates_slug_id(isolated_world: World) -> None:
@@ -281,18 +298,58 @@ def test_delete_character_keeps_events(isolated_world: World) -> None:
     assert "World State" in read_world_state.func()
 
 
-def test_add_event_inserts_at_position(isolated_world: World) -> None:
+def test_add_event_appends_in_creation_order(isolated_world: World) -> None:
     add_event.func("First")
-    add_event.func("Third")
-    add_event.func("Second", position=2)
+    first = isolated_world.story_bible.timeline[0]
+    _add_follows_event("Second", first.id)
+    _add_follows_event("Third", first.id)
 
     titles = [event.title for event in isolated_world.story_bible.timeline]
     assert titles == ["First", "Second", "Third"]
     timeline = read_timeline.func()
     assert "1. First" in timeline
-    assert "(0 signals)" in timeline
+    assert "0 signals" in timeline
     assert "scene" not in timeline
     assert "time_passage" not in timeline
+
+
+def test_add_event_rejects_unanchored_when_timeline_nonempty(isolated_world: World) -> None:
+    add_event.func("First")
+
+    with pytest.raises(ToolException, match="must link to existing ones"):
+        add_event.func("Second")
+
+    assert len(isolated_world.story_bible.timeline) == 1
+
+
+def test_add_event_with_inline_relations(isolated_world: World) -> None:
+    add_event.func("First")
+    first = isolated_world.story_bible.timeline[0]
+
+    add_event.func(
+        "Second",
+        relations=[EventRelationSpec(kind="depends_on", event_id=first.id)],
+    )
+
+    assert len(isolated_world.story_bible.timeline) == 2
+    relation = isolated_world.story_bible.event_relations[0]
+    assert relation.kind == "depends_on"
+    assert relation.source_id == isolated_world.story_bible.timeline[1].id
+    assert relation.target_id == first.id
+
+
+def test_add_event_rejects_hallucinated_relation_event_id(isolated_world: World) -> None:
+    add_event.func("First")
+
+    with pytest.raises(ToolException, match="Unknown target event id"):
+        add_event.func(
+            "Second",
+            relations=[EventRelationSpec(kind="follows", event_id="event_hallucinated")],
+        )
+
+    # The transaction must roll back: no phantom event or relation persists.
+    assert [event.title for event in isolated_world.story_bible.timeline] == ["First"]
+    assert isolated_world.story_bible.event_relations == []
 
 
 def test_read_timeline_and_event_omit_kind(isolated_world: World) -> None:
@@ -338,23 +395,23 @@ def test_read_story_bible_overview_omits_event_kind(isolated_world: World) -> No
     assert "time_passage" not in overview
 
 
-def test_update_event_moves_and_replaces_effects(isolated_world: World) -> None:
+def test_update_event_replaces_effects(isolated_world: World) -> None:
     add_event.func("First")
-    add_event.func("Second")
+    first = isolated_world.story_bible.timeline[0]
+    _add_follows_event("Second", first.id)
     event = isolated_world.story_bible.timeline[1]
 
     update_event.func(
         event.id,
-        title="Second (moved)",
-        position=1,
+        title="Second (updated)",
         world_state_effects=[
             AddWorldStateEntry(entry=WorldStateEntry(text="Gate sealed", kind="consequence"))
         ],
     )
 
     timeline = isolated_world.story_bible.timeline
-    assert [item.title for item in timeline] == ["Second (moved)", "First"]
-    assert len(timeline[0].world_state_effects) == 1
+    assert [item.title for item in timeline] == ["First", "Second (updated)"]
+    assert len(timeline[1].world_state_effects) == 1
 
 
 def test_read_event_shows_effects_and_signals(isolated_world: World) -> None:
@@ -396,39 +453,42 @@ def test_delete_event_removes_it(isolated_world: World) -> None:
 
 def test_add_event_relation_creates_edge(isolated_world: World) -> None:
     add_event.func("First")
-    add_event.func("Second")
     first = isolated_world.story_bible.timeline[0]
-    second = isolated_world.story_bible.timeline[1]
+    _add_follows_event("Middle", first.id)
+    middle = isolated_world.story_bible.timeline[1]
+    _add_follows_event("Second", middle.id)
+    second = isolated_world.story_bible.timeline[2]
 
     result = add_event_relation.func("follows", second.id, first.id)
 
     assert "Added follows relation" in result
-    assert len(isolated_world.story_bible.event_relations) == 1
-    relation = isolated_world.story_bible.event_relations[0]
-    assert relation.kind == "follows"
-    assert relation.source_id == second.id
-    assert relation.target_id == first.id
+    shortcut = isolated_world.story_bible.event_relations[-1]
+    assert shortcut.kind == "follows"
+    assert shortcut.source_id == second.id
+    assert shortcut.target_id == first.id
 
 
 def test_add_event_relation_rejects_cycle(isolated_world: World) -> None:
     add_event.func("First")
-    add_event.func("Second")
     first = isolated_world.story_bible.timeline[0]
-    second = isolated_world.story_bible.timeline[1]
-
-    add_event_relation.func("follows", second.id, first.id)
+    _add_follows_event("Middle", first.id)
+    middle = isolated_world.story_bible.timeline[1]
+    _add_follows_event("Second", middle.id)
+    second = isolated_world.story_bible.timeline[2]
 
     with pytest.raises(ToolException, match="would create a cycle"):
         add_event_relation.func("follows", first.id, second.id)
 
-    assert len(isolated_world.story_bible.event_relations) == 1
+    assert len(isolated_world.story_bible.event_relations) == 2
 
 
 def test_read_timeline_lists_chronological_order(isolated_world: World) -> None:
     add_event.func("First")
-    add_event.func("Second")
     first = isolated_world.story_bible.timeline[0]
-    second = isolated_world.story_bible.timeline[1]
+    _add_follows_event("Middle", first.id)
+    middle = isolated_world.story_bible.timeline[1]
+    _add_during_event("Second", middle.id)
+    second = isolated_world.story_bible.timeline[2]
     add_event_relation.func("follows", first.id, second.id)
 
     result = read_timeline.func()
@@ -458,21 +518,18 @@ def test_add_event_relation_rejects_self_loop(isolated_world: World) -> None:
 
 def test_add_event_relation_rejects_duplicate_edge(isolated_world: World) -> None:
     add_event.func("First")
-    add_event.func("Second")
     first = isolated_world.story_bible.timeline[0]
+    _add_follows_event("Second", first.id)
     second = isolated_world.story_bible.timeline[1]
-    add_event_relation.func("follows", second.id, first.id)
 
-    with pytest.raises(ToolException, match="Duplicate relation"):
-        add_event_relation.func("follows", second.id, first.id)
+    with pytest.raises(ToolException, match="Conflicting relation"):
+        add_event_relation.func("depends_on", second.id, first.id)
 
 
 def test_remove_event_relation_deletes_edge(isolated_world: World) -> None:
     add_event.func("First")
-    add_event.func("Second")
     first = isolated_world.story_bible.timeline[0]
-    second = isolated_world.story_bible.timeline[1]
-    add_event_relation.func("during", first.id, second.id)
+    _add_during_event("Second", first.id)
     relation_id = isolated_world.story_bible.event_relations[0].id
 
     remove_event_relation.func(relation_id)
@@ -484,9 +541,11 @@ def test_remove_event_relation_deletes_edge(isolated_world: World) -> None:
 
 def test_read_event_lists_relationships(isolated_world: World) -> None:
     add_event.func("First")
-    add_event.func("Second")
     first = isolated_world.story_bible.timeline[0]
-    second = isolated_world.story_bible.timeline[1]
+    _add_follows_event("Middle", first.id)
+    middle = isolated_world.story_bible.timeline[1]
+    _add_follows_event("Second", middle.id)
+    second = isolated_world.story_bible.timeline[2]
     add_event_relation.func("directly_follows", second.id, first.id)
 
     detail = read_event.func(second.id)
@@ -497,10 +556,8 @@ def test_read_event_lists_relationships(isolated_world: World) -> None:
 
 def test_delete_event_removes_related_edges(isolated_world: World) -> None:
     add_event.func("First")
-    add_event.func("Second")
     first = isolated_world.story_bible.timeline[0]
-    second = isolated_world.story_bible.timeline[1]
-    add_event_relation.func("follows", second.id, first.id)
+    _add_follows_event("Second", first.id)
 
     delete_event.func(first.id)
 
@@ -513,8 +570,8 @@ def test_read_world_state_at_event_position(isolated_world: World) -> None:
         "Storm",
         world_state_effects=[AddWorldStateEntry(entry=WorldStateEntry(text="Roads flooded"))],
     )
-    add_event.func("Recovery")
     first_event = isolated_world.story_bible.timeline[0]
+    _add_follows_event("Recovery", first_event.id)
 
     at_first = read_world_state.func(first_event.id)
     full = read_world_state.func()

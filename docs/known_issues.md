@@ -71,7 +71,7 @@ fix so the context is not lost between phases.
 
 - **Severity:** Low (cosmetic)
 - **Location:** `app/ui/components/story_bible_forms.py` — `add_fact`, `add_entry`,
-  `add_character`, `add_intimacy`, `insert_event`
+  `add_character`, `add_intimacy`, `append_event`
 - **Introduced:** Schema version 2 (readable slug ids)
 - **Symptom:** Entities created from the UI before the user types a name or title receive
   generic slugs (`char`, `char_2`, `event`, etc.) rather than descriptive ones. Agent-created
@@ -100,19 +100,19 @@ fix so the context is not lost between phases.
 - **Severity:** Medium (correctness of derived state, surfaced but not blocked)
 - **Location:** `app/world/replay.py` — replay fold and `effect_diagnostics`; UI timeline
   warnings card; `read_timeline` / `read_event` / `read_world_state` tools
-- **Introduced:** Graph-derived timeline order (chronology can change when relations are added
-  or list order changes, making prior effect references invalid at replay time)
+- **Introduced:** Graph-derived timeline order (chronology changes when relations are edited,
+  making prior effect references invalid at replay time)
 - **Symptom:** An event's `set_intimacy_strength`, `update_intimacy`, `remove_intimacy`, or
   world-state `update_entry` / `remove_entry` may target an id that is not present when that
   event is replayed (for example, strengthening an intimacy before the event that adds it).
   Replay skips the effect silently; `effect_diagnostics()` and the Timeline warnings card
   surface the problem but edits are still allowed.
-- **Why it is acceptable for now:** The same failure mode existed under list-order replay when
-  events were reordered or inserted; graph-derived order makes the effective sequence less
-  obvious when relations change. Warning-first keeps authoring flexible while surfacing mistakes.
+- **Why it is acceptable for now:** Warning-first keeps authoring flexible while surfacing
+  mistakes. Stale signals after relation edits are an accepted limitation until a reorder or
+  repair workflow exists.
 - **Possible fix:** Reject or auto-repair dangling effects when saving an event or when
-  chronology changes (reorder relations, move list position), or offer a guided fix in the UI
-  (move the effect, add the missing entry first, or reorder events).
+  chronology changes (edit relations), or offer a guided fix in the UI (move the effect, add
+  the missing entry first, or adjust relations).
 
 ## 7. Scene workflow has no cross-scene context, so adjacent scenes drift
 
@@ -128,8 +128,8 @@ fix so the context is not lost between phases.
 - **Why it usually doesn't bite:** Scenes far apart in the story rarely share fine-grained
   state, so the gaps are only obvious when scenes are tightly coupled.
 - **Possible fix:** Simple first iteration — always pass the previous scene as context to the
-  workflow. Event relationships (`follows`, `directly_follows`, `during`) now exist for
-  semantics and visualization; full cross-scene context still depends on scene-to-event linking
+  workflow. Event relationships (`follows`, `directly_follows`, `depends_on`, `during`) now
+  exist for semantics and visualization; full cross-scene context still depends on scene-to-event linking
   (tracked in `docs/future_work.md`), which would let the workflow pull continuity-group neighbors
   and list-ordered predecessors by relationship rather than always the previous scene.
 
@@ -166,3 +166,20 @@ fix so the context is not lost between phases.
 - **Possible fix:** Deferred. The intended handling for stale/changed links is still open;
   options include surfacing a warning when an event a blueprint references is deleted, or
   pruning the link at that point.
+
+## 11. UI test teardown intermittently fails with a Windows file lock
+
+- **Severity:** Low (test flake, not app behavior)
+- **Location:** `tests/conftest.py` `user` fixture teardown → NiceGUI
+  `nicegui_reset_globals()` → `app.storage.clear()` unlinking
+  `.nicegui/storage-user-*.json`
+- **Introduced:** Pre-existing on Windows; unrelated to any app change
+- **Symptom:** Random `test_ui_pages.py` tests report an ERROR at teardown with
+  `PermissionError: [WinError 32]` when NiceGUI deletes its per-test user-storage file while an
+  external process (antivirus/indexer) briefly holds it. All tests themselves pass; only the
+  fixture cleanup errors, and which test is hit varies run to run.
+- **Why it is acceptable for now:** The flake is environmental and does not affect assertions
+  or app code; re-running the suite typically passes clean.
+- **Possible fix:** Wrap the storage cleanup in a retry (as `JsonFileWorldStore.save()` does for
+  `os.replace`), point NiceGUI storage at a `tmp_path` excluded from indexing, or upstream a
+  `missing_ok`/retry to NiceGUI's `Storage.clear()`.

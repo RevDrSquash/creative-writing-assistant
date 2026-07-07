@@ -396,14 +396,13 @@ def test_derive_state_does_not_mutate_baselines() -> None:
     assert character.baseline_state.intimacies[0].strength == "minor"
 
 
-def test_event_index_and_lookups() -> None:
+def test_event_lookups() -> None:
     bible, character, _intimacy = _bible_with_character()
     event = Event(title="Only event")
     bible.timeline = [event]
 
-    assert bible.event_index(event.id) == 0
-    assert bible.event_index("missing") is None
     assert bible.get_event(event.id) is event
+    assert bible.get_event("missing") is None
     assert bible.get_character(character.id) is character
     assert bible.get_character("missing") is None
 

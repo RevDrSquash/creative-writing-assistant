@@ -18,6 +18,7 @@ from app.world.models import (
     Event,
     EventRelation,
     EventRelationKind,
+    EventRelationSpec,
     Intimacy,
     Signal,
     StoryBible,
@@ -461,20 +462,39 @@ def read_event(event_id: str) -> str:
 def add_event(
     title: str,
     description: str = "",
-    position: int | None = None,
+    relations: list[EventRelationSpec] | None = None,
     world_state_effects: list[WorldStateEffect] | None = None,
     signals: list[Signal] | None = None,
 ) -> str:
-    """Add an event to the timeline.
+    """Add an event to the timeline (appended in creation order).
 
-    `position` is the 1-based timeline position to insert at; omit to append
-    at the end. `world_state_effects` are structured deltas to the active
-    world state. `signals` describe how specific characters interpret the
-    event and carry character-state effects (intimacies).
+    When other events already exist, ``relations`` is required: each entry links
+    the new event to an existing one. For directed kinds (``follows``,
+    ``directly_follows``, ``depends_on``) the new event is the later source and
+    ``event_id`` is the earlier target. ``directly_follows`` marks tight
+    moment-to-moment continuity; ``depends_on`` marks causal dependency;
+    ``follows`` is loose chronology only. ``during`` marks concurrency with
+    ``event_id``. Chronology is derived from relations; creation order breaks
+    ties among unrelated events.
+
+    ``world_state_effects`` are structured deltas to the active world state.
+    ``signals`` describe how specific characters interpret the event and carry
+    character-state effects (intimacies).
     """
 
     with world_transaction() as world:
         bible = world.story_bible
+        existing_events = len(bible.timeline)
+        relation_specs = relations or []
+
+        if existing_events > 0 and not relation_specs:
+            kinds = ", ".join(("follows", "directly_follows", "depends_on", "during"))
+            raise ToolException(
+                "New events must link to existing ones when the timeline is not empty. "
+                f"Pass `relations` with at least one entry (kinds: {kinds}). "
+                f"{_event_listing(bible)}"
+            )
+
         event = Event(
             title=title,
             description=description,
@@ -487,9 +507,31 @@ def add_event(
             title,
             {item.id for item in bible.timeline},
         )
-        index = _resolve_insert_index(bible, position)
-        bible.timeline.insert(index, event)
-    return f"Added event '{event.title}' (id: {event.id}) at position {index + 1}."
+        bible.timeline.append(event)
+
+        added_relations: list[EventRelation] = []
+        for spec in relation_specs:
+            try:
+                normalized_source, normalized_target = normalize_relation(
+                    bible,
+                    spec.kind,
+                    event.id,
+                    spec.event_id,
+                )
+            except RelationValidationError as exc:
+                raise ToolException(str(exc)) from exc
+            relation = EventRelation(
+                kind=spec.kind,
+                source_id=normalized_source,
+                target_id=normalized_target,
+            )
+            bible.event_relations.append(relation)
+            added_relations.append(relation)
+
+    relation_note = ""
+    if added_relations:
+        relation_note = f" Added {len(added_relations)} relation(s)."
+    return f"Added event '{event.title}' (id: {event.id}).{relation_note}"
 
 
 @tool
@@ -497,15 +539,15 @@ def update_event(
     event_id: str,
     title: str | None = None,
     description: str | None = None,
-    position: int | None = None,
     world_state_effects: list[WorldStateEffect] | None = None,
     signals: list[Signal] | None = None,
 ) -> str:
     """Partially update an event; only provided fields change.
 
     `world_state_effects` and `signals` replace the whole respective list, so
-    read the event first and resend the full list when editing them.
-    `position` moves the event to that 1-based timeline position.
+    read the event first and resend the full list when editing them. To change
+    chronology, use add_event_relation / remove_event_relation rather than
+    moving the event in the timeline list.
     """
 
     with world_transaction() as world:
@@ -523,12 +565,8 @@ def update_event(
         if signals is not None:
             _validate_signal_character_ids(bible, signals)
             event.signals = signals
-        if position is not None:
-            bible.timeline.remove(event)
-            bible.timeline.insert(_resolve_insert_index(bible, position), event)
 
-    new_index = bible.event_index(event.id) or 0
-    return f"Updated event '{event.title}' (id: {event.id}) at position {new_index + 1}."
+    return f"Updated event '{event.title}' (id: {event.id})."
 
 
 @tool
@@ -539,11 +577,11 @@ def add_event_relation(
 ) -> str:
     """Add a typed relationship between two timeline events.
 
-    Directed kinds use ``source_id`` as the later event (the follower) and
-    ``target_id`` as the earlier event it follows. ``follows`` is loose ordering
-    (any distance); ``directly_follows`` is tight moment-to-moment continuity.
+    Directed kinds use ``source_id`` as the later event and ``target_id`` as the
+    earlier one. ``directly_follows`` is tight moment-to-moment continuity;
+    ``depends_on`` is causal dependency; ``follows`` is loose chronology only.
     ``during`` marks concurrent events (unordered pair). Chronology is derived
-    from directed edges (list order breaks ties); cycles are rejected.
+    from directed edges (creation order breaks ties); cycles are rejected.
     """
 
     with world_transaction() as world:
@@ -646,6 +684,13 @@ def read_world_state(at_event_id: str = "") -> str:
     return "\n".join(lines)
 
 
+def _event_listing(bible: StoryBible) -> str:
+    if not bible.timeline:
+        return "No events exist yet."
+    listing = ", ".join(f"{event.title or 'Untitled'} [{event.id}]" for event in bible.timeline)
+    return f"Valid events: {listing}"
+
+
 def _validate_signal_character_ids(bible: StoryBible, signals: list[Signal]) -> None:
     valid_characters = {
         character.id: character.identity.name or "Unnamed" for character in bible.characters
@@ -660,12 +705,6 @@ def _validate_signal_character_ids(bible: StoryBible, signals: list[Signal]) -> 
             else:
                 detail = "No characters exist yet; create one first."
             raise ToolException(f"Unknown character_id '{signal.character_id}' in signal. {detail}")
-
-
-def _resolve_insert_index(bible: StoryBible, position: int | None) -> int:
-    if position is None:
-        return len(bible.timeline)
-    return max(0, min(position - 1, len(bible.timeline)))
 
 
 def _chronological_event_index(bible: StoryBible, event_id: str) -> int:

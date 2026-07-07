@@ -24,8 +24,8 @@ The Story Bible lives on the `World` object and contains:
 - **Characters**: identity and baseline state (including intimacies). Scene-level stance is not
   stored on the character; it lives on the scene (see the Scene model in
   [forms_and_data_models.md](forms_and_data_models.md)).
-- **Timeline**: an ordered list of Events.
-- **Event Relations**: typed edges between events (stored separately from list order).
+- **Timeline**: an append-only list of Events (creation order is a tie-breaker only).
+- **Event Relations**: typed edges between events that define chronology.
 
 ## Baselines Versus Derived State
 
@@ -112,32 +112,44 @@ and are modified over time by Signal effects.
 ### Event
 
 An objective story beat on the timeline. Fields: `id`, `title`, `description`, a list of
-world-state effects, and a list of Signals. Events are stored in `timeline` (a list used for
-storage and tie-breaking); canonical chronology is derived from directed relationships (see
-below). Events can be inserted at any list position. Events do not store timestamps.
+world-state effects, and a list of Signals. Events are stored in `timeline` (append-only
+storage; creation order breaks ties among unrelated events). Canonical chronology is
+derived from directed relationships (see below). Events do not store timestamps.
 Relationships between events are stored on the Story Bible as `event_relations`, not on the
 Event itself.
+
+When creating events via agent tools, the first event needs no relations; every subsequent
+event must include at least one inline relation linking it to an existing event.
 
 ### Event Relationship
 
 A typed edge between two events. Stored on `StoryBible.event_relations` as a flat list.
 Fields: `id`, `kind`, `source_id`, `target_id`.
 
-Kinds (for the directed kinds, `source` is the later event that follows the earlier `target`):
+Kinds (for directed kinds, `source` is the later event and `target` the earlier one):
 
-- `follows` (directed, loose): `source` happens after `target`, with no required time gap.
 - `directly_follows` (directed, tight): `source` immediately follows `target` on a short
   timescale and they share moment-to-moment continuity (location, time of day, who is present).
+  Chains of `directly_follows` form one scenario.
+- `depends_on` (directed, causal): `source` is narratively or causally dependent on `target`;
+  the target must have happened (and be known) for the source to make sense.
+- `follows` (directed, loose): `source` happens after `target` with no required continuity or
+  causality (time-skips, cross-arc ordering).
 - `during` (symmetric): `source` and `target` are concurrent; the pair is unordered.
 
-The timeline list order is a tie-breaker only: among events with no directed edge between
-them, list position seeds chronological order. Directed edges define chronology for replay,
-display (`read_timeline`, the Timeline page list), and derived-state "as of" selectors.
-`chronological_order()` performs a stable topological sort of directed edges (`target` before
-`source`), using list index to break ties. Directed cycles are rejected when adding a relation;
-legacy cycles are warned and replay appends leftover nodes in list order. `happens_before` is not
-stored; read a `follows` edge backwards. Causality and arc membership are deferred (see
-[future_work.md](future_work.md)).
+At most one directed edge is allowed per ordered pair (any kind). A directed edge and a
+`during` edge between the same two events are mutually exclusive.
+
+Chronology is derived entirely from directed edges for replay, display (`read_timeline`, the
+Timeline page list), and derived-state "as of" selectors. Among events with no directed path,
+creation order in `timeline` is the tie-breaker. `chronological_order()` performs a stable
+topological sort of directed edges (`target` before `source`), using creation order to break
+ties. Directed cycles are rejected when adding a relation; legacy cycles are warned and replay
+appends leftover nodes in creation order. `happens_before` is not stored; read a directed edge
+backwards. Arc membership beyond these primitives is deferred (see [future_work.md](future_work.md)).
+
+Unanchored events (no relations when other events exist) surface as derived warnings in tools
+and the UI but do not block edits.
 
 `effect_diagnostics()` warns when an update/remove effect targets an intimacy or world-state
 entry that is not present at that event's replay position (for example, strengthening an intimacy
@@ -147,11 +159,10 @@ self-loops, duplicate edges, cycles) are rejected at the tool and form boundary.
 
 The Timeline page renders the relations as a Mermaid graph that flows left-to-right in
 chronological order (earlier events on the left). Directed edges encode the kind by line style
-(solid `follows`, thick `directly_follows`) with a legend below the graph rather than per-edge
-labels, and cycle-participating edges are drawn red. `during` is *not* drawn as an edge: events linked
-(transitively) by `during` are wrapped in a dashed outlined subgraph box. Because no edge forces a
-rank gap between them, Mermaid/dagre lets the concurrent members settle on the same rank (a shared
-vertical band), and the box keeps them visually connected.
+(solid `follows`, thick `directly_follows`, dotted `depends_on`) with a legend below the graph
+rather than per-edge labels, and cycle-participating edges are drawn red. `during` is *not*
+drawn as an edge: events linked (transitively) by `during` are wrapped in a dashed outlined
+subgraph box.
 
 ### Signal
 
@@ -188,8 +199,8 @@ The replay engine is a pure function over the Story Bible:
 - Output: the derived world state (list of world-state entries) and the derived state of each
   character (intimacies).
 - Replay starts from the baselines and applies each event's world-state effects, then each of
-  its signals' character-state effects, in **chronological order** (graph-derived with list
-  tie-break), up to and including the requested position.
+  its signals' character-state effects, in **chronological order** (relation-derived with creation
+  order tie-break), up to and including the requested position.
 
 Replay is tolerant of dangling references: an effect that targets a missing entry or intimacy
 (for example, strengthening an intimacy a later edit removed) is skipped silently.
@@ -199,8 +210,10 @@ Preventing or auto-repairing dangling effects on edit is tracked in
 
 ## Editing Rules
 
-- Inserting, reordering, or deleting events is always allowed; derived state simply replays
-  differently. The model accepts temporarily inconsistent effect references.
+- Adding or deleting events is always allowed; derived state simply replays differently. To
+  change chronology, edit event relations rather than reordering the timeline list. The model
+  accepts temporarily inconsistent effect references (including stale signals after relation
+  edits); improving that workflow is deferred.
 - Deleting a character does not delete events or their signals referencing that character;
   replay skips signals whose `character_id` no longer resolves.
 - Intimacy review behavior (merging duplicates, strengthening instead of duplicating, pruning

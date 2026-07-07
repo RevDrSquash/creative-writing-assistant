@@ -22,12 +22,21 @@ SCHEMA_VERSION = 8
 
 IntimacyStrength = Literal["minor", "major", "defining"]
 WorldStateKind = Literal["pressure", "thread", "consequence"]
-EventRelationKind = Literal["follows", "directly_follows", "during"]
+EventRelationKind = Literal["follows", "directly_follows", "depends_on", "during"]
 
 INTIMACY_STRENGTHS: tuple[IntimacyStrength, ...] = ("minor", "major", "defining")
 WORLD_STATE_KINDS: tuple[WorldStateKind, ...] = ("pressure", "thread", "consequence")
-EVENT_RELATION_KINDS: tuple[EventRelationKind, ...] = ("follows", "directly_follows", "during")
-DIRECTED_EVENT_RELATION_KINDS: tuple[EventRelationKind, ...] = ("follows", "directly_follows")
+EVENT_RELATION_KINDS: tuple[EventRelationKind, ...] = (
+    "follows",
+    "directly_follows",
+    "depends_on",
+    "during",
+)
+DIRECTED_EVENT_RELATION_KINDS: tuple[EventRelationKind, ...] = (
+    "follows",
+    "directly_follows",
+    "depends_on",
+)
 
 # Articles dropped when comparing character ids, so a model that emits
 # ``char_narrator`` still resolves to the real ``char_the_narrator``.
@@ -205,8 +214,24 @@ class Signal(BaseModel):
     effects: list[CharacterStateEffect] = Field(default_factory=list)
 
 
+class EventRelationSpec(BaseModel):
+    """Inline relation to create when adding a new event.
+
+    For directed kinds the new event is the source (later) and ``event_id`` is
+    the earlier target. For ``during``, the new event and ``event_id`` form an
+    unordered concurrent pair.
+    """
+
+    kind: EventRelationKind
+    event_id: str = ""
+
+
 class Event(BaseModel):
-    """An objective story beat on the timeline."""
+    """An objective story beat on the timeline.
+
+    Events live in ``StoryBible.timeline`` for storage and lookup; chronology is
+    derived from ``event_relations``, not list position.
+    """
 
     id: str = Field(default_factory=new_id)
     title: str = ""
@@ -218,8 +243,8 @@ class Event(BaseModel):
 class EventRelation(BaseModel):
     """A typed edge between two timeline events.
 
-    For the directed kinds (``follows``, ``directly_follows``), ``source_id`` is
-    the later event and ``target_id`` the earlier one it follows.
+    For directed kinds (``follows``, ``directly_follows``, ``depends_on``),
+    ``source_id`` is the later event and ``target_id`` the earlier one.
     """
 
     id: str = Field(default_factory=new_id)
@@ -246,7 +271,10 @@ class StoryBible(BaseModel):
     world_facts: list[WorldFact] = Field(default_factory=list)
     baseline_world_state: list[WorldStateEntry] = Field(default_factory=list)
     characters: list[Character] = Field(default_factory=list)
-    timeline: list[Event] = Field(default_factory=list)
+    timeline: list[Event] = Field(
+        default_factory=list,
+        description="Append-only event storage; creation order is a tie-breaker only.",
+    )
     event_relations: list[EventRelation] = Field(default_factory=list)
 
     def get_character(self, character_id: str) -> Character | None:
@@ -291,12 +319,6 @@ class StoryBible(BaseModel):
 
     def get_event(self, event_id: str) -> Event | None:
         return next((event for event in self.timeline if event.id == event_id), None)
-
-    def event_index(self, event_id: str) -> int | None:
-        for index, event in enumerate(self.timeline):
-            if event.id == event_id:
-                return index
-        return None
 
     def get_event_relation(self, relation_id: str) -> EventRelation | None:
         return next(
