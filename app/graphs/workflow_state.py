@@ -20,6 +20,7 @@ class SceneWorkflowState(TypedDict, total=False):
     scene_id: str
     arc: list[str]
     notes: str
+    continuity_context: str
     stances: list[SceneCharacterStance]
     outline: list[str]
     critique: str

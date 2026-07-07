@@ -37,10 +37,13 @@ worth preserving. These are not committed to a specific phase yet.
 * Event relationships (remaining): Arc membership and a per-character perspective timeline view
   (events a character signals, in order). Typed ordering relationships
   (`follows`, `directly_follows`, `depends_on`, `during`) are implemented; see
-  [story_bible_model.md](story_bible_model.md). Scene-to-event linking now exists as scene-local
-  blueprint links (`event_ids` / `related_event_ids`); making workflows select relevant neighboring
-  scenes by those links (rather than list adjacency) is the remaining follow-up. A "related" link is
-  the interim stand-in for an explicit relevance relation between events.
+  [story_bible_model.md](story_bible_model.md). Scene-to-event linking exists as scene-local
+  blueprint links (`event_ids` / `related_event_ids`); the scene-writing workflow uses those
+  links (plus event chronology) to select neighboring scenes for continuity context. A "related"
+  link is the interim stand-in for an explicit relevance relation between events.
+* Scene workflow character state at timeline position: Stance and outline nodes still receive
+  character names only. Pass derived intimacies and world state at the scene's enacted events
+  (via replay / `read_world_state`) so emotional carryover matches the bible, not just prior prose.
 
 ## Intimacy review workflow
 

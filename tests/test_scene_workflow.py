@@ -19,7 +19,9 @@ from app.graphs.scene_workflow import (
     StanceList,
     StanceOutput,
     _author_stances_node,
+    _draft_prose_node,
     _outline_node,
+    _review_outline_node,
     _summary_node,
     build_scene_writer_graph,
     structured_fake_model,
@@ -36,8 +38,8 @@ from app.models.config import (
 )
 from app.tools.scene import propose_scene
 from app.tools.story_bible import add_event, upsert_character
-from app.world.models import SceneBlueprint, World, blueprint_fingerprint
-from app.world.scene import create_scene, scene_is_stale
+from app.world.models import Event, EventRelation, SceneBlueprint, World, blueprint_fingerprint
+from app.world.scene import create_scene, scene_is_stale, set_scene_text
 from app.world.store import get_world
 
 
@@ -104,6 +106,7 @@ def _workflow_input(
     *,
     event_ids: list[str] | None = None,
     related_event_ids: list[str] | None = None,
+    continuity_context: str = "",
 ) -> dict[str, Any]:
     return {
         "premise": "Brief premise.",
@@ -116,9 +119,44 @@ def _workflow_input(
         "arc": ["Setup", "Turn", "Payoff"],
         "notes": "Planning note.",
         "scene_id": scene_id,
+        "continuity_context": continuity_context,
         "revision_count": 0,
         "max_revisions": max_revisions,
     }
+
+
+class CapturingStructuredFakeModel:
+    """Structured-output fake that records the prompt passed to invoke()."""
+
+    def __init__(self, response: Any) -> None:
+        self.response = response
+        self.last_prompt = ""
+
+    def with_structured_output(self, schema: type[Any], **kwargs: Any) -> Any:
+        response = self.response
+        capture = self
+
+        class _Runnable:
+            def invoke(self, input: Any, config: Any = None, **kwargs: Any) -> Any:
+                if input:
+                    capture.last_prompt = input[0].content
+                return response
+
+        return _Runnable()
+
+    def bind_tools(self, tools: Any, **kwargs: Any) -> CapturingStructuredFakeModel:
+        return self
+
+    def _generate(self, messages: Any, stop: Any = None, run_manager: Any = None, **kwargs: Any):
+        from langchain_core.messages import AIMessage
+        from langchain_core.outputs import ChatGeneration, ChatResult
+
+        message = AIMessage(content="unused")
+        return ChatResult(generations=[ChatGeneration(message=message)])
+
+    @property
+    def _llm_type(self) -> str:
+        return "capturing-structured-fake"
 
 
 def test_stances_node_persists_generated(isolated_world: World) -> None:
@@ -158,6 +196,104 @@ def test_outline_node_persists_generated_beats(isolated_world: World) -> None:
     _outline_node(models)(state)
 
     assert get_world().get_scene(scene.id).generated.outline == ["Open.", "Close."]
+
+
+def test_workflow_nodes_include_continuity_context_in_prompts(isolated_world: World) -> None:
+    character_id = _seed_character()
+    scene = create_scene()
+    continuity_context = (
+        "## Surrounding scene context\n\n"
+        "Maintain continuity with the surrounding scenes.\n\n"
+        "### Previous scene (full prose)\n"
+        "Title: Earlier [id: scene_prev]\n\n"
+        "She left the room."
+    )
+    state = _workflow_input(scene.id, continuity_context=continuity_context)
+    state["character_ids"] = [character_id]
+
+    stances_model = CapturingStructuredFakeModel(
+        StanceList(
+            stances=[
+                StanceOutput(
+                    character_id=character_id,
+                    mood=["Focused"],
+                    intent="Continue",
+                    tactics="Observe",
+                    stakes="Trust",
+                )
+            ]
+        )
+    )
+    outline_model = CapturingStructuredFakeModel(OutlineBeats(beats=["Beat."]))
+    review_model = CapturingStructuredFakeModel(OutlineCritique(critique="Looks good."))
+    models = {
+        SCENE_STANCES_NODE_ID: stances_model,
+        SCENE_OUTLINE_NODE_ID: outline_model,
+        SCENE_OUTLINE_REVIEW_NODE_ID: review_model,
+        SCENE_DRAFT_NODE_ID: _canvas_draft_model(),
+    }
+
+    _author_stances_node(models)(state)
+    state["stances"] = get_world().get_scene(scene.id).generated.stances
+    _outline_node(models)(state)
+    state["outline"] = get_world().get_scene(scene.id).generated.outline
+    _review_outline_node(models)(state)
+
+    captured_prompts: list[str] = []
+
+    def capturing_create_agent(*args: Any, **kwargs: Any) -> Any:
+        from langchain.agents import create_agent as real_create_agent
+
+        agent = real_create_agent(*args, **kwargs)
+        original_invoke = agent.invoke
+
+        def invoke_with_capture(input_state: dict[str, Any], *args: Any, **kwargs: Any) -> Any:
+            messages = input_state.get("messages", [])
+            if messages:
+                captured_prompts.append(messages[0].content)
+            return original_invoke(input_state, *args, **kwargs)
+
+        agent.invoke = invoke_with_capture  # type: ignore[method-assign]
+        return agent
+
+    import app.graphs.scene_workflow as scene_workflow_module
+
+    original_create_agent = scene_workflow_module.create_agent
+    scene_workflow_module.create_agent = capturing_create_agent
+    try:
+        state["revision_count"] = 1
+        state["max_revisions"] = 1
+        _draft_prose_node(models)(state)
+    finally:
+        scene_workflow_module.create_agent = original_create_agent
+
+    for prompt in [
+        stances_model.last_prompt,
+        outline_model.last_prompt,
+        review_model.last_prompt,
+        *captured_prompts,
+    ]:
+        assert "She left the room." in prompt
+        assert "Maintain continuity with the surrounding scenes" in prompt
+
+
+def test_workflow_nodes_work_with_empty_continuity_context(isolated_world: World) -> None:
+    character_id = _seed_character()
+    scene = create_scene("Proposed Title")
+    scene.blueprint = SceneBlueprint(
+        premise="Brief premise.",
+        purpose="Brief purpose.",
+        character_ids=[character_id],
+        event_ids=[_seed_event()],
+    )
+    input_state = _workflow_input(
+        scene.id, event_ids=scene.blueprint.event_ids, continuity_context=""
+    )
+    input_state["character_ids"] = [character_id]
+    build_scene_writer_graph(models=_workflow_models()).invoke(input_state)
+
+    updated = get_world().get_scene(scene.id)
+    assert updated.markdown == "Drafted scene prose."
 
 
 def test_summary_node_persists_summary_without_touching_title(isolated_world: World) -> None:
@@ -224,6 +360,57 @@ def test_run_scene_generation_clears_old_content_and_stamps_fingerprint(
     assert updated.generated.blueprint_fingerprint == expected_fingerprint
     assert updated.generated.generated_at is not None
     assert updated.generated.outline == ["Revised beat one.", "Revised beat two."]
+
+
+def test_run_scene_generation_passes_continuity_context(
+    isolated_world: World,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.world.store import world_transaction
+
+    with world_transaction() as world:
+        world.story_bible.timeline = [
+            Event(id="event_a", title="Alpha"),
+            Event(id="event_b", title="Beta"),
+        ]
+        world.story_bible.event_relations = [
+            EventRelation(kind="follows", source_id="event_b", target_id="event_a"),
+        ]
+
+    character_id = _seed_character()
+    previous = create_scene("Previous")
+    previous.blueprint = SceneBlueprint(
+        premise="Earlier premise.",
+        purpose="Earlier purpose.",
+        character_ids=[character_id],
+        event_ids=["event_a"],
+    )
+    set_scene_text(previous.id, "Previous scene ending.")
+
+    scene = create_scene("Current")
+    scene.blueprint = SceneBlueprint(
+        premise="Current premise.",
+        purpose="Current purpose.",
+        character_ids=[character_id],
+        event_ids=["event_b"],
+    )
+
+    captured: dict[str, Any] = {}
+
+    class CapturingWorkflow:
+        def invoke(self, state: dict[str, Any]) -> None:
+            captured["state"] = state
+
+    monkeypatch.setattr(
+        "app.graphs.scene_generation.get_workflow",
+        lambda name, **kwargs: CapturingWorkflow(),
+    )
+
+    run_scene_generation(scene.id)
+
+    continuity_context = captured["state"]["continuity_context"]
+    assert "Previous scene ending." in continuity_context
+    assert "Maintain continuity with the surrounding scenes" in continuity_context
 
 
 def test_scene_is_stale_when_blueprint_changes_after_generation(world_with_scene: World) -> None:

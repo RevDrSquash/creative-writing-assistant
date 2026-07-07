@@ -37,6 +37,8 @@ from app.world.store import get_world
 
 _DRAFT_SYSTEM_PROMPT = """You are drafting scene prose for a fiction project.
 Use read-only tools to pull story bible and scene blueprint detail when needed.
+When the prompt includes related or next scenes by summary only, use read_scene or
+list_scenes to read their full prose if you need more detail for continuity.
 Write the full scene markdown inside <canvas>...</canvas> tags.
 You may use multiple canvas blocks; they append in order.
 Always close canvas tags. Everything inside the tags is scene prose, not chat."""
@@ -129,6 +131,7 @@ def _author_stances_node(models: dict[str, BaseChatModel] | None) -> Any:
             f"Constraints: {state.get('constraints', '') or '(none)'}\n"
             f"Notes: {state.get('notes', '') or '(none)'}"
         )
+        prompt = _append_continuity_context(prompt, state)
         result = _structured_invoke(SCENE_STANCES_NODE_ID, models, StanceList, prompt)
         bible = get_world().story_bible
         character_ids = state.get("character_ids", [])
@@ -168,6 +171,7 @@ def _outline_node(models: dict[str, BaseChatModel] | None) -> Any:
             f"Stances:\n{_stances_text(state.get('stances', []))}\n"
             f"Notes: {state.get('notes', '') or '(none)'}"
         )
+        prompt = _append_continuity_context(prompt, state)
         result = _structured_invoke(SCENE_OUTLINE_NODE_ID, models, OutlineBeats, prompt)
         beats = list(result.beats)
         update_scene_generated(state["scene_id"], outline=beats)
@@ -179,12 +183,14 @@ def _outline_node(models: dict[str, BaseChatModel] | None) -> Any:
 def _review_outline_node(models: dict[str, BaseChatModel] | None) -> Any:
     def node(state: SceneWorkflowState) -> dict[str, Any]:
         prompt = (
-            "Critique the outline against the premise, purpose, and character stances.\n\n"
+            "Critique the outline against the premise, purpose, character stances, "
+            "and continuity with surrounding scenes.\n\n"
             f"Premise: {state.get('premise', '')}\n"
             f"Purpose: {state.get('purpose', '')}\n"
             f"Stances:\n{_stances_text(state.get('stances', []))}\n"
             f"Outline:\n{_outline_text(state.get('outline', []))}"
         )
+        prompt = _append_continuity_context(prompt, state)
         result = _structured_invoke(SCENE_OUTLINE_REVIEW_NODE_ID, models, OutlineCritique, prompt)
         return {"critique": result.critique}
 
@@ -238,6 +244,7 @@ def _draft_prose_node(models: dict[str, BaseChatModel] | None) -> Any:
             f"Constraints: {state.get('constraints', '') or '(none)'}\n"
             f"Notes: {state.get('notes', '') or '(none)'}"
         )
+        prompt = _append_continuity_context(prompt, state)
         result = agent.invoke(
             {
                 "messages": [HumanMessage(content=prompt)],
@@ -287,6 +294,13 @@ def _arc_text(arc: list[str]) -> str:
     if not arc:
         return "(none)"
     return "\n".join(f"{index}. {beat}" for index, beat in enumerate(arc, start=1))
+
+
+def _append_continuity_context(prompt: str, state: SceneWorkflowState) -> str:
+    continuity_context = state.get("continuity_context", "")
+    if not continuity_context:
+        return prompt
+    return f"{prompt}\n\n{continuity_context}"
 
 
 def _character_context(character_ids: list[str]) -> str:

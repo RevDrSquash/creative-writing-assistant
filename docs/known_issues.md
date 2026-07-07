@@ -114,24 +114,19 @@ fix so the context is not lost between phases.
   chronology changes (edit relations), or offer a guided fix in the UI (move the effect, add
   the missing entry first, or adjust relations).
 
-## 7. Scene workflow has no cross-scene context, so adjacent scenes drift
+## 7. Scene workflow continuity is limited without event links or character state
 
-- **Severity:** Medium (correctness of generated content)
-- **Location:** `app/graphs/scene_workflow.py`, `app/graphs/context.py`, `app/tools/scene.py`
-  — `draft_scene`
-- **Introduced:** Phase 3 (scene workflow)
-- **Symptom:** The scene-writing workflow only sees the brief (premise, purpose, POV,
-  characters, constraints) for the scene it is generating. It receives no context from
-  surrounding scenes, so two scenes that take place close together (e.g. two parts of the same
-  conversation) can drift on shared details like location, time of day, who is present, and
-  ongoing action.
-- **Why it usually doesn't bite:** Scenes far apart in the story rarely share fine-grained
-  state, so the gaps are only obvious when scenes are tightly coupled.
-- **Possible fix:** Simple first iteration — always pass the previous scene as context to the
-  workflow. Event relationships (`follows`, `directly_follows`, `depends_on`, `during`) now
-  exist for semantics and visualization; full cross-scene context still depends on scene-to-event linking
-  (tracked in `docs/future_work.md`), which would let the workflow pull continuity-group neighbors
-  and list-ordered predecessors by relationship rather than always the previous scene.
+- **Severity:** Low (partially addressed; residual gaps)
+- **Location:** `app/world/scene_context.py`, `app/graphs/scene_workflow.py`
+- **Introduced:** Phase 3 (scene workflow); cross-scene context added 2026
+- **Symptom:** The scene-writing workflow now injects continuity context from neighboring scenes
+  (previous scene full prose; next and related scenes by summary). Selection uses enacted-event
+  chronology and `directly_follows` / `during` / `related_event_ids` links. Remaining gaps:
+  scenes without event links fall back to list order only; character stances are authored from
+  names alone without derived intimacies or world state at the scene's timeline position.
+- **Possible fix:** Include derived character/world state at the scene's enacted events in stance
+  and outline prompts (`read_world_state` at the latest enacted event). For list-order fallback,
+  consider explicit scene-to-scene links when event linking is absent.
 
 ## 9. Save retry blocks the NiceGUI event loop on transient file locks
 

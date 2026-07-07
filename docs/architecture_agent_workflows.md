@@ -49,8 +49,30 @@ manually in the scene editor. The workflow never writes blueprint fields.
 
 `run_scene_generation(scene_id)` validates that the blueprint is generatable (non-empty premise,
 at least one enacted event), snapshots a fingerprint of the blueprint, clears prior generated
-content and prose, invokes the graph, then stamps `generated_at` and the fingerprint on
-`Scene.generated`.
+content and prose, assembles **continuity context** from neighboring scenes (see below), invokes
+the graph, then stamps `generated_at` and the fingerprint on `Scene.generated`.
+
+### Continuity context
+
+Before invoking the graph, `run_scene_generation()` builds a formatted continuity block via
+`app/world/scene_context.py` and passes it as `continuity_context` on the workflow state.
+Selection rules:
+
+- **Previous scene** — the scene ranked immediately before the target by enacted-event
+  chronology (`chronological_order()` on blueprint `event_ids`). When scenes have no resolvable
+  enacted events, `World.scenes` list order is the fallback.
+- **Next scene** — the scene ranked immediately after the target (summary only).
+- **Related scenes** — scenes enacting events linked to the target's enacted events by
+  `directly_follows` or `during`, plus scenes enacting blueprint `related_event_ids`. Deduped
+  against previous/next (a neighbor appears in only one role).
+
+Context depth: **full prose** for the previous scene (with a defensive character cap), **title and
+summary only** for next and related scenes. The draft node may call `read_scene` for full prose of
+related scenes when summaries are not enough.
+
+The continuity block and explicit continuity instructions are injected into the **stances**,
+**outline**, **review outline**, and **draft prose** prompts. The review node critiques the
+outline for continuity breaks against this context. The **summarize** node does not receive it.
 
 ### Staleness
 
@@ -66,7 +88,8 @@ will be discarded).
    `Scene.generated.stances`.
 2. **Outline** — produce the scene's beats as a list of short, concise statements. Writes to
    `Scene.generated.outline`.
-3. **Review outline** — critique the outline against premise, purpose, and stances.
+3. **Review outline** — critique the outline against premise, purpose, stances, and continuity
+   with surrounding scenes.
 4. **Revise outline** — apply the critique. The review/revise loop is bounded by a configurable
    maximum (default 1) rather than looping until satisfied, to cap cost and latency.
 5. **Draft prose** — write the scene Markdown. This node is tool-enabled (read-only bible/scene
