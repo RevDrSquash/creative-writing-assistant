@@ -44,6 +44,9 @@ worth preserving. These are not committed to a specific phase yet.
 * Scene workflow character state at timeline position: Stance and outline nodes still receive
   character names only. Pass derived intimacies and world state at the scene's enacted events
   (via replay / `read_world_state`) so emotional carryover matches the bible, not just prior prose.
+* Scene workflow blueprint-only continuity: Unwritten neighbors currently fall back to blueprint
+  fields when prose or summary is missing. Longer term, improve the workflow so blueprints alone
+  can reliably serve as continuity context even after scenes are written.
 
 ## Intimacy review workflow
 

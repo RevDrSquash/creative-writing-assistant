@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from app.tools.story_bible import upsert_character
 from app.world.models import Event, EventRelation, SceneBlueprint, World
 from app.world.scene import create_scene, set_scene_text
 from app.world.scene_context import (
@@ -31,13 +32,25 @@ def _scene_with_blueprint(
     related_event_ids: list[str] | None = None,
     markdown: str = "",
     summary: str = "",
+    premise: str = "Premise",
+    purpose: str = "Purpose",
+    pov: str = "",
+    arc: list[str] | None = None,
+    character_ids: list[str] | None = None,
+    constraints: str = "",
+    notes: str = "",
 ) -> str:
     scene = create_scene(title, summary=summary)
     scene.blueprint = SceneBlueprint(
-        premise="Premise",
-        purpose="Purpose",
+        premise=premise,
+        purpose=purpose,
+        pov=pov,
+        arc=arc or [],
+        character_ids=character_ids or [],
         event_ids=event_ids or [],
         related_event_ids=related_event_ids or [],
+        constraints=constraints,
+        notes=notes,
     )
     if markdown:
         set_scene_text(scene.id, markdown)
@@ -229,3 +242,104 @@ def test_previous_scene_prose_is_capped(isolated_world: World) -> None:
         "\n\n[... truncated ...]"
     )
     assert context.previous.markdown.endswith("[... truncated ...]")
+
+
+def test_format_previous_scene_uses_blueprint_when_no_prose(isolated_world: World) -> None:
+    upsert_character.invoke({"name": "Mira"})
+    character_id = get_world().story_bible.characters[0].id
+    _scene_with_blueprint(
+        "Earlier",
+        premise="She waits in the hall.",
+        purpose="Build tension before the meeting.",
+        arc=["She paces.", "Footsteps approach."],
+        character_ids=[character_id],
+    )
+    target = _scene_with_blueprint("Target")
+
+    context = build_scene_continuity_context(get_world(), target)
+    formatted = format_continuity_context(context)
+
+    assert context.previous is not None
+    assert context.previous.markdown == ""
+    assert context.previous.blueprint_text
+    assert "### Previous scene (blueprint — not yet written)" in formatted
+    assert "Premise: She waits in the hall." in formatted
+    assert "Purpose: Build tension before the meeting." in formatted
+    assert "Characters: Mira" in formatted
+    assert "1. She paces." in formatted
+    assert "(no prose yet)" not in formatted
+
+
+def test_format_summary_scene_uses_blueprint_when_no_summary(isolated_world: World) -> None:
+    event_a, event_b, _ = _seed_events_with_relations()
+    _scene_with_blueprint("Earlier", event_ids=[event_a], markdown="First prose.")
+    target = _scene_with_blueprint("Target", event_ids=[event_b])
+    _scene_with_blueprint(
+        "Later",
+        event_ids=["event_c"],
+        premise="They meet at dawn.",
+        purpose="Resolve the argument.",
+    )
+
+    context = build_scene_continuity_context(get_world(), target)
+    formatted = format_continuity_context(context)
+
+    assert context.next is not None
+    assert context.next.summary == ""
+    assert context.next.blueprint_text
+    assert "### Next scene" in formatted
+    assert "Blueprint:" in formatted
+    assert "Premise: They meet at dawn." in formatted
+    assert "Purpose: Resolve the argument." in formatted
+    assert "Summary: (none)" not in formatted
+
+
+def test_format_context_unchanged_when_prose_and_summary_present() -> None:
+    context = SceneContinuityContext(
+        previous=SceneSnapshot(
+            scene_id="scene_prev",
+            title="Previous",
+            summary="Ended tense.",
+            markdown="She closed the door.",
+            blueprint_text="Premise: unused",
+        ),
+        next=SceneSnapshot(
+            scene_id="scene_next",
+            title="Next",
+            summary="Opens elsewhere.",
+            blueprint_text="Premise: unused",
+        ),
+    )
+
+    formatted = format_continuity_context(context)
+
+    assert "### Previous scene (full prose)" in formatted
+    assert "She closed the door." in formatted
+    assert "blueprint — not yet written" not in formatted
+    assert "Premise: unused" not in formatted
+    assert "Summary: Opens elsewhere." in formatted
+    assert "Blueprint:" not in formatted
+
+
+def test_format_context_empty_blueprint_falls_back_to_placeholders() -> None:
+    context = SceneContinuityContext(
+        previous=SceneSnapshot(
+            scene_id="scene_prev",
+            title="Previous",
+            summary="",
+            markdown="",
+            blueprint_text="",
+        ),
+        next=SceneSnapshot(
+            scene_id="scene_next",
+            title="Next",
+            summary="",
+            blueprint_text="",
+        ),
+    )
+
+    formatted = format_continuity_context(context)
+
+    assert "(no prose yet)" in formatted
+    assert "Summary: (none)" in formatted
+    assert "Blueprint:" not in formatted

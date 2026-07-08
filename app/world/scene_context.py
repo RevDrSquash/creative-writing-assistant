@@ -26,6 +26,7 @@ class SceneSnapshot:
     title: str
     summary: str
     markdown: str = ""
+    blueprint_text: str = ""
 
 
 @dataclass
@@ -180,23 +181,74 @@ def _snapshot(world: World, scene: Scene, *, include_markdown: bool) -> SceneSna
     markdown = resolved.markdown if include_markdown else ""
     if include_markdown and len(markdown) > PREVIOUS_SCENE_PROSE_CAP:
         markdown = markdown[:PREVIOUS_SCENE_PROSE_CAP] + "\n\n[... truncated ...]"
+
+    needs_blueprint = (include_markdown and not markdown) or (
+        not include_markdown and not resolved.summary
+    )
+    blueprint_text = _blueprint_text(world, resolved) if needs_blueprint else ""
+
     return SceneSnapshot(
         scene_id=resolved.id,
         title=resolved.title,
         summary=resolved.summary,
         markdown=markdown,
+        blueprint_text=blueprint_text,
     )
 
 
-def _format_previous_scene(snapshot: SceneSnapshot) -> list[str]:
-    lines = [
-        "### Previous scene (full prose)",
-        f"Title: {snapshot.title} [id: {snapshot.scene_id}]",
+def _blueprint_text(world: World, scene: Scene) -> str:
+    blueprint = scene.blueprint
+    lines: list[str] = []
+
+    if blueprint.premise:
+        lines.append(f"Premise: {blueprint.premise}")
+    if blueprint.purpose:
+        lines.append(f"Purpose: {blueprint.purpose}")
+    if blueprint.pov:
+        lines.append(f"POV: {blueprint.pov}")
+
+    character_names = [
+        character.identity.name or "Unnamed"
+        for character_id in blueprint.character_ids
+        if (character := world.story_bible.get_character(character_id)) is not None
     ]
+    if character_names:
+        lines.append(f"Characters: {', '.join(character_names)}")
+
+    if blueprint.arc:
+        arc_text = "\n".join(
+            f"{index}. {beat}" for index, beat in enumerate(blueprint.arc, start=1)
+        )
+        lines.append(f"Arc:\n{arc_text}")
+
+    if blueprint.constraints:
+        lines.append(f"Constraints: {blueprint.constraints}")
+    if blueprint.notes:
+        lines.append(f"Notes: {blueprint.notes}")
+
+    return "\n".join(lines)
+
+
+def _format_previous_scene(snapshot: SceneSnapshot) -> list[str]:
+    if snapshot.markdown:
+        header = "### Previous scene (full prose)"
+    elif snapshot.blueprint_text:
+        header = "### Previous scene (blueprint — not yet written)"
+    else:
+        header = "### Previous scene (full prose)"
+
+    lines = [header, f"Title: {snapshot.title} [id: {snapshot.scene_id}]"]
     if snapshot.summary:
         lines.append(f"Summary: {snapshot.summary}")
     lines.append("")
-    lines.append(snapshot.markdown or "(no prose yet)")
+
+    if snapshot.markdown:
+        lines.append(snapshot.markdown)
+    elif snapshot.blueprint_text:
+        lines.append(snapshot.blueprint_text)
+    else:
+        lines.append("(no prose yet)")
+
     return lines
 
 
@@ -207,6 +259,9 @@ def _format_summary_scene(label: str, snapshot: SceneSnapshot) -> list[str]:
     ]
     if snapshot.summary:
         lines.append(f"Summary: {snapshot.summary}")
+    elif snapshot.blueprint_text:
+        lines.append("Blueprint:")
+        lines.append(snapshot.blueprint_text)
     else:
         lines.append("Summary: (none)")
     return lines

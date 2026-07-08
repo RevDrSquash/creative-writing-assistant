@@ -67,8 +67,10 @@ Selection rules:
   against previous/next (a neighbor appears in only one role).
 
 Context depth: **full prose** for the previous scene (with a defensive character cap), **title and
-summary only** for next and related scenes. The draft node may call `read_scene` for full prose of
-related scenes when summaries are not enough.
+summary only** for next and related scenes. When a neighbor has no prose or summary yet, its
+**blueprint** (premise, purpose, POV, arc, characters, constraints, notes) is included instead,
+clearly labeled as planned content rather than written prose. The draft node may call `read_scene`
+for full prose of related scenes when summaries are not enough.
 
 The continuity block and explicit continuity instructions are injected into the **stances**,
 **outline**, **review outline**, and **draft prose** prompts. The review node critiques the
