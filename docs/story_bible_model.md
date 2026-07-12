@@ -141,7 +141,7 @@ At most one directed edge is allowed per ordered pair (any kind). A directed edg
 `during` edge between the same two events are mutually exclusive.
 
 Chronology is derived entirely from directed edges for replay, display (`read_timeline`, the
-Timeline page list), and derived-state "as of" selectors. Among events with no directed path,
+Timeline page graph and editor), and derived-state "as of" selectors. Among events with no directed path,
 creation order in `timeline` is the tie-breaker. `chronological_order()` performs a stable
 topological sort of directed edges (`target` before `source`), using creation order to break
 ties. Directed cycles are rejected when adding a relation; legacy cycles are warned and replay
@@ -158,11 +158,15 @@ in tools and the UI but do not block edits. Structural relation errors (unknown 
 self-loops, duplicate edges, cycles) are rejected at the tool and form boundary.
 
 The Timeline page renders the relations as a Mermaid graph that flows left-to-right in
-chronological order (earlier events on the left). Directed edges encode the kind by line style
-(solid `follows`, thick `directly_follows`, dotted `depends_on`) with a legend below the graph
-rather than per-edge labels, and cycle-participating edges are drawn red. `during` is *not*
-drawn as an edge: events linked (transitively) by `during` are wrapped in a dashed outlined
-subgraph box.
+chronological order (earlier events on the left). The diagram renders at its natural size
+(not shrink-to-fit) inside a horizontally scrollable container: the mouse wheel scrolls the
+graph sideways, Ctrl+wheel (or the pinned zoom buttons) zooms it. Nodes are
+clickable: selecting one highlights it and opens an inline editor pane beneath the graph.
+Quick-connect buttons create a relation from the selected event to a subsequently clicked
+node. Directed edges encode the kind by line style (solid `follows`, thick `directly_follows`,
+dotted `depends_on`) with a legend below the graph rather than per-edge labels, and
+cycle-participating edges are drawn red. `during` is *not* drawn as an edge: events linked
+(transitively) by `during` are wrapped in a dashed outlined subgraph box.
 
 ### Signal
 

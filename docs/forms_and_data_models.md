@@ -129,10 +129,14 @@ Story Bible forms render one field per canonical data-model field.
 
 The UI should present characters, world facts, and events as structured forms rather than raw JSON.
 
-The Timeline page shows an event-relationship graph (Mermaid) above the chronologically ordered
-event list. Events are appended from the UI; relationships define order.
-Each event detail form includes a Relationships section for adding and removing typed edges to
-other events.
+The Timeline page shows a scrollable, zoomable event-relationship graph (Mermaid).
+Clicking a graph node opens an inline editor pane for that event (replacing the old
+chronological list). Events are appended from the UI and selected automatically;
+relationships define order. Quick-connect buttons on the selected event ("Follows…",
+"Directly follows…", "Depends on…", "During…") let the user click a second graph node
+to create a typed edge. Each event editor still includes a Relationships section for
+adding reverse-direction edges and removing existing ones. The deep-link route
+`/workspace/events/{id}` remains available for the same editor.
 
 ## Validation Behavior
 

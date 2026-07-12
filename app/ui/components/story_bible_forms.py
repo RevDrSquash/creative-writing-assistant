@@ -18,6 +18,7 @@ from app.world.models import (
     Character,
     Event,
     EventRelation,
+    EventRelationKind,
     Intimacy,
     RemoveIntimacy,
     RemoveWorldStateEntry,
@@ -60,6 +61,29 @@ _RELATION_DIRECTION_OPTIONS = {
     "this_follows": "This event follows the other",
     "other_follows": "The other event follows this one",
 }
+_CONNECT_KIND_BUTTONS: dict[EventRelationKind, str] = {
+    "follows": "Follows…",
+    "directly_follows": "Directly follows…",
+    "depends_on": "Depends on…",
+    "during": "During…",
+}
+_SELECTED_NODE_STYLE = "fill:#e3f2fd,stroke:#1976d2,stroke-width:3px"
+_GRAPH_ZOOM_MIN = 0.5
+_GRAPH_ZOOM_MAX = 2.0
+_GRAPH_ZOOM_STEP = 0.25
+_GRAPH_ZOOM_DEFAULT = 1.0
+_MERMAID_CONFIG = {"flowchart": {"useMaxWidth": False}}
+# Wheel over the graph scrolls it horizontally; Ctrl+wheel zooms (emitted to the
+# server as +1/-1 steps). preventDefault stops the page from scrolling instead.
+_GRAPH_WHEEL_JS = """(e) => {
+    if (e.ctrlKey) {
+        e.preventDefault();
+        emit(e.deltaY < 0 ? 1 : -1);
+    } else if (e.deltaY !== 0 && !e.shiftKey) {
+        e.preventDefault();
+        e.currentTarget.scrollLeft += e.deltaY;
+    }
+}"""
 
 
 # --- shared helpers ---------------------------------------------------------
@@ -505,17 +529,119 @@ def render_timeline_form(active_path: str) -> None:
 
 def _render_timeline_list() -> None:
     bible = get_world().story_bible
+    state: dict[str, object] = {
+        "selected_id": None,
+        "connect_kind": None,
+        "zoom": _GRAPH_ZOOM_DEFAULT,
+    }
+
     ui.label("Timeline").classes("text-xl font-semibold")
     ui.label(
         "Story events linked by relationships. Chronology is derived from relations; "
-        "unrelated events fall back to creation order."
+        "unrelated events fall back to creation order. Click a graph node to edit it."
     ).classes("text-grey-7")
 
-    if bible.timeline:
-        mermaid_source = _build_timeline_mermaid(bible)
+    def refresh_graph_and_pane() -> None:
+        graph_section.refresh()
+        selection_pane.refresh()
+
+    def on_structure_change() -> None:
+        # Title/relation changes update node labels and edges; keep the editor mounted.
+        graph_section.refresh()
+
+    def select_event(event_id: str | None) -> None:
+        state["selected_id"] = event_id
+        state["connect_kind"] = None
+        refresh_graph_and_pane()
+
+    def apply_connect(target_id: str) -> None:
+        selected_id = state["selected_id"]
+        connect_kind = state["connect_kind"]
+        if not isinstance(selected_id, str) or not isinstance(connect_kind, str):
+            return
+        try:
+            normalize_relation(bible, connect_kind, selected_id, target_id)
+        except RelationValidationError as exc:
+            ui.notify(str(exc), type="negative")
+            return
+        bible.event_relations.append(
+            EventRelation(kind=connect_kind, source_id=selected_id, target_id=target_id)
+        )
+        save_world_ui()
+        state["connect_kind"] = None
+        refresh_graph_and_pane()
+
+    def on_node_click(event_args) -> None:
+        # In the browser the mermaid DOM id is "<element>_mermaid-flowchart-<id>-<n>";
+        # NiceGUI strips the outer parts but leaves the "flowchart-" diagram prefix.
+        node_id = event_args.node_id.removeprefix("flowchart-")
+        if bible.get_event(node_id) is None:
+            return
+        if state["connect_kind"] is not None:
+            apply_connect(node_id)
+            return
+        select_event(node_id)
+
+    def current_zoom() -> float:
+        zoom = state["zoom"]
+        return float(zoom) if isinstance(zoom, (int, float)) else _GRAPH_ZOOM_DEFAULT
+
+    def set_zoom(factor: float) -> None:
+        clamped = max(_GRAPH_ZOOM_MIN, min(_GRAPH_ZOOM_MAX, factor))
+        state["zoom"] = round(clamped, 2)
+        # Restyle the existing diagram in place so zooming does not re-render the
+        # SVG or reset the horizontal scroll position.
+        diagram = state.get("diagram")
+        zoom_label = state.get("zoom_label")
+        if isinstance(diagram, ui.mermaid) and not diagram.is_deleted:
+            diagram.style(f"zoom: {state['zoom']}")
+        if isinstance(zoom_label, ui.button) and not zoom_label.is_deleted:
+            zoom_label.set_text(f"{int(current_zoom() * 100)}%")
+
+    def step_zoom(steps: int) -> None:
+        set_zoom(current_zoom() + steps * _GRAPH_ZOOM_STEP)
+
+    @ui.refreshable
+    def graph_section() -> None:
+        if not bible.timeline:
+            return
+        selected_id = state["selected_id"] if isinstance(state["selected_id"], str) else None
+        zoom = current_zoom()
+        mermaid_source = _build_timeline_mermaid(bible, selected_id=selected_id)
         with ui.card().classes("w-full"):
-            ui.label("Event graph").classes("text-lg font-semibold")
-            ui.mermaid(mermaid_source)
+            with ui.row().classes("w-full items-center no-wrap gap-2"):
+                ui.label("Event graph").classes("text-lg font-semibold")
+                ui.button(
+                    icon="zoom_out",
+                    on_click=lambda: step_zoom(-1),
+                ).props("flat round dense").tooltip("Zoom out (Ctrl+wheel)")
+                zoom_label = ui.button(
+                    f"{int(zoom * 100)}%",
+                    on_click=lambda: set_zoom(_GRAPH_ZOOM_DEFAULT),
+                ).props("flat dense")
+                zoom_label.tooltip("Reset zoom")
+                ui.button(
+                    icon="zoom_in",
+                    on_click=lambda: step_zoom(1),
+                ).props("flat round dense").tooltip("Zoom in (Ctrl+wheel)")
+            container = ui.element("div").classes("w-full overflow-x-auto")
+            container.mark("timeline-graph-scroll")
+            container.on(
+                "wheel",
+                handler=lambda e: step_zoom(int(e.args)),
+                js_handler=_GRAPH_WHEEL_JS,
+                throttle=0.05,
+            )
+            with container:
+                diagram = ui.mermaid(
+                    mermaid_source,
+                    config=_MERMAID_CONFIG,
+                    on_node_click=on_node_click,
+                )
+                diagram.mark("timeline-graph")
+                diagram.style(f"zoom: {zoom}; transform-origin: top left;")
+            state["diagram"] = diagram
+            state["zoom_label"] = zoom_label
             _render_timeline_legend()
 
         relation_warnings = relation_diagnostics(bible)
@@ -528,31 +654,75 @@ def _render_timeline_list() -> None:
                 for warning in effect_warnings:
                     ui.label(warning.message).classes("text-sm")
 
+    graph_section()
+
     def append_event() -> None:
         event = Event()
         event.id = unique_slug("event_", "", {item.id for item in bible.timeline})
         bible.timeline.append(event)
         save_world_ui()
-        ui.navigate.to(f"/workspace/events/{event.id}")
+        select_event(event.id)
+
+    def start_connect(kind: EventRelationKind) -> None:
+        state["connect_kind"] = kind
+        selection_pane.refresh()
+
+    def cancel_connect() -> None:
+        state["connect_kind"] = None
+        selection_pane.refresh()
 
     @ui.refreshable
-    def rows() -> None:
-        ordered = chronological_order(bible)
-        if not ordered:
-            ui.label("No events yet.").classes("text-grey-7")
-        for chron_index, event in enumerate(ordered):
-            with ui.card().classes("w-full"):
-                with ui.row().classes("w-full items-center no-wrap gap-2"):
-                    ui.label(f"{chron_index + 1}.").classes("text-grey-7 font-mono")
-                    ui.label(event.title or "Untitled event").classes("grow font-semibold")
-                    ui.button(
-                        "Open",
-                        on_click=lambda event=event: ui.navigate.to(
-                            f"/workspace/events/{event.id}"
-                        ),
-                    ).props("flat")
+    def selection_pane() -> None:
+        selected_id = state["selected_id"] if isinstance(state["selected_id"], str) else None
+        event = bible.get_event(selected_id) if selected_id else None
+        if event is None:
+            if not bible.timeline:
+                ui.label("No events yet.").classes("text-grey-7")
+            else:
+                ui.label("Click an event in the graph to view and edit it.").classes("text-grey-7")
+            return
 
-    rows()
+        chron_index = _chronological_event_index(bible, event.id)
+        connect_kind = state["connect_kind"]
+
+        with ui.row().classes("w-full items-center no-wrap gap-2"):
+            ui.label(f"Event {chron_index + 1} of {len(chronological_order(bible))}").classes(
+                "text-grey-7"
+            )
+            ui.space()
+            _delete_button(
+                lambda: _confirm_delete_event(
+                    event,
+                    on_deleted=lambda: select_event(None),
+                ),
+                "Delete event",
+            )
+            ui.button(
+                icon="close",
+                on_click=lambda: select_event(None),
+            ).props("flat round dense").tooltip("Deselect")
+
+        with ui.row().classes("w-full items-center gap-2 flex-wrap"):
+            ui.label("Connect:").classes("text-sm text-grey-7")
+            for kind, label in _CONNECT_KIND_BUTTONS.items():
+                button = ui.button(
+                    label,
+                    on_click=lambda kind=kind: start_connect(kind),
+                ).props("flat dense")
+                button.mark(f"connect-{kind}")
+                if connect_kind == kind:
+                    button.props("color=primary")
+
+        if isinstance(connect_kind, str):
+            with ui.row().classes("w-full items-center no-wrap gap-2"):
+                ui.label("Click the other event in the graph to create the connection...").classes(
+                    "text-sm text-primary grow"
+                )
+                ui.button("Cancel", on_click=cancel_connect).props("flat dense")
+
+        _render_event_editor(event, on_structure_change=on_structure_change)
+
+    selection_pane()
     ui.button(
         "Add event",
         icon="add",
@@ -574,9 +744,28 @@ def _render_event_detail(event: Event) -> None:
         ui.space()
         _delete_button(lambda: _confirm_delete_event(event), "Delete event")
 
+    _render_event_editor(event)
+
+
+def _render_event_editor(
+    event: Event,
+    *,
+    on_structure_change: Callable[[], None] | None = None,
+) -> None:
+    """Render the editable body of an event (title, effects, signals, relationships).
+
+    ``on_structure_change`` is called when graph-visible fields change (title, relations)
+    so the timeline Mermaid diagram can refresh without unmounting this editor.
+    """
+
+    bible = get_world().story_bible
+    chron_index = _chronological_event_index(bible, event.id)
+    notify_structure = on_structure_change or (lambda: None)
+
     with ui.card().classes("w-full"):
         _field_label("Title")
-        _bound_input(event, "title", placeholder="What happens, objectively...")
+        title_input = _bound_input(event, "title", placeholder="What happens, objectively...")
+        title_input.on_value_change(lambda _: notify_structure())
         _field_label("Description")
         _bound_textarea(event, "description", placeholder="The objective story beat...")
 
@@ -653,8 +842,13 @@ def _render_event_detail(event: Event) -> None:
             all_relations = relations.incoming + relations.outgoing + relations.concurrent
             if not all_relations:
                 ui.label("No relationships.").classes("text-grey-7")
+
+            def refresh_relations() -> None:
+                relations_section.refresh()
+                notify_structure()
+
             for relation in all_relations:
-                _render_event_relation_row(event, relation, relations_section.refresh)
+                _render_event_relation_row(event, relation, refresh_relations)
 
         relations_section()
 
@@ -731,6 +925,7 @@ def _render_event_detail(event: Event) -> None:
                     bible.event_relations.append(relation)
                     save_world_ui()
                     relations_section.refresh()
+                    notify_structure()
 
                 ui.button("Add relationship", icon="add", on_click=add_relation).props("flat")
 
@@ -774,7 +969,7 @@ def _during_groups(bible: StoryBible) -> list[list[str]]:
     return [members for members in groups.values() if len(members) >= 2]
 
 
-def _build_timeline_mermaid(bible: StoryBible) -> str:
+def _build_timeline_mermaid(bible: StoryBible, selected_id: str | None = None) -> str:
     ordered = chronological_order(bible)
     conflict_ids = {
         diagnostic.relation_id
@@ -831,6 +1026,10 @@ def _build_timeline_mermaid(bible: StoryBible) -> str:
 
     for idx in conflict_link_indices:
         lines.append(f"  linkStyle {idx} stroke:{_CONFLICT_EDGE_COLOR},stroke-width:2px;")
+
+    known_ids = {event.id for event in ordered}
+    if selected_id is not None and selected_id in known_ids:
+        lines.append(f"  style {selected_id} {_SELECTED_NODE_STYLE}")
 
     return "\n".join(lines)
 
@@ -1047,7 +1246,11 @@ def _render_character_effect_row(
         _delete_button(delete_effect, "Remove effect")
 
 
-async def _confirm_delete_event(event: Event) -> None:
+async def _confirm_delete_event(
+    event: Event,
+    *,
+    on_deleted: Callable[[], None] | None = None,
+) -> None:
     title = event.title or "this event"
     with ui.dialog() as dialog, ui.card():
         ui.label(f"Delete '{title}' and its signals? This cannot be undone.")
@@ -1066,7 +1269,10 @@ async def _confirm_delete_event(event: Event) -> None:
         if item.source_id != event.id and item.target_id != event.id
     ]
     save_world_ui()
-    ui.navigate.to("/workspace/timeline")
+    if on_deleted is not None:
+        on_deleted()
+    else:
+        ui.navigate.to("/workspace/timeline")
 
 
 def _entry_options_before(bible: StoryBible, chron_index: int) -> dict[str, str]:

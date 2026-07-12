@@ -241,9 +241,11 @@ async def test_timeline_add_event_opens_event_form(
     await user.open("/workspace/timeline")
     await user.should_see("No events yet.")
     user.find("Add event").click()
+    await user.should_see("Event graph")
     await user.should_see("World State Effects")
     await user.should_see("Signals")
     await user.should_see("Relationships")
+    await user.should_see("Connect:")
 
     stored = json.loads((isolated_data_dir / "world.json").read_text(encoding="utf-8"))
     assert len(stored["story_bible"]["timeline"]) == 1
@@ -268,6 +270,7 @@ async def test_timeline_graph_and_event_relationships(
 
     await user.open("/workspace/timeline")
     await user.should_see("Event graph")
+    await user.should_see("Click an event in the graph to view and edit it.")
 
 
 async def test_relationship_direction_control_reverses_stored_edge(
@@ -296,6 +299,82 @@ async def test_relationship_direction_control_reverses_stored_edge(
     # other (timeline[0]) follows this (timeline[1]): source is the other, target is this.
     assert relations[0]["source_id"] == timeline[0]["id"]
     assert relations[0]["target_id"] == timeline[1]["id"]
+
+
+async def test_timeline_node_click_selects_event(
+    user: User,
+    isolated_data_dir: Path,
+) -> None:
+    from app.persistence.world import JsonFileWorldStore, default_world
+
+    world = default_world()
+    world.story_bible.timeline.append(Event(id="evt_alpha", title="Alpha"))
+    JsonFileWorldStore(isolated_data_dir / "world.json").save(world)
+
+    await user.open("/workspace/timeline")
+    await user.should_see("Click an event in the graph to view and edit it.")
+    await user.should_not_see("World State Effects")
+
+    # The browser sends the full mermaid DOM id ``<element>_mermaid-flowchart-<id>-<n>``;
+    # NiceGUI strips the outer parts, leaving ``flowchart-<id>`` for the handler.
+    user.find(marker="timeline-graph").trigger("node_click", "c1_mermaid-flowchart-evt_alpha-0")
+    await user.should_see("World State Effects")
+    await user.should_see("Alpha")
+    await user.should_see("Connect:")
+
+
+async def test_timeline_quick_connect_creates_relation(
+    user: User,
+    isolated_data_dir: Path,
+) -> None:
+    from app.persistence.world import JsonFileWorldStore, default_world
+
+    world = default_world()
+    world.story_bible.timeline.extend(
+        [
+            Event(id="evt_a", title="Alpha"),
+            Event(id="evt_b", title="Beta"),
+        ]
+    )
+    JsonFileWorldStore(isolated_data_dir / "world.json").save(world)
+
+    await user.open("/workspace/timeline")
+    user.find(marker="timeline-graph").trigger("node_click", "c1_mermaid-flowchart-evt_b-0")
+    await user.should_see("Connect:")
+
+    user.find(marker="connect-follows").click()
+    await user.should_see("Click the other event in the graph to create the connection...")
+    user.find(marker="timeline-graph").trigger("node_click", "c1_mermaid-flowchart-evt_a-0")
+
+    stored = json.loads((isolated_data_dir / "world.json").read_text(encoding="utf-8"))
+    relations = stored["story_bible"]["event_relations"]
+    assert len(relations) == 1
+    assert relations[0]["kind"] == "follows"
+    assert relations[0]["source_id"] == "evt_b"
+    assert relations[0]["target_id"] == "evt_a"
+
+
+async def test_timeline_quick_connect_rejects_self_loop(
+    user: User,
+    isolated_data_dir: Path,
+) -> None:
+    from app.persistence.world import JsonFileWorldStore, default_world
+
+    world = default_world()
+    world.story_bible.timeline.append(Event(id="evt_solo", title="Solo"))
+    JsonFileWorldStore(isolated_data_dir / "world.json").save(world)
+
+    await user.open("/workspace/timeline")
+    user.find(marker="timeline-graph").trigger("node_click", "c1_mermaid-flowchart-evt_solo-0")
+    await user.should_see("Connect:")
+    user.find(marker="connect-follows").click()
+    await user.should_see("Click the other event in the graph to create the connection...")
+    user.find(marker="timeline-graph").trigger("node_click", "c1_mermaid-flowchart-evt_solo-0")
+
+    stored = json.loads((isolated_data_dir / "world.json").read_text(encoding="utf-8"))
+    assert stored["story_bible"]["event_relations"] == []
+    # Connect mode stays active so the user can pick a different target.
+    await user.should_see("Click the other event in the graph to create the connection...")
 
 
 async def test_new_scene_button_creates_first_scene(
@@ -542,6 +621,26 @@ def test_build_timeline_mermaid_marks_cycle_edges_red() -> None:
     source = _build_timeline_mermaid(bible)
 
     assert "linkStyle 0 stroke:#e53935" in source
+
+
+def test_build_timeline_mermaid_highlights_selected_event() -> None:
+    bible = _three_event_bible()
+    bible.event_relations.append(
+        EventRelation(kind="follows", source_id="evt_b", target_id="evt_a")
+    )
+
+    source = _build_timeline_mermaid(bible, selected_id="evt_b")
+
+    assert "style evt_b fill:#e3f2fd,stroke:#1976d2,stroke-width:3px" in source
+    assert "style evt_a " not in source
+
+
+def test_build_timeline_mermaid_ignores_unknown_selected_id() -> None:
+    bible = _three_event_bible()
+
+    source = _build_timeline_mermaid(bible, selected_id="missing")
+
+    assert "style missing" not in source
 
 
 async def test_scene_page_renders_while_generation_in_progress(

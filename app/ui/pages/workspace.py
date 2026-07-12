@@ -82,7 +82,13 @@ def _workspace_page(active_path: str, scene_id: str | None = None) -> None:
 
 
 def _render_story_bible_panel(active_path: str) -> None:
-    with ui.scroll_area().classes("w-full h-full min-h-0"):
+    scroll = ui.scroll_area().classes("w-full h-full min-h-0")
+    # Quasar's scroll-area content wrapper is absolutely positioned and sizes to its
+    # content, so wide children (e.g. the timeline graph) would expand every "w-full"
+    # descendant instead of overflowing their own scroll container. Pin it to the
+    # panel width so inner horizontal scrolling works.
+    scroll.props('content-style="width: 100%" content-active-style="width: 100%"')
+    with scroll:
         with ui.column().classes("w-full gap-4 pr-4"):
             if active_path == "/workspace/narrative-style" or active_path == "/workspace":
                 render_narrative_style_form()
