@@ -73,8 +73,9 @@ clearly labeled as planned content rather than written prose. The draft node may
 for full prose of related scenes when summaries are not enough.
 
 The continuity block and explicit continuity instructions are injected into the **stances**,
-**outline**, **review outline**, and **draft prose** prompts. The review node critiques the
-outline for continuity breaks against this context. The **summarize** node does not receive it.
+**outline**, **review plan**, **draft prose**, **review prose**, and **revise** prompts. The
+plan-review node critiques stances and outline for continuity breaks against this context; the
+prose-review node does the same for drafted prose. The **summarize** node does not receive it.
 
 ### Staleness
 
@@ -90,17 +91,55 @@ will be discarded).
    `Scene.generated.stances`.
 2. **Outline** — produce the scene's beats as a list of short, concise statements. Writes to
    `Scene.generated.outline`.
-3. **Review outline** — critique the outline against premise, purpose, stances, and continuity
-   with surrounding scenes.
-4. **Revise outline** — apply the critique. The review/revise loop is bounded by a configurable
-   maximum (default 1) rather than looping until satisfied, to cap cost and latency.
+3. **Review plan** — critique the stances **and** outline against premise, purpose, and
+   continuity with surrounding scenes. Structured critique only; nothing is mutated.
+4. **Revise plan** — a tool-enabled ReAct sub-loop that applies targeted edits via
+   `edit_outline` (batched text-anchored ops) and `update_stance` (field-level updates). The
+   agent works on injected outline/stances state; the node persists the result through
+   `update_scene_generated`. The review/revise loop is bounded by a configurable maximum
+   (default 1) rather than looping until satisfied, to cap cost and latency.
 5. **Draft prose** — write the scene Markdown. This node is tool-enabled (read-only bible/scene
    tools) so it can pull extra detail while drafting.
-6. **Summarize** — produce the one-line scene `summary` from the drafted prose. The title is
-   never touched.
+6. **Review prose** — critique the drafted prose against premise, purpose, stances, outline,
+   and continuity. Structured critique only.
+7. **Revise prose** — a tool-enabled ReAct sub-loop that applies targeted search/replace edits
+   via `edit_prose`. The agent works on `current_scene`; the node persists through
+   `set_scene_text`. Bounded by the same `max_revisions` counter (tracked separately as
+   `prose_revision_count`).
+8. **Summarize** — produce the one-line scene `summary` from the (possibly revised) prose. The
+   title is never touched.
 
 The former **Formalize essential details** node was removed: the blueprint *is* the input; the
 workflow does not rewrite premise or purpose.
+
+### Edit-tool semantics
+
+Workflow revise nodes use batched, text-anchored edit tools rather than regenerating whole
+artifacts (which invites drift on untouched material):
+
+- **`edit_outline`** — one tool call carries a list of ops (`replace`, `add_after`, `add_first`,
+  `delete`). Each op matches a beat by a unique case-insensitive substring fragment; zero or
+  multiple matches fail that op. Ops apply in order; the tool returns a per-op success/error
+  report so the agent can fix failures in a follow-up call.
+- **`update_stance`** — updates provided fields on one character's existing stance.
+  `character_id` is resolved against scene participants (hallucinated ids are rejected).
+- **`edit_prose`** — one tool call carries a list of `{match, replacement}` ops with the same
+  unique-match and partial-application semantics. Empty replacement deletes; insert by
+  replacing an anchor with the anchor plus new text.
+
+These tools mutate the revise agent's injected state, not the world. The enclosing workflow
+node writes through after the agent finishes.
+
+Models may emit several tool calls in one turn, and LangGraph executes them in parallel within a
+single step — so every state key these tools write must carry a reducer, or the run dies with
+`INVALID_CONCURRENT_GRAPH_UPDATE`. The agent state schemas (`app/graphs/state.py`) handle this:
+
+- **`stances`** uses a per-character merge reducer. `update_stance` returns only the stance it
+  changed (never the full list), so parallel updates to different characters combine losslessly.
+- **`outline`** and **`current_scene`** use a last-write-wins reducer. Batching is built into
+  `edit_outline`/`edit_prose` and the prompts instruct one batched call, so concurrent full
+  rewrites are an edge case; if a model still issues two calls in one turn, the later one wins
+  and the per-op tool reports let the agent notice and re-apply.
 
 ### Outputs and storage
 
@@ -110,11 +149,12 @@ user/agent-editable inputs only. Generated outline and stances appear in a **Gen
 in the scene editor (still user-editable, but regenerate overwrites them). See
 [forms_and_data_models.md](forms_and_data_models.md).
 
-The structured-output nodes (stances, outline, review, revise, summary) build their model
-with `streaming=False`. They are one-shot `with_structured_output(...).invoke()` calls that do
-not need token streaming, and streaming aggregation serializes the structured `parsed` payload,
+The structured-output nodes (stances, outline, plan review, prose review, summary) build their
+model with `streaming=False`. They are one-shot `with_structured_output(...).invoke()` calls that
+do not need token streaming, and streaming aggregation serializes the structured `parsed` payload,
 which emits noisy Pydantic serializer warnings; the non-streaming path excludes that field.
-The drafting node keeps the default streaming model and still uses canvas tags internally.
+The drafting and revise nodes keep the default streaming model; drafting still uses canvas tags
+internally.
 
 ### Background execution
 

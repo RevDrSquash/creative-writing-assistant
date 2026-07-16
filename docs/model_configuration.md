@@ -39,9 +39,11 @@ Scene-writing workflow nodes (`generate_scene`):
 
 * `scene_stances` - "Scene: Author Stances", defaulting to `standard`.
 * `scene_outline` - "Scene: Outline", defaulting to `standard`.
-* `scene_outline_review` - "Scene: Review Outline", defaulting to `small`.
-* `scene_outline_revise` - "Scene: Revise Outline", defaulting to `standard`.
+* `scene_outline_review` - "Scene: Review Plan", defaulting to `small`.
+* `scene_outline_revise` - "Scene: Revise Plan", defaulting to `standard`.
 * `scene_draft` - "Scene: Draft Prose", defaulting to `large`.
+* `scene_prose_review` - "Scene: Review Prose", defaulting to `small`.
+* `scene_prose_revise` - "Scene: Revise Prose", defaulting to `large`.
 * `scene_summary` - "Scene: Summary", defaulting to `small`.
 
 Future graph nodes should be added to the registry with their own defaults before the UI exposes selectors for them.

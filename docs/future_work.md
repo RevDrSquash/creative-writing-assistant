@@ -14,10 +14,10 @@ worth preserving. These are not committed to a specific phase yet.
 * Copy scene before regenerate: When regenerating a stale scene, offer an option to duplicate the
   existing scene (blueprint, generated artifacts, and prose) to a new scene before discarding content
   on regenerate.
-* Scene review (replaces the outline review): Replace the current `review_outline` /
-  `revise_outline` step with a review of the *finished* scene. After the user kicks off the
-  workflow from a proposed scene, the final scene is reviewed in parallel by multiple reviewers,
-  each producing a critique focused on a different aspect:
+* Parallel prose reviewers (extends the single prose review): The workflow already has a bounded
+  plan review/revise loop (stances + outline) and a single prose review/revise loop after drafting.
+  Extend the prose review step into multiple parallel reviewers, each producing a critique focused
+  on a different aspect, then merge into one revise pass:
   * Continuity reviewer: flags significant details the scene added that are not already in the
     story bible (these should be removed, or — eventually — proposed as additions to the world),
     and inconsistencies between the scene and the story bible.

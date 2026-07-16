@@ -19,6 +19,8 @@ from app.models.config import (
     SCENE_OUTLINE_NODE_ID,
     SCENE_OUTLINE_REVIEW_NODE_ID,
     SCENE_OUTLINE_REVISE_NODE_ID,
+    SCENE_PROSE_REVIEW_NODE_ID,
+    SCENE_PROSE_REVISE_NODE_ID,
     SCENE_STANCES_NODE_ID,
     SCENE_SUMMARY_NODE_ID,
     STANDARD_CONFIG_ID,
@@ -44,6 +46,8 @@ def _default_selections() -> dict[str, str]:
         SCENE_OUTLINE_REVIEW_NODE_ID: "small",
         SCENE_OUTLINE_REVISE_NODE_ID: STANDARD_CONFIG_ID,
         SCENE_DRAFT_NODE_ID: "large",
+        SCENE_PROSE_REVIEW_NODE_ID: "small",
+        SCENE_PROSE_REVISE_NODE_ID: "large",
         SCENE_SUMMARY_NODE_ID: "small",
     }
 

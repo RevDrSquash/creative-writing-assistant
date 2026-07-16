@@ -20,6 +20,8 @@ SCENE_OUTLINE_NODE_ID = "scene_outline"
 SCENE_OUTLINE_REVIEW_NODE_ID = "scene_outline_review"
 SCENE_OUTLINE_REVISE_NODE_ID = "scene_outline_revise"
 SCENE_DRAFT_NODE_ID = "scene_draft"
+SCENE_PROSE_REVIEW_NODE_ID = "scene_prose_review"
+SCENE_PROSE_REVISE_NODE_ID = "scene_prose_revise"
 SCENE_SUMMARY_NODE_ID = "scene_summary"
 
 
@@ -70,15 +72,25 @@ GRAPH_NODES: tuple[GraphNode, ...] = (
     GraphNode(SCENE_OUTLINE_NODE_ID, "Scene: Outline", default_config_id=STANDARD_CONFIG_ID),
     GraphNode(
         SCENE_OUTLINE_REVIEW_NODE_ID,
-        "Scene: Review Outline",
+        "Scene: Review Plan",
         default_config_id=SMALL_CONFIG_ID,
     ),
     GraphNode(
         SCENE_OUTLINE_REVISE_NODE_ID,
-        "Scene: Revise Outline",
+        "Scene: Revise Plan",
         default_config_id=STANDARD_CONFIG_ID,
     ),
     GraphNode(SCENE_DRAFT_NODE_ID, "Scene: Draft Prose", default_config_id=LARGE_CONFIG_ID),
+    GraphNode(
+        SCENE_PROSE_REVIEW_NODE_ID,
+        "Scene: Review Prose",
+        default_config_id=SMALL_CONFIG_ID,
+    ),
+    GraphNode(
+        SCENE_PROSE_REVISE_NODE_ID,
+        "Scene: Revise Prose",
+        default_config_id=LARGE_CONFIG_ID,
+    ),
     GraphNode(
         SCENE_SUMMARY_NODE_ID,
         "Scene: Summary",

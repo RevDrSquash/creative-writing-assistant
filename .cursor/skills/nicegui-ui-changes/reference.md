@@ -60,6 +60,11 @@ package: `.venv/Lib/site-packages/nicegui/llms.md`.
   (background task or timer), not inside the builder.
 - `ui.timer` + `@ui.refreshable` is the established pattern for self-updating sections (see the
   debug page sidebar).
+- Dialogs opened from inside a timer-refreshed `@ui.refreshable` get deleted when the section
+  refreshes: elements built in an event handler land in the handler element's container, so the
+  next `refresh()` wipes the open dialog (the Regenerate confirmation closed by itself this way).
+  Build the dialog once outside the refreshable and `await dialog` from the handler (see
+  `_render_generation_controls` in `pages/workspace.py`).
 
 ## Verification (required)
 

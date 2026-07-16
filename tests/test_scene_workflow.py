@@ -15,6 +15,7 @@ from app.graphs.scene_generation import run_scene_generation
 from app.graphs.scene_workflow import (
     OutlineBeats,
     OutlineCritique,
+    ProseCritique,
     SceneSummary,
     StanceList,
     StanceOutput,
@@ -22,10 +23,12 @@ from app.graphs.scene_workflow import (
     _draft_prose_node,
     _outline_node,
     _review_outline_node,
+    _revise_plan_node,
     _summary_node,
     build_scene_writer_graph,
     structured_fake_model,
 )
+from app.graphs.state import merge_stances
 from app.models.client import get_chat_model_for_node
 from app.models.config import (
     GRAPH_NODES,
@@ -33,12 +36,21 @@ from app.models.config import (
     SCENE_OUTLINE_NODE_ID,
     SCENE_OUTLINE_REVIEW_NODE_ID,
     SCENE_OUTLINE_REVISE_NODE_ID,
+    SCENE_PROSE_REVIEW_NODE_ID,
+    SCENE_PROSE_REVISE_NODE_ID,
     SCENE_STANCES_NODE_ID,
     SCENE_SUMMARY_NODE_ID,
 )
 from app.tools.scene import propose_scene
 from app.tools.story_bible import add_event, upsert_character
-from app.world.models import Event, EventRelation, SceneBlueprint, World, blueprint_fingerprint
+from app.world.models import (
+    Event,
+    EventRelation,
+    SceneBlueprint,
+    SceneCharacterStance,
+    World,
+    blueprint_fingerprint,
+)
 from app.world.scene import create_scene, scene_is_stale, set_scene_text
 from app.world.store import get_world
 
@@ -58,12 +70,74 @@ def _canvas_draft_model(prose: str = "Drafted scene prose.") -> ToolAwareFakeCha
     return ToolAwareFakeChatModel(messages=iter([AIMessage(content=f"<canvas>{prose}</canvas>")]))
 
 
+def _plan_revise_model(
+    *,
+    match_one: str = "Beat one",
+    match_two: str = "Beat two",
+    revised_one: str = "Revised beat one.",
+    revised_two: str = "Revised beat two.",
+) -> ToolAwareFakeChatModel:
+    tool_call = {
+        "name": "edit_outline",
+        "args": {
+            "operations": [
+                {"op": "replace", "match": match_one, "text": revised_one},
+                {"op": "replace", "match": match_two, "text": revised_two},
+            ]
+        },
+        "id": "outline-edit-1",
+        "type": "tool_call",
+    }
+    return ToolAwareFakeChatModel(
+        messages=iter(
+            [
+                AIMessage(content="", tool_calls=[tool_call]),
+                AIMessage(content="Revised the outline."),
+            ]
+        )
+    )
+
+
+def _noop_agent_model(content: str = "No changes needed.") -> ToolAwareFakeChatModel:
+    return ToolAwareFakeChatModel(messages=iter([AIMessage(content=content)]))
+
+
 def _workflow_models(
     *,
     prose: str = "Drafted scene prose.",
     outline_beats: list[str] | None = None,
+    revise_prose: bool = False,
 ) -> dict[str, Any]:
     beats = outline_beats or ["Beat one.", "Beat two."]
+    prose_revise: Any
+    if revise_prose:
+        prose_revise = ToolAwareFakeChatModel(
+            messages=iter(
+                [
+                    AIMessage(
+                        content="",
+                        tool_calls=[
+                            {
+                                "name": "edit_prose",
+                                "args": {
+                                    "operations": [
+                                        {
+                                            "match": prose,
+                                            "replacement": f"Revised: {prose}",
+                                        }
+                                    ]
+                                },
+                                "id": "prose-edit-1",
+                                "type": "tool_call",
+                            }
+                        ],
+                    ),
+                    AIMessage(content="Revised the prose."),
+                ]
+            )
+        )
+    else:
+        prose_revise = _noop_agent_model()
     return {
         SCENE_STANCES_NODE_ID: structured_fake_model(
             StanceList(
@@ -82,10 +156,12 @@ def _workflow_models(
         SCENE_OUTLINE_REVIEW_NODE_ID: structured_fake_model(
             OutlineCritique(critique="Tighten the opening beat.")
         ),
-        SCENE_OUTLINE_REVISE_NODE_ID: structured_fake_model(
-            OutlineBeats(beats=["Revised beat one.", "Revised beat two."])
-        ),
+        SCENE_OUTLINE_REVISE_NODE_ID: _plan_revise_model(),
         SCENE_DRAFT_NODE_ID: _canvas_draft_model(prose),
+        SCENE_PROSE_REVIEW_NODE_ID: structured_fake_model(
+            ProseCritique(critique="Looks solid." if not revise_prose else "Sharpen the opening.")
+        ),
+        SCENE_PROSE_REVISE_NODE_ID: prose_revise,
         SCENE_SUMMARY_NODE_ID: structured_fake_model(SceneSummary(summary="Hero investigates.")),
     }
 
@@ -121,6 +197,7 @@ def _workflow_input(
         "scene_id": scene_id,
         "continuity_context": continuity_context,
         "revision_count": 0,
+        "prose_revision_count": 0,
         "max_revisions": max_revisions,
     }
 
@@ -331,6 +408,27 @@ def test_full_graph_drafts_end_to_end(isolated_world: World) -> None:
     assert updated.summary == "Hero investigates."
 
 
+def test_full_graph_applies_prose_revise_edits(isolated_world: World) -> None:
+    character_id = _seed_character()
+    scene = create_scene("Proposed Title")
+    scene.blueprint = SceneBlueprint(
+        premise="Brief premise.",
+        purpose="Brief purpose.",
+        character_ids=[character_id],
+        event_ids=[_seed_event()],
+    )
+    prose = "The hero stepped into the alley."
+    input_state = _workflow_input(scene.id, event_ids=scene.blueprint.event_ids)
+    input_state["character_ids"] = [character_id]
+    build_scene_writer_graph(models=_workflow_models(prose=prose, revise_prose=True)).invoke(
+        input_state
+    )
+
+    updated = get_world().get_scene(scene.id)
+    assert updated.markdown == f"Revised: {prose}"
+    assert updated.generated.outline == ["Revised beat one.", "Revised beat two."]
+
+
 def test_run_scene_generation_clears_old_content_and_stamps_fingerprint(
     isolated_world: World,
     monkeypatch: pytest.MonkeyPatch,
@@ -411,6 +509,79 @@ def test_run_scene_generation_passes_continuity_context(
     continuity_context = captured["state"]["continuity_context"]
     assert "Previous scene ending." in continuity_context
     assert "Maintain continuity with the surrounding scenes" in continuity_context
+
+
+def test_merge_stances_combines_updates_for_different_characters() -> None:
+    current = [
+        {"character_id": "char_a", "intent": "Old A"},
+        {"character_id": "char_b", "intent": "Old B"},
+    ]
+
+    merged = merge_stances(current, [{"character_id": "char_a", "intent": "New A"}])
+    merged = merge_stances(merged, [{"character_id": "char_b", "intent": "New B"}])
+
+    assert merged == [
+        {"character_id": "char_a", "intent": "New A"},
+        {"character_id": "char_b", "intent": "New B"},
+    ]
+
+
+def test_merge_stances_appends_unknown_character_and_handles_none() -> None:
+    assert merge_stances(None, None) == []
+    merged = merge_stances(None, [{"character_id": "char_new", "intent": "Arrive"}])
+    assert merged == [{"character_id": "char_new", "intent": "Arrive"}]
+
+
+def test_revise_plan_survives_parallel_stance_updates(isolated_world: World) -> None:
+    """Regression: two update_stance calls in one model turn run as parallel
+    state writes; without a merging reducer this raised
+    INVALID_CONCURRENT_GRAPH_UPDATE at key 'stances'."""
+
+    upsert_character.invoke({"name": "Hero"})
+    upsert_character.invoke({"name": "Ally"})
+    hero_id = get_world().story_bible.characters[-2].id
+    ally_id = get_world().story_bible.characters[-1].id
+    scene = create_scene()
+
+    parallel_calls_model = ToolAwareFakeChatModel(
+        messages=iter(
+            [
+                AIMessage(
+                    content="",
+                    tool_calls=[
+                        {
+                            "name": "update_stance",
+                            "args": {"character_id": hero_id, "intent": "Confront"},
+                            "id": "stance-1",
+                            "type": "tool_call",
+                        },
+                        {
+                            "name": "update_stance",
+                            "args": {"character_id": ally_id, "intent": "Scout ahead"},
+                            "id": "stance-2",
+                            "type": "tool_call",
+                        },
+                    ],
+                ),
+                AIMessage(content="Updated both stances."),
+            ]
+        )
+    )
+    models = {SCENE_OUTLINE_REVISE_NODE_ID: parallel_calls_model}
+
+    state = _workflow_input(scene.id)
+    state["character_ids"] = [hero_id, ally_id]
+    state["outline"] = ["Beat one"]
+    state["stances"] = [
+        SceneCharacterStance(character_id=hero_id, intent="Old hero intent"),
+        SceneCharacterStance(character_id=ally_id, intent="Old ally intent"),
+    ]
+
+    result = _revise_plan_node(models)(state)
+
+    by_id = {stance.character_id: stance for stance in result["stances"]}
+    assert by_id[hero_id].intent == "Confront"
+    assert by_id[ally_id].intent == "Scout ahead"
 
 
 def test_scene_is_stale_when_blueprint_changes_after_generation(world_with_scene: World) -> None:
@@ -527,6 +698,8 @@ def test_graph_nodes_register_scene_workflow_nodes() -> None:
         SCENE_OUTLINE_REVIEW_NODE_ID,
         SCENE_OUTLINE_REVISE_NODE_ID,
         SCENE_DRAFT_NODE_ID,
+        SCENE_PROSE_REVIEW_NODE_ID,
+        SCENE_PROSE_REVISE_NODE_ID,
         SCENE_SUMMARY_NODE_ID,
     }
     assert expected <= node_ids

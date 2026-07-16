@@ -26,5 +26,7 @@ class SceneWorkflowState(TypedDict, total=False):
     critique: str
     revision_count: int
     prose: str
+    prose_critique: str
+    prose_revision_count: int
     summary: str
     max_revisions: int

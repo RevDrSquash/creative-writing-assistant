@@ -49,6 +49,7 @@ def run_scene_generation(scene_id: str, *, max_revisions: int = 1) -> None:
             "notes": blueprint.notes,
             "continuity_context": continuity_context,
             "revision_count": 0,
+            "prose_revision_count": 0,
             "max_revisions": max_revisions,
         }
     )

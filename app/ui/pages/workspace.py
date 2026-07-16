@@ -205,6 +205,20 @@ def _render_generation_controls(
 
     manager = get_job_manager()
 
+    # The dialog must live outside the refreshable below: elements created in an
+    # event handler are added to the handler element's container, and the status
+    # timer refreshes that container every second, which would delete an open
+    # dialog mid-confirmation.
+    with ui.dialog() as regenerate_dialog, ui.card():
+        ui.label("Regenerate this scene? Existing prose, outline, and stances will be discarded.")
+        with ui.row().classes("w-full justify-end gap-2"):
+            cancel = ui.button("Cancel", on_click=lambda: regenerate_dialog.submit(False))
+            cancel.props("flat")
+            confirm = ui.button(
+                "Regenerate", color="warning", on_click=lambda: regenerate_dialog.submit(True)
+            )
+            confirm.mark("scene-regenerate-confirm-button")
+
     @ui.refreshable
     def controls() -> None:
         generating = manager.is_generating(scene.id)
@@ -243,14 +257,7 @@ def _render_generation_controls(
             ui.label(error).classes("text-negative text-sm")
 
     async def _confirm_regenerate(scene: Scene) -> None:
-        with ui.dialog() as dialog, ui.card():
-            ui.label(
-                "Regenerate this scene? Existing prose, outline, and stances will be discarded."
-            )
-            with ui.row().classes("w-full justify-end gap-2"):
-                ui.button("Cancel", on_click=lambda: dialog.submit(False)).props("flat")
-                ui.button("Regenerate", color="warning", on_click=lambda: dialog.submit(True))
-        if await dialog:
+        if await regenerate_dialog:
             _start_generation(scene)
 
     def _start_generation(scene: Scene) -> None:

@@ -14,7 +14,7 @@ from langgraph.graph.state import CompiledStateGraph
 from pydantic import BaseModel, Field
 
 from app.graphs.canvas_middleware import CanvasAppendMiddleware
-from app.graphs.state import WritingAgentState
+from app.graphs.state import PlanReviseAgentState, WritingAgentState
 from app.graphs.workflow_state import SceneWorkflowState
 from app.models.client import get_chat_model_for_node
 from app.models.config import (
@@ -22,10 +22,13 @@ from app.models.config import (
     SCENE_OUTLINE_NODE_ID,
     SCENE_OUTLINE_REVIEW_NODE_ID,
     SCENE_OUTLINE_REVISE_NODE_ID,
+    SCENE_PROSE_REVIEW_NODE_ID,
+    SCENE_PROSE_REVISE_NODE_ID,
     SCENE_STANCES_NODE_ID,
     SCENE_SUMMARY_NODE_ID,
 )
 from app.tools import READ_ONLY_WRITING_TOOLS
+from app.tools.scene_generated import edit_outline, edit_prose, update_stance
 from app.world.models import SceneCharacterStance
 from app.world.scene import (
     get_scene_text,
@@ -42,6 +45,21 @@ list_scenes to read their full prose if you need more detail for continuity.
 Write the full scene markdown inside <canvas>...</canvas> tags.
 You may use multiple canvas blocks; they append in order.
 Always close canvas tags. Everything inside the tags is scene prose, not chat."""
+
+_PLAN_REVISE_SYSTEM_PROMPT = """You revise scene stances and outline beats to address a critique.
+Use edit_outline for batched text-anchored outline edits and update_stance for
+field-level stance changes. Prefer targeted edits over rewriting everything.
+Match outline beats with a short unique fragment of the existing beat text.
+If the critique needs no changes, make no tool calls and say so briefly.
+Read-only tools are available when you need story bible or scene context."""
+
+_PROSE_REVISE_SYSTEM_PROMPT = """You revise drafted scene prose to address a critique.
+Use edit_prose for batched search/replace edits. Prefer targeted edits that
+preserve wording the critique did not call out. Match with a short unique
+fragment of existing prose. Empty replacement deletes a fragment; insert by
+replacing an anchor with the anchor plus new text.
+If the critique needs no changes, make no tool calls and say so briefly.
+Read-only tools are available when you need story bible or scene context."""
 
 
 class StanceOutput(BaseModel):
@@ -60,12 +78,20 @@ class OutlineBeats(BaseModel):
     beats: list[str] = Field(default_factory=list)
 
 
-class OutlineCritique(BaseModel):
+class PlanCritique(BaseModel):
+    critique: str = ""
+
+
+class ProseCritique(BaseModel):
     critique: str = ""
 
 
 class SceneSummary(BaseModel):
     summary: str
+
+
+# Backward-compatible alias used by older tests/imports.
+OutlineCritique = PlanCritique
 
 
 def build_scene_writer_graph(
@@ -77,21 +103,29 @@ def build_scene_writer_graph(
     graph = StateGraph(SceneWorkflowState)
     graph.add_node("author_stances", _author_stances_node(models))
     graph.add_node("outline", _outline_node(models))
-    graph.add_node("review_outline", _review_outline_node(models))
-    graph.add_node("revise_outline", _revise_outline_node(models))
+    graph.add_node("review_plan", _review_plan_node(models))
+    graph.add_node("revise_plan", _revise_plan_node(models))
     graph.add_node("draft_prose", _draft_prose_node(models))
+    graph.add_node("review_prose", _review_prose_node(models))
+    graph.add_node("revise_prose", _revise_prose_node(models))
     graph.add_node("summarize", _summary_node(models))
 
     graph.add_edge(START, "author_stances")
     graph.add_edge("author_stances", "outline")
-    graph.add_edge("outline", "review_outline")
-    graph.add_edge("review_outline", "revise_outline")
+    graph.add_edge("outline", "review_plan")
+    graph.add_edge("review_plan", "revise_plan")
     graph.add_conditional_edges(
-        "revise_outline",
-        _route_after_revise,
-        {"review_outline": "review_outline", "draft_prose": "draft_prose"},
+        "revise_plan",
+        _route_after_plan_revise,
+        {"review_plan": "review_plan", "draft_prose": "draft_prose"},
     )
-    graph.add_edge("draft_prose", "summarize")
+    graph.add_edge("draft_prose", "review_prose")
+    graph.add_edge("review_prose", "revise_prose")
+    graph.add_conditional_edges(
+        "revise_prose",
+        _route_after_prose_revise,
+        {"review_prose": "review_prose", "summarize": "summarize"},
+    )
     graph.add_edge("summarize", END)
 
     return graph.compile()
@@ -180,37 +214,66 @@ def _outline_node(models: dict[str, BaseChatModel] | None) -> Any:
     return node
 
 
-def _review_outline_node(models: dict[str, BaseChatModel] | None) -> Any:
+def _review_plan_node(models: dict[str, BaseChatModel] | None) -> Any:
     def node(state: SceneWorkflowState) -> dict[str, Any]:
         prompt = (
-            "Critique the outline against the premise, purpose, character stances, "
-            "and continuity with surrounding scenes.\n\n"
+            "Critique the character stances and outline against the premise, purpose, "
+            "and continuity with surrounding scenes. Call out problems in either "
+            "artifact; say if no changes are needed.\n\n"
             f"Premise: {state.get('premise', '')}\n"
             f"Purpose: {state.get('purpose', '')}\n"
             f"Stances:\n{_stances_text(state.get('stances', []))}\n"
             f"Outline:\n{_outline_text(state.get('outline', []))}"
         )
         prompt = _append_continuity_context(prompt, state)
-        result = _structured_invoke(SCENE_OUTLINE_REVIEW_NODE_ID, models, OutlineCritique, prompt)
+        result = _structured_invoke(SCENE_OUTLINE_REVIEW_NODE_ID, models, PlanCritique, prompt)
         return {"critique": result.critique}
 
     return node
 
 
-def _revise_outline_node(models: dict[str, BaseChatModel] | None) -> Any:
+def _revise_plan_node(models: dict[str, BaseChatModel] | None) -> Any:
     def node(state: SceneWorkflowState) -> dict[str, Any]:
+        scene_id = state["scene_id"]
+        model = _resolve_model(SCENE_OUTLINE_REVISE_NODE_ID, models)
+        agent = create_agent(
+            model=model,
+            tools=[edit_outline, update_stance, *READ_ONLY_WRITING_TOOLS],
+            state_schema=PlanReviseAgentState,
+            system_prompt=_PLAN_REVISE_SYSTEM_PROMPT,
+            middleware=[ToolRetryMiddleware(max_retries=0, on_failure="continue")],
+        )
+        outline = list(state.get("outline", []))
+        stances = _normalize_stances(state.get("stances", []))
+        character_ids = list(state.get("character_ids", []))
         prompt = (
-            "Revise the outline to address the critique.\n\n"
+            "Revise stances and/or outline to address the critique.\n\n"
             f"Premise: {state.get('premise', '')}\n"
             f"Purpose: {state.get('purpose', '')}\n"
             f"Critique: {state.get('critique', '')}\n"
-            f"Current outline:\n{_outline_text(state.get('outline', []))}"
+            f"Current stances:\n{_stances_text(stances)}\n"
+            f"Current outline:\n{_outline_text(outline)}"
         )
-        result = _structured_invoke(SCENE_OUTLINE_REVISE_NODE_ID, models, OutlineBeats, prompt)
-        beats = list(result.beats)
-        update_scene_generated(state["scene_id"], outline=beats)
+        prompt = _append_continuity_context(prompt, state)
+        result = agent.invoke(
+            {
+                "messages": [HumanMessage(content=prompt)],
+                "current_scene_id": scene_id,
+                "current_scene": get_scene_text(scene_id),
+                "outline": outline,
+                "stances": [stance.model_dump(mode="json") for stance in stances],
+                "character_ids": character_ids,
+            }
+        )
+        revised_outline = _outline_from_agent_result(result, outline)
+        revised_stances = _stances_from_agent_result(result, stances)
+        update_scene_generated(scene_id, outline=revised_outline, stances=revised_stances)
         revision_count = state.get("revision_count", 0) + 1
-        return {"outline": beats, "revision_count": revision_count}
+        return {
+            "outline": revised_outline,
+            "stances": revised_stances,
+            "revision_count": revision_count,
+        }
 
     return node
 
@@ -261,6 +324,67 @@ def _draft_prose_node(models: dict[str, BaseChatModel] | None) -> Any:
     return node
 
 
+def _review_prose_node(models: dict[str, BaseChatModel] | None) -> Any:
+    def node(state: SceneWorkflowState) -> dict[str, Any]:
+        prose = state.get("prose", "")
+        prompt = (
+            "Critique the drafted scene prose against the premise, purpose, stances, "
+            "outline, and continuity with surrounding scenes. Suggest concrete edits; "
+            "say if no changes are needed.\n\n"
+            f"Premise: {state.get('premise', '')}\n"
+            f"Purpose: {state.get('purpose', '')}\n"
+            f"Stances:\n{_stances_text(state.get('stances', []))}\n"
+            f"Outline:\n{_outline_text(state.get('outline', []))}\n"
+            f"Prose:\n{prose}"
+        )
+        prompt = _append_continuity_context(prompt, state)
+        result = _structured_invoke(SCENE_PROSE_REVIEW_NODE_ID, models, ProseCritique, prompt)
+        return {"prose_critique": result.critique}
+
+    return node
+
+
+def _revise_prose_node(models: dict[str, BaseChatModel] | None) -> Any:
+    def node(state: SceneWorkflowState) -> dict[str, Any]:
+        scene_id = state["scene_id"]
+        model = _resolve_model(SCENE_PROSE_REVISE_NODE_ID, models)
+        agent = create_agent(
+            model=model,
+            tools=[edit_prose, *READ_ONLY_WRITING_TOOLS],
+            state_schema=WritingAgentState,
+            system_prompt=_PROSE_REVISE_SYSTEM_PROMPT,
+            middleware=[ToolRetryMiddleware(max_retries=0, on_failure="continue")],
+        )
+        prose = state.get("prose", "")
+        if not isinstance(prose, str):
+            prose = get_scene_text(scene_id)
+        prompt = (
+            "Revise the scene prose to address the critique.\n\n"
+            f"Premise: {state.get('premise', '')}\n"
+            f"Purpose: {state.get('purpose', '')}\n"
+            f"Critique: {state.get('prose_critique', '')}\n"
+            f"Stances:\n{_stances_text(state.get('stances', []))}\n"
+            f"Outline:\n{_outline_text(state.get('outline', []))}\n"
+            f"Current prose:\n{prose}"
+        )
+        prompt = _append_continuity_context(prompt, state)
+        result = agent.invoke(
+            {
+                "messages": [HumanMessage(content=prompt)],
+                "current_scene_id": scene_id,
+                "current_scene": prose,
+            }
+        )
+        revised = result.get("current_scene", prose)
+        if not isinstance(revised, str):
+            revised = prose
+        set_scene_text(scene_id, revised)
+        prose_revision_count = state.get("prose_revision_count", 0) + 1
+        return {"prose": revised, "prose_revision_count": prose_revision_count}
+
+    return node
+
+
 def _summary_node(models: dict[str, BaseChatModel] | None) -> Any:
     def node(state: SceneWorkflowState) -> dict[str, Any]:
         prose = state.get("prose", "")
@@ -282,12 +406,20 @@ def _summary_node(models: dict[str, BaseChatModel] | None) -> Any:
     return node
 
 
-def _route_after_revise(state: SceneWorkflowState) -> str:
+def _route_after_plan_revise(state: SceneWorkflowState) -> str:
     revision_count = state.get("revision_count", 0)
     max_revisions = state.get("max_revisions", 1)
     if revision_count < max_revisions:
-        return "review_outline"
+        return "review_plan"
     return "draft_prose"
+
+
+def _route_after_prose_revise(state: SceneWorkflowState) -> str:
+    revision_count = state.get("prose_revision_count", 0)
+    max_revisions = state.get("max_revisions", 1)
+    if revision_count < max_revisions:
+        return "review_prose"
+    return "summarize"
 
 
 def _arc_text(arc: list[str]) -> str:
@@ -334,15 +466,19 @@ def _event_context(event_ids: list[str]) -> str:
     return "\n".join(lines)
 
 
-def _stances_text(stances: list[SceneCharacterStance]) -> str:
-    if not stances:
+def _stances_text(stances: list[SceneCharacterStance] | list[Any]) -> str:
+    normalized = _normalize_stances(stances)
+    if not normalized:
         return "(none)"
     lines: list[str] = []
     bible = get_world().story_bible
-    for stance in stances:
+    for stance in normalized:
         character = bible.get_character(stance.character_id)
         name = character.identity.name if character else stance.character_id
-        lines.append(f"- {name}: mood={stance.mood}, intent={stance.intent}")
+        lines.append(
+            f"- {name} [{stance.character_id}]: mood={stance.mood}, "
+            f"intent={stance.intent}, tactics={stance.tactics}, stakes={stance.stakes}"
+        )
     return "\n".join(lines)
 
 
@@ -350,6 +486,34 @@ def _outline_text(outline: list[str]) -> str:
     if not outline:
         return "(none)"
     return "\n".join(f"{index}. {beat}" for index, beat in enumerate(outline, start=1))
+
+
+def _normalize_stances(stances: list[Any] | None) -> list[SceneCharacterStance]:
+    if not stances:
+        return []
+    normalized: list[SceneCharacterStance] = []
+    for item in stances:
+        if isinstance(item, SceneCharacterStance):
+            normalized.append(item)
+        elif isinstance(item, dict):
+            normalized.append(SceneCharacterStance.model_validate(item))
+    return normalized
+
+
+def _outline_from_agent_result(result: dict[str, Any], fallback: list[str]) -> list[str]:
+    raw = result.get("outline", fallback)
+    if not isinstance(raw, list):
+        return list(fallback)
+    return [str(item) for item in raw]
+
+
+def _stances_from_agent_result(
+    result: dict[str, Any],
+    fallback: list[SceneCharacterStance],
+) -> list[SceneCharacterStance]:
+    raw = result.get("stances", fallback)
+    normalized = _normalize_stances(raw if isinstance(raw, list) else fallback)
+    return normalized or list(fallback)
 
 
 def structured_fake_model(response: BaseModel) -> BaseChatModel:
@@ -382,3 +546,8 @@ def structured_fake_model(response: BaseModel) -> BaseChatModel:
             return "structured-fake"
 
     return _StructuredFake()
+
+
+# Compatibility aliases for renamed nodes (used by older test imports).
+_review_outline_node = _review_plan_node
+_revise_outline_node = _revise_plan_node

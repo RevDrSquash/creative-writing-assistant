@@ -196,6 +196,63 @@ async def test_scene_stale_badge_when_blueprint_changed_after_generation(
     await user.should_see("Regenerate")
 
 
+async def test_scene_regenerate_confirm_dialog_survives_status_refresh(
+    user: User,
+    isolated_data_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import asyncio
+    import time
+    from datetime import datetime, timezone
+
+    from app.graphs.jobs import get_job_manager
+    from app.persistence.world import JsonFileWorldStore, default_world
+    from app.world.models import Event, Scene, SceneBlueprint, SceneGenerated, blueprint_fingerprint
+
+    world = default_world()
+    world.story_bible.timeline.append(Event(id="event_arrival", title="The Arrival"))
+    blueprint = SceneBlueprint(premise="Original premise.", event_ids=["event_arrival"])
+    world.scenes.append(
+        Scene(
+            id="scene_stale",
+            title="Stale Scene",
+            markdown="# Prose",
+            blueprint=blueprint,
+            generated=SceneGenerated(
+                blueprint_fingerprint=blueprint_fingerprint(blueprint),
+                generated_at=datetime.now(timezone.utc),
+                outline=["Beat"],
+            ),
+        )
+    )
+    world.scenes[0].blueprint.premise = "Changed premise."
+    JsonFileWorldStore(isolated_data_dir / "world.json").save(world)
+
+    def slow_run(scene_id: str, *, max_revisions: int = 1) -> None:
+        time.sleep(0.3)
+
+    monkeypatch.setattr("app.graphs.scene_generation.run_scene_generation", slow_run)
+
+    await user.open("/workspace/scenes/scene_stale")
+    user.find(marker="scene-generate-button").click()
+    await user.should_see("Existing prose, outline, and stances will be discarded.")
+
+    # The generation-controls section refreshes on a 1s timer; the dialog must
+    # survive that refresh (regression: it used to be built inside the
+    # refreshable container and was deleted while open).
+    await asyncio.sleep(1.2)
+    await user.should_see("Existing prose, outline, and stances will be discarded.")
+
+    user.find(marker="scene-regenerate-confirm-button").click()
+    await user.should_see("Generating...")
+
+    manager = get_job_manager()
+    for _ in range(20):
+        if not manager.is_generating("scene_stale"):
+            break
+        await asyncio.sleep(0.05)
+
+
 async def test_workspace_sidebar_navigates_to_characters(user: User) -> None:
     await user.open("/workspace/narrative-style")
     user.find("Characters").click()
