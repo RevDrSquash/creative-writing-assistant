@@ -75,3 +75,24 @@ If the schema version does not match, import fails with a clear error. Migration
 Imported chat history may reference model profile names that do not exist in the local app configuration.
 
 Those chat messages are allowed to load. Future LLM calls should fall back to the current default model profile when a referenced profile is unavailable.
+
+## Readable Story Export (Export Scenes)
+
+In addition to the portable world ZIP, the header menu offers **Export Scenes**: a read-only HTML package of the finished story for reading outside the app. There is no import path for this format.
+
+Each scene in `World.scenes` (list order) is treated as a chapter. Scene markdown is rendered to HTML with `markdown2`.
+
+```text
+story.zip
+|-- index.html
+|-- style.css
+|-- scene_001.html
+|-- scene_002.html
+`-- ...
+```
+
+- `index.html` — story title and description from world metadata, plus an ordered chapter list with each scene's title, summary, and link.
+- `scene_NNN.html` — rendered scene prose with Previous / Index / Next navigation (Previous omitted on the first page, Next on the last).
+- `style.css` — shared readable layout (centered column, serif body).
+
+Titles, summaries, and metadata are HTML-escaped. A world with no scenes still exports a valid ZIP containing `index.html` and `style.css`.

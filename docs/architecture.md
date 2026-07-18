@@ -12,7 +12,7 @@ The app is a local-first Python writing workspace built around one in-memory `Wo
 - **LLM access:** OpenRouter-compatible model profiles, likely through LangChain/LiteLLM
 - **Data modeling:** Pydantic
 - **Content format:** Markdown scenes plus structured Story Bible data
-- **Storage:** local JSON and ZIP import/export
+- **Storage:** local JSON, world ZIP import/export, and readable story HTML ZIP export
 
 ## Module Structure
 
@@ -20,7 +20,7 @@ The app is a local-first Python writing workspace built around one in-memory `Wo
 - `app/graphs/` - LangGraph workflows, graph builders, workflow registry, run state.
 - `app/tools/` - Agent tools for reading, searching, creating, and editing world content.
 - `app/world/` - Pydantic world models, validation, and in-memory world state.
-- `app/persistence/` - Local save/load plus ZIP import/export.
+- `app/persistence/` - Local save/load, world ZIP import/export, and readable story HTML ZIP export.
 - `app/models/` - Model profiles, resolved model bundles, and LLM client setup.
 
 ## Major Components
@@ -92,6 +92,7 @@ The app is a local-first Python writing workspace built around one in-memory `Wo
 - **Persistence**
   - Saves and loads local project state.
   - Exports complete worlds as ZIP files containing `world.json`, scene markdown files, and an assets folder.
+  - Exports a readable story ZIP of HTML scene pages plus a chapter index (export-only; see [zip_import_export.md](zip_import_export.md)).
   - Keeps app config, model profiles, and secrets outside exported worlds.
 
 ## Core Boundaries

@@ -532,6 +532,8 @@ async def test_header_menu_includes_clear_state(user: User) -> None:
     await user.open("/workspace/narrative-style")
     user.find(marker="header-overflow-menu").click()
     await user.should_see("Clear State...")
+    await user.should_see("Export Scenes")
+    await user.should_see("Export World")
 
 
 async def test_clear_state_dialog_clears_everything(

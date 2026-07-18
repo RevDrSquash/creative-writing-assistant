@@ -8,6 +8,7 @@ from collections.abc import Iterable
 from nicegui import app, events, ui
 
 from app.graphs.jobs import get_job_manager
+from app.persistence.story_export import export_story_zip
 from app.persistence.world_zip import export_world_zip, import_world_zip
 from app.ui.config import APP_TITLE
 from app.ui.navigation import HEADER_NAV_ITEMS, NavigationItem
@@ -52,6 +53,7 @@ def render_header(active_path: str) -> None:
             with ui.menu():
                 ui.menu_item("Import World", on_click=_open_import_dialog)
                 ui.menu_item("Export World", on_click=_export_world)
+                ui.menu_item("Export Scenes", on_click=_export_scenes)
                 clear_item = ui.menu_item("Clear State...", on_click=_open_clear_dialog)
                 clear_item.mark("clear-state-menu-item")
 
@@ -84,10 +86,21 @@ def _render_job_completion_toasts() -> None:
     ui.timer(1.0, poll_finished_jobs)
 
 
+def _slugify(title: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "-", title.lower()).strip("-") or "world"
+
+
 def _export_world() -> None:
     world = get_world()
-    slug = re.sub(r"[^a-z0-9]+", "-", world.metadata.title.lower()).strip("-") or "world"
-    ui.download.content(export_world_zip(world), f"{slug}.zip")
+    ui.download.content(export_world_zip(world), f"{_slugify(world.metadata.title)}.zip")
+
+
+def _export_scenes() -> None:
+    world = get_world()
+    ui.download.content(
+        export_story_zip(world),
+        f"{_slugify(world.metadata.title)}-story.zip",
+    )
 
 
 def _open_import_dialog() -> None:
