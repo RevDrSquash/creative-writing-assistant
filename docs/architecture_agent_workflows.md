@@ -159,10 +159,14 @@ internally.
 ### Background execution
 
 `app/graphs/jobs.py` (`JobManager`) exposes `start_scene_generation(scene_id)`,
-`is_generating(scene_id)`, and `last_error(scene_id)`. A second concurrent run for the same scene
-is rejected. Chat turns use `start_chat_turn()` with a `chat` resource claim. The scene editor and
-chat panel poll job state with `ui.timer` and the refreshable pattern. See
-[architecture_async_jobs.md](architecture_async_jobs.md) for claims, enforcement, and notifications.
+`is_generating(scene_id)`, `last_error(scene_id)`, and `queue_scene_generations(...)` for bulk
+runs. A second concurrent run for the same scene is rejected. Chat turns use `start_chat_turn()`
+with a `chat` resource claim. The scene editor, chat panel, and header Work Queue page poll the
+manager with `ui.timer` and the refreshable pattern. Generate All Scenes (header overflow menu)
+builds a chronological plan via `app/world/scene_order.py`, confirms selected scenes in a checklist
+dialog, and enqueues them with prerequisite gating so later scenes wait for earlier prose. See
+[architecture_async_jobs.md](architecture_async_jobs.md) for claims, enforcement, the queue, and
+notifications.
 
 ## Planned Workflows
 

@@ -128,5 +128,3 @@ Originally Phase 8 of the phased plan.
   records a `cancel_requested` flag on each job; wiring cancellation into the scene workflow
   (between nodes) and chat stream (between chunks) is deferred — see
   [architecture_async_jobs.md](architecture_async_jobs.md).
-* Jobs page: A top-level page listing all jobs with status and cancel becomes trivial once
-  `JobManager` exists; the header running-jobs indicator covers visibility for now.

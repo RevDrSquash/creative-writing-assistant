@@ -24,8 +24,20 @@ def test_ui_entrypoint_is_available() -> None:
 
 
 def test_header_navigation_has_phase_one_screens() -> None:
-    assert labels(navigation.HEADER_NAV_ITEMS) == {"Workspace", "Models", "Settings", "Debug"}
-    assert paths(navigation.HEADER_NAV_ITEMS) == {"/workspace", "/models", "/settings", "/debug"}
+    assert labels(navigation.HEADER_NAV_ITEMS) == {
+        "Workspace",
+        "Models",
+        "Settings",
+        "Debug",
+        "Work Queue",
+    }
+    assert paths(navigation.HEADER_NAV_ITEMS) == {
+        "/workspace",
+        "/models",
+        "/settings",
+        "/debug",
+        "/queue",
+    }
 
 
 def test_workspace_sidebar_has_story_bible_sections() -> None:
@@ -139,3 +151,4 @@ def test_ui_page_modules_import_cleanly() -> None:
     assert importlib.import_module("app.ui.pages.models")
     assert importlib.import_module("app.ui.pages.settings")
     assert importlib.import_module("app.ui.pages.debug")
+    assert importlib.import_module("app.ui.pages.queue")

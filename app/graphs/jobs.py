@@ -1,11 +1,11 @@
-"""Process-wide async job tracking with resource claims."""
+"""Process-wide async job tracking with resource claims and a scene queue."""
 
 from __future__ import annotations
 
 import asyncio
 import threading
 import uuid
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Literal
@@ -17,8 +17,10 @@ from app.world.scene import resolve_scene, set_scene_text
 
 JobKind = Literal["scene_generation", "chat_turn"]
 JobStatus = Literal["running", "finished", "failed"]
+QueueStatus = Literal["pending", "running", "finished", "failed", "blocked"]
 
 CHAT_CLAIM = "chat"
+MAX_PARALLEL_SCENE_GENERATIONS = 3
 
 
 def scene_claim_key(scene_id: str) -> str:
@@ -69,48 +71,104 @@ class Job:
     live: ChatLive | SceneGenerationLive = field(default_factory=ChatLive)
 
 
+@dataclass
+class QueuedScene:
+    """One scene generation slot in the dependency-aware work queue."""
+
+    id: str
+    scene_id: str
+    label: str
+    prerequisite_scene_ids: list[str]
+    status: QueueStatus = "pending"
+    job_id: str | None = None
+    error: str | None = None
+    max_revisions: int = 1
+    created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    finished_at: datetime | None = None
+
+
 _JOB_MANAGER: JobManager | None = None
 
 
 class JobManager:
-    """Thread-safe registry for background jobs and resource claims."""
+    """Thread-safe registry for background jobs, resource claims, and a scene queue."""
 
     def __init__(self) -> None:
         self._lock = threading.Lock()
         self._jobs: dict[str, Job] = {}
         self._claim_index: dict[str, str] = {}
+        self._queue: list[QueuedScene] = []
         self._chat_task: asyncio.Task[None] | None = None
 
     def start_scene_generation(self, scene_id: str, *, max_revisions: int = 1) -> Job:
         """Start scene generation in a background thread with a scene claim."""
 
-        claim = scene_claim_key(scene_id)
         with self._lock:
-            if claim in self._claim_index:
-                msg = f"Generation already running for scene {scene_id}"
-                raise RuntimeError(msg)
-
-            from app.world.store import get_world
-
-            world = get_world()
-            scene = world.get_scene(scene_id)
-            scene_title = scene.title if scene is not None else scene_id
-            job = Job(
-                id=str(uuid.uuid4()),
-                kind="scene_generation",
-                label=f"Scene '{scene_title or 'Untitled'}'",
-                claims=[claim],
-                live=SceneGenerationLive(),
+            job, thread_args = self._prepare_scene_generation_unlocked(
+                scene_id,
+                max_revisions=max_revisions,
             )
-            self._register_job(job)
-            thread = threading.Thread(
-                target=self._run_scene_generation,
-                args=(job.id, scene_id, max_revisions),
-                name=f"scene-gen-{scene_id}",
-                daemon=True,
-            )
-            thread.start()
-            return job
+        thread = threading.Thread(
+            target=self._run_scene_generation,
+            args=thread_args,
+            name=f"scene-gen-{scene_id}",
+            daemon=True,
+        )
+        thread.start()
+        return job
+
+    def queue_scene_generations(
+        self,
+        items: Sequence[tuple[str, str, Sequence[str]]],
+        *,
+        max_revisions: int = 1,
+    ) -> list[QueuedScene]:
+        """Enqueue selected scenes with prerequisites filtered to the selection.
+
+        Each item is ``(scene_id, label, prerequisite_scene_ids)``. Prerequisites that
+        are not in the selected set are treated as already satisfied.
+        """
+
+        selected_ids = {scene_id for scene_id, _label, _prereqs in items}
+        queued: list[QueuedScene] = []
+        with self._lock:
+            for scene_id, label, prerequisite_scene_ids in items:
+                filtered = [
+                    prereq_id
+                    for prereq_id in prerequisite_scene_ids
+                    if prereq_id in selected_ids and prereq_id != scene_id
+                ]
+                item = QueuedScene(
+                    id=str(uuid.uuid4()),
+                    scene_id=scene_id,
+                    label=label,
+                    prerequisite_scene_ids=filtered,
+                    max_revisions=max_revisions,
+                )
+                self._queue.append(item)
+                queued.append(item)
+        self._schedule_queue()
+        return queued
+
+    def queued_items(self) -> list[QueuedScene]:
+        """Return all queue items (pending through finished/blocked)."""
+
+        with self._lock:
+            return list(self._queue)
+
+    def active_queue_items(self) -> list[QueuedScene]:
+        """Return queue items that are still waiting or running."""
+
+        with self._lock:
+            return [item for item in self._queue if item.status in ("pending", "running")]
+
+    def active_work_count(self) -> int:
+        """Return running jobs plus pending queued scenes (for the header badge)."""
+
+        with self._lock:
+            running = sum(1 for job in self._jobs.values() if job.status == "running")
+            pending = sum(1 for item in self._queue if item.status == "pending")
+            return running + pending
 
     def is_generating(self, scene_id: str) -> bool:
         """Return True when a generation job claims ``scene_id``."""
@@ -222,6 +280,32 @@ class JobManager:
         for claim in job.claims:
             self._claim_index[claim] = job.id
 
+    def _prepare_scene_generation_unlocked(
+        self,
+        scene_id: str,
+        *,
+        max_revisions: int = 1,
+    ) -> tuple[Job, tuple[str, str, int]]:
+        claim = scene_claim_key(scene_id)
+        if claim in self._claim_index:
+            msg = f"Generation already running for scene {scene_id}"
+            raise RuntimeError(msg)
+
+        from app.world.store import get_world
+
+        world = get_world()
+        scene = world.get_scene(scene_id)
+        scene_title = scene.title if scene is not None else scene_id
+        job = Job(
+            id=str(uuid.uuid4()),
+            kind="scene_generation",
+            label=f"Scene '{scene_title or 'Untitled'}'",
+            claims=[claim],
+            live=SceneGenerationLive(),
+        )
+        self._register_job(job)
+        return job, (job.id, scene_id, max_revisions)
+
     def _finish_job(self, job_id: str, *, status: JobStatus, error: str | None = None) -> None:
         with self._lock:
             job = self._jobs.get(job_id)
@@ -234,6 +318,103 @@ class JobManager:
                 for claim in job.claims:
                     if self._claim_index.get(claim) == job_id:
                         self._claim_index.pop(claim, None)
+            self._sync_queue_item_unlocked(job)
+
+    def _sync_queue_item_unlocked(self, job: Job) -> None:
+        if job.kind != "scene_generation" or job.status == "running":
+            return
+        now = datetime.now(timezone.utc)
+        for item in self._queue:
+            if item.job_id != job.id:
+                continue
+            item.status = "failed" if job.status == "failed" else "finished"
+            item.error = job.error
+            item.finished_at = now
+
+    def _latest_queue_by_scene_unlocked(self) -> dict[str, QueuedScene]:
+        latest: dict[str, QueuedScene] = {}
+        for queued in self._queue:
+            latest[queued.scene_id] = queued
+        return latest
+
+    def _prerequisites_satisfied_unlocked(self, item: QueuedScene) -> bool:
+        latest = self._latest_queue_by_scene_unlocked()
+        for prereq_id in item.prerequisite_scene_ids:
+            prereq = latest.get(prereq_id)
+            if prereq is None:
+                continue
+            if prereq.status != "finished":
+                return False
+        return True
+
+    def _propagate_blocked_unlocked(self) -> None:
+        latest = self._latest_queue_by_scene_unlocked()
+        changed = True
+        while changed:
+            changed = False
+            for item in self._queue:
+                if item.status != "pending":
+                    continue
+                for prereq_id in item.prerequisite_scene_ids:
+                    prereq = latest.get(prereq_id)
+                    if prereq is None:
+                        continue
+                    if prereq.status in ("failed", "blocked"):
+                        item.status = "blocked"
+                        item.error = f"Blocked by prerequisite: {prereq.label}"
+                        item.finished_at = datetime.now(timezone.utc)
+                        changed = True
+                        break
+
+    def _schedule_queue(self) -> None:
+        """Start every ready pending scene up to the parallel generation cap."""
+
+        while True:
+            prepared: list[tuple[str, str, int]] = []
+            with self._lock:
+                self._propagate_blocked_unlocked()
+                running_count = sum(
+                    1
+                    for job in self._jobs.values()
+                    if job.status == "running" and job.kind == "scene_generation"
+                )
+                slots = MAX_PARALLEL_SCENE_GENERATIONS - running_count
+                if slots <= 0:
+                    return
+
+                for item in self._queue:
+                    if slots <= 0:
+                        break
+                    if item.status != "pending":
+                        continue
+                    if not self._prerequisites_satisfied_unlocked(item):
+                        continue
+                    claim = scene_claim_key(item.scene_id)
+                    if claim in self._claim_index:
+                        continue
+                    try:
+                        job, thread_args = self._prepare_scene_generation_unlocked(
+                            item.scene_id,
+                            max_revisions=item.max_revisions,
+                        )
+                    except RuntimeError:
+                        continue
+                    item.status = "running"
+                    item.job_id = job.id
+                    prepared.append(thread_args)
+                    slots -= 1
+
+            if not prepared:
+                return
+
+            for job_id, scene_id, max_revisions in prepared:
+                thread = threading.Thread(
+                    target=self._run_scene_generation,
+                    args=(job_id, scene_id, max_revisions),
+                    name=f"scene-gen-{scene_id}",
+                    daemon=True,
+                )
+                thread.start()
 
     def _run_scene_generation(self, job_id: str, scene_id: str, max_revisions: int) -> None:
         from app.graphs.scene_generation import run_scene_generation
@@ -244,6 +425,7 @@ class JobManager:
             self._finish_job(job_id, status="failed", error=str(exc))
         else:
             self._finish_job(job_id, status="finished")
+        self._schedule_queue()
 
     async def _run_chat_turn(self, job_id: str, conversation: ChatConversation) -> None:
         job = self.get_job(job_id)

@@ -128,7 +128,7 @@ async def test_scene_blueprint_shows_linked_events(
 async def test_scene_generate_button_disabled_without_blueprint(user: User) -> None:
     await user.open("/workspace/narrative-style")
     user.find(marker="new-scene-button").click()
-    await user.should_see("Generate")
+    await user.should_see(marker="scene-generate-button")
     button = user.find(marker="scene-generate-button")
     assert button is not None
 
@@ -156,7 +156,7 @@ async def test_scene_generate_button_enabled_with_generatable_blueprint(
     JsonFileWorldStore(isolated_data_dir / "world.json").save(world)
 
     await user.open("/workspace/scenes/scene_ready")
-    await user.should_see("Generate")
+    await user.should_see(marker="scene-generate-button")
 
 
 async def test_scene_stale_badge_when_blueprint_changed_after_generation(
@@ -534,6 +534,106 @@ async def test_header_menu_includes_clear_state(user: User) -> None:
     await user.should_see("Clear State...")
     await user.should_see("Export Scenes")
     await user.should_see("Export World")
+    await user.should_see("Generate All Scenes...")
+
+
+async def test_work_queue_nav_and_empty_page(user: User) -> None:
+    await user.open("/workspace/narrative-style")
+    await user.should_see("Work Queue")
+    user.find(marker="header-work-queue").click()
+    await user.should_see("Work Queue")
+    await user.should_see("No active or recent workflows.")
+
+
+async def test_generate_all_scenes_dialog_checkbox_defaults(
+    user: User,
+    isolated_data_dir: Path,
+) -> None:
+    from datetime import datetime, timezone
+
+    from app.persistence.world import JsonFileWorldStore, default_world
+    from app.world.models import Event, Scene, SceneBlueprint, SceneGenerated, blueprint_fingerprint
+
+    world = default_world()
+    world.story_bible.timeline = [
+        Event(id="event_a", title="A"),
+        Event(id="event_b", title="B"),
+    ]
+    done_blueprint = SceneBlueprint(premise="Done", event_ids=["event_b"])
+    world.scenes = [
+        Scene(
+            id="scene_new",
+            title="Fresh Scene",
+            blueprint=SceneBlueprint(premise="Start", event_ids=["event_a"]),
+        ),
+        Scene(
+            id="scene_done",
+            title="Done Scene",
+            blueprint=done_blueprint,
+            generated=SceneGenerated(
+                generated_at=datetime.now(timezone.utc),
+                blueprint_fingerprint=blueprint_fingerprint(done_blueprint),
+            ),
+        ),
+        Scene(
+            id="scene_bad",
+            title="Incomplete Scene",
+            blueprint=SceneBlueprint(premise="", event_ids=[]),
+        ),
+    ]
+    JsonFileWorldStore(isolated_data_dir / "world.json").save(world)
+
+    await user.open("/workspace/narrative-style")
+    user.find(marker="header-overflow-menu").click()
+    user.find(marker="generate-all-scenes-menu-item").click()
+    await user.should_see("Generate All Scenes")
+    await user.should_see("Fresh Scene")
+    await user.should_see("Done Scene")
+    await user.should_see("Incomplete Scene")
+    await user.should_see("never generated")
+    await user.should_see("up to date")
+    await user.should_see("Missing premise")
+
+
+async def test_generate_all_scenes_confirm_enqueues_and_opens_queue(
+    user: User,
+    isolated_data_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import time
+
+    from app.graphs.jobs import get_job_manager, reset_job_manager
+    from app.persistence.world import JsonFileWorldStore, default_world
+    from app.world.models import Event, Scene, SceneBlueprint
+
+    reset_job_manager()
+
+    def slow_run(scene_id: str, *, max_revisions: int = 1) -> None:
+        time.sleep(0.2)
+
+    monkeypatch.setattr("app.graphs.scene_generation.run_scene_generation", slow_run)
+
+    world = default_world()
+    world.story_bible.timeline = [Event(id="event_a", title="A")]
+    world.scenes = [
+        Scene(
+            id="scene_new",
+            title="Fresh Scene",
+            blueprint=SceneBlueprint(premise="Start", event_ids=["event_a"]),
+        ),
+    ]
+    JsonFileWorldStore(isolated_data_dir / "world.json").save(world)
+
+    await user.open("/workspace/narrative-style")
+    user.find(marker="header-overflow-menu").click()
+    user.find(marker="generate-all-scenes-menu-item").click()
+    await user.should_see("Generate All Scenes")
+    user.find(marker="generate-all-scenes-confirm-button").click()
+
+    await user.should_see("Work Queue")
+    manager = get_job_manager()
+    assert any(item.scene_id == "scene_new" for item in manager.queued_items())
+    await user.should_see("Generate 'Fresh Scene'")
 
 
 async def test_clear_state_dialog_clears_everything(

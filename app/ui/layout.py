@@ -12,6 +12,7 @@ from app.persistence.story_export import export_story_zip
 from app.persistence.world_zip import export_world_zip, import_world_zip
 from app.ui.config import APP_TITLE
 from app.ui.navigation import HEADER_NAV_ITEMS, NavigationItem
+from app.world.scene_order import build_scene_generation_plan
 from app.world.store import clear_world, get_world, replace_world
 
 
@@ -30,6 +31,8 @@ def render_header(active_path: str) -> None:
         with ui.row().classes("items-center gap-2"):
             ui.label(APP_TITLE).classes("text-lg font-semibold mr-4")
             for item in HEADER_NAV_ITEMS:
+                if item.path == "/queue":
+                    continue
                 button = ui.button(item.label, on_click=lambda path=item.path: ui.navigate.to(path))
                 if item.path == active_path:
                     button.props("unelevated color=white text-color=primary")
@@ -37,15 +40,24 @@ def render_header(active_path: str) -> None:
                     button.props("flat color=white")
 
             @ui.refreshable
-            def running_jobs_indicator() -> None:
-                count = len(manager.running_jobs())
-                if count:
-                    with ui.row().classes("items-center gap-1 ml-2"):
+            def work_queue_nav() -> None:
+                count = manager.active_work_count()
+                with ui.row().classes("items-center gap-1"):
+                    button = ui.button(
+                        "Work Queue",
+                        on_click=lambda: ui.navigate.to("/queue"),
+                    )
+                    button.mark("header-work-queue")
+                    if active_path == "/queue":
+                        button.props("unelevated color=white text-color=primary")
+                    else:
+                        button.props("flat color=white")
+                    if count:
                         ui.spinner(size="sm").mark("header-jobs-spinner")
                         ui.label(str(count)).classes("text-sm").mark("header-jobs-count")
 
-            running_jobs_indicator()
-            ui.timer(1.0, running_jobs_indicator.refresh)
+            work_queue_nav()
+            ui.timer(1.0, work_queue_nav.refresh)
 
         overflow_button = ui.button(icon="more_vert").props("flat round color=white")
         overflow_button.mark("header-overflow-menu")
@@ -54,6 +66,11 @@ def render_header(active_path: str) -> None:
                 ui.menu_item("Import World", on_click=_open_import_dialog)
                 ui.menu_item("Export World", on_click=_export_world)
                 ui.menu_item("Export Scenes", on_click=_export_scenes)
+                generate_item = ui.menu_item(
+                    "Generate All Scenes...",
+                    on_click=_open_generate_all_scenes_dialog,
+                )
+                generate_item.mark("generate-all-scenes-menu-item")
                 clear_item = ui.menu_item("Clear State...", on_click=_open_clear_dialog)
                 clear_item.mark("clear-state-menu-item")
 
@@ -126,6 +143,77 @@ def _open_import_dialog() -> None:
             "w-full"
         )
         ui.button("Cancel", on_click=dialog.close).props("flat")
+
+    dialog.open()
+
+
+def _open_generate_all_scenes_dialog() -> None:
+    plan = build_scene_generation_plan(get_world())
+    checkboxes: dict[str, ui.checkbox] = {}
+
+    with ui.dialog() as dialog, ui.card().classes("w-full max-w-lg"):
+        ui.label("Generate All Scenes").classes("text-lg font-semibold").mark(
+            "generate-all-scenes-dialog-title"
+        )
+        ui.label(
+            "Scenes run in chronological order. Concurrent or independent scenes may generate "
+            "in parallel once their prerequisites finish."
+        ).classes("text-grey-7")
+
+        if not plan.items:
+            ui.label("No scenes in this world.").classes("text-grey-7")
+        else:
+            with ui.column().classes("w-full gap-1 max-h-96 overflow-auto"):
+                for item in plan.items:
+                    with ui.row().classes("w-full items-center gap-2"):
+                        if item.generatable:
+                            checkbox = ui.checkbox(item.title, value=item.selected_by_default)
+                            checkbox.classes("flex-grow")
+                            checkbox.mark(f"generate-all-scene-{item.scene_id}")
+                            checkboxes[item.scene_id] = checkbox
+                        else:
+                            ui.checkbox(item.title, value=False).props("disable").classes(
+                                "flex-grow"
+                            )
+                        hint = item.status if item.generatable else item.not_generatable_reason
+                        ui.label(hint).classes("text-xs text-grey-7")
+
+        def selected_count() -> int:
+            return sum(1 for checkbox in checkboxes.values() if checkbox.value)
+
+        def update_confirm_label() -> None:
+            count = selected_count()
+            confirm_button.set_text(f"Generate {count} scene{'s' if count != 1 else ''}")
+
+        def handle_confirm() -> None:
+            selected_ids = {scene_id for scene_id, checkbox in checkboxes.items() if checkbox.value}
+            if not selected_ids:
+                ui.notify("Select at least one scene to generate.", type="warning")
+                return
+            queue_items: list[tuple[str, str, tuple[str, ...]]] = []
+            for item in plan.items:
+                if item.scene_id not in selected_ids:
+                    continue
+                queue_items.append(
+                    (
+                        item.scene_id,
+                        f"Generate '{item.title}'",
+                        item.prerequisite_scene_ids,
+                    )
+                )
+            get_job_manager().queue_scene_generations(queue_items)
+            dialog.close()
+            ui.notify(f"Queued {len(queue_items)} scene(s).", type="positive")
+            ui.navigate.to("/queue")
+
+        with ui.row().classes("w-full justify-end gap-2"):
+            ui.button("Cancel", on_click=dialog.close).props("flat")
+            confirm_button = ui.button("Generate 0 scenes", on_click=handle_confirm)
+            confirm_button.mark("generate-all-scenes-confirm-button")
+
+        update_confirm_label()
+        for checkbox in checkboxes.values():
+            checkbox.on_value_change(lambda _event: update_confirm_label())
 
     dialog.open()
 

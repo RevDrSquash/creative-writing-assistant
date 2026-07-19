@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import importlib
+import threading
 import time
 from typing import Any
 
@@ -248,3 +249,163 @@ def test_update_scene_blueprint_rejects_claimed_scene(
     deadline = time.time() + 2
     while manager.is_generating(scene_id) and time.time() < deadline:
         time.sleep(0.01)
+
+
+def _wait_until(predicate, timeout: float = 2.0) -> None:
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        if predicate():
+            return
+        time.sleep(0.01)
+    raise AssertionError("condition not met before timeout")
+
+
+def test_queue_waits_for_prerequisites(monkeypatch: pytest.MonkeyPatch) -> None:
+    manager = JobManager()
+    started: list[str] = []
+    release_a = threading.Event()
+
+    def controlled_run(scene_id: str, *, max_revisions: int = 1) -> None:
+        started.append(scene_id)
+        if scene_id == "scene_a":
+            release_a.wait(timeout=2)
+        time.sleep(0.02)
+
+    monkeypatch.setattr(_scene_generation_module(), "run_scene_generation", controlled_run)
+    manager.queue_scene_generations(
+        [
+            ("scene_a", "Generate 'A'", ()),
+            ("scene_b", "Generate 'B'", ("scene_a",)),
+        ]
+    )
+
+    _wait_until(lambda: "scene_a" in started)
+    assert "scene_b" not in started
+    by_scene = {item.scene_id: item for item in manager.queued_items()}
+    assert by_scene["scene_a"].status == "running"
+    assert by_scene["scene_b"].status == "pending"
+
+    release_a.set()
+    _wait_until(lambda: "scene_b" in started)
+    _wait_until(lambda: all(item.status == "finished" for item in manager.queued_items()))
+    assert started == ["scene_a", "scene_b"]
+
+
+def test_queue_starts_independent_scenes_in_parallel(monkeypatch: pytest.MonkeyPatch) -> None:
+    manager = JobManager()
+    started: list[str] = []
+    barrier = threading.Barrier(2, timeout=2)
+
+    def parallel_run(scene_id: str, *, max_revisions: int = 1) -> None:
+        started.append(scene_id)
+        barrier.wait()
+
+    monkeypatch.setattr(_scene_generation_module(), "run_scene_generation", parallel_run)
+    manager.queue_scene_generations(
+        [
+            ("scene_a", "Generate 'A'", ()),
+            ("scene_b", "Generate 'B'", ()),
+        ]
+    )
+
+    _wait_until(lambda: all(item.status == "finished" for item in manager.queued_items()))
+    assert set(started) == {"scene_a", "scene_b"}
+
+
+def test_queue_blocks_dependents_on_failure(monkeypatch: pytest.MonkeyPatch) -> None:
+    manager = JobManager()
+
+    def failing_a(scene_id: str, *, max_revisions: int = 1) -> None:
+        if scene_id == "scene_a":
+            raise RuntimeError("boom")
+
+    monkeypatch.setattr(_scene_generation_module(), "run_scene_generation", failing_a)
+    manager.queue_scene_generations(
+        [
+            ("scene_a", "Generate 'A'", ()),
+            ("scene_b", "Generate 'B'", ("scene_a",)),
+        ]
+    )
+
+    _wait_until(
+        lambda: (
+            {item.scene_id: item.status for item in manager.queued_items()}
+            == {"scene_a": "failed", "scene_b": "blocked"}
+        )
+    )
+    by_scene = {item.scene_id: item for item in manager.queued_items()}
+    assert "Blocked by prerequisite" in (by_scene["scene_b"].error or "")
+
+
+def test_queue_respects_max_parallel_cap(monkeypatch: pytest.MonkeyPatch) -> None:
+    import app.graphs.jobs as jobs_module
+
+    manager = JobManager()
+    monkeypatch.setattr(jobs_module, "MAX_PARALLEL_SCENE_GENERATIONS", 1)
+    started: list[str] = []
+    release_first = threading.Event()
+
+    def capped_run(scene_id: str, *, max_revisions: int = 1) -> None:
+        started.append(scene_id)
+        if len(started) == 1:
+            release_first.wait(timeout=2)
+        time.sleep(0.01)
+
+    monkeypatch.setattr(_scene_generation_module(), "run_scene_generation", capped_run)
+    manager.queue_scene_generations(
+        [
+            ("scene_a", "Generate 'A'", ()),
+            ("scene_b", "Generate 'B'", ()),
+            ("scene_c", "Generate 'C'", ()),
+        ]
+    )
+
+    _wait_until(lambda: len(started) == 1)
+    assert len([item for item in manager.queued_items() if item.status == "running"]) == 1
+    assert len([item for item in manager.queued_items() if item.status == "pending"]) == 2
+
+    release_first.set()
+    _wait_until(lambda: all(item.status == "finished" for item in manager.queued_items()))
+    assert set(started) == {"scene_a", "scene_b", "scene_c"}
+
+
+def test_unselected_prerequisite_treated_as_satisfied(monkeypatch: pytest.MonkeyPatch) -> None:
+    manager = JobManager()
+    started: list[str] = []
+
+    def quick_run(scene_id: str, *, max_revisions: int = 1) -> None:
+        started.append(scene_id)
+
+    monkeypatch.setattr(_scene_generation_module(), "run_scene_generation", quick_run)
+    # scene_a is a prerequisite in the plan but not selected for this batch.
+    manager.queue_scene_generations(
+        [
+            ("scene_b", "Generate 'B'", ("scene_a",)),
+        ]
+    )
+
+    _wait_until(lambda: all(item.status == "finished" for item in manager.queued_items()))
+    assert started == ["scene_b"]
+    assert manager.queued_items()[0].prerequisite_scene_ids == []
+
+
+def test_active_work_count_includes_pending_queue(monkeypatch: pytest.MonkeyPatch) -> None:
+    manager = JobManager()
+    release_a = threading.Event()
+
+    def controlled_run(scene_id: str, *, max_revisions: int = 1) -> None:
+        if scene_id == "scene_a":
+            release_a.wait(timeout=2)
+
+    monkeypatch.setattr(_scene_generation_module(), "run_scene_generation", controlled_run)
+    manager.queue_scene_generations(
+        [
+            ("scene_a", "Generate 'A'", ()),
+            ("scene_b", "Generate 'B'", ("scene_a",)),
+        ]
+    )
+
+    _wait_until(lambda: manager.active_work_count() >= 2)
+    assert manager.active_work_count() == 2  # one running + one pending
+    release_a.set()
+    _wait_until(lambda: manager.active_work_count() == 0)

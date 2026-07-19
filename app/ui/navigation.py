@@ -19,4 +19,5 @@ HEADER_NAV_ITEMS: tuple[NavigationItem, ...] = (
     NavigationItem("Models", "/models", "Model configuration and selection"),
     NavigationItem("Settings", "/settings", "Workspace settings"),
     NavigationItem("Debug", "/debug", "LLM call debug logs"),
+    NavigationItem("Work Queue", "/queue", "Active and queued background workflows"),
 )
