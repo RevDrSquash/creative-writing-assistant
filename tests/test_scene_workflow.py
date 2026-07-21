@@ -26,6 +26,7 @@ from app.graphs.scene_workflow import (
     _review_outline_node,
     _review_prose_node,
     _revise_plan_node,
+    _strip_leading_title,
     _summary_node,
     build_scene_writer_graph,
     structured_fake_model,
@@ -396,6 +397,61 @@ def test_draft_prose_node_raises_when_canvas_empty(isolated_world: World) -> Non
             messages=iter([AIMessage(content="Sorry, I cannot draft that.")])
         )
     }
+    state = _workflow_input(scene.id)
+
+    with pytest.raises(SceneWorkflowError, match="no prose"):
+        _draft_prose_node(models)(state)
+
+    assert get_world().get_scene(scene.id).markdown == ""
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        ("# Title\n\nProse.", "Prose."),
+        ("## Title\nProse.", "Prose."),
+        ("\n\n# Title\n\n## Subtitle\n\nProse.", "Prose."),
+        ("Prose without a title.", "Prose without a title."),
+        ("### Location Tag\n\nProse.", "### Location Tag\n\nProse."),
+        ("---\n\nProse.", "---\n\nProse."),
+        ("# Only a title", ""),
+    ],
+)
+def test_strip_leading_title(raw: str, expected: str) -> None:
+    assert _strip_leading_title(raw) == expected
+
+
+def test_draft_prose_node_strips_leading_title(isolated_world: World) -> None:
+    scene = create_scene()
+    set_scene_text(scene.id, "")
+    models = {
+        SCENE_DRAFT_NODE_ID: _canvas_draft_model("# The Confrontation\n\nShe entered the room.")
+    }
+    state = _workflow_input(scene.id)
+
+    result = _draft_prose_node(models)(state)
+
+    assert result["prose"] == "She entered the room."
+    assert get_world().get_scene(scene.id).markdown == "She entered the room."
+
+
+def test_draft_prose_node_keeps_dividers_and_location_tags(isolated_world: World) -> None:
+    scene = create_scene()
+    set_scene_text(scene.id, "")
+    prose = "### The Docks\n\nShe waited.\n\n---\n\nHe arrived."
+    models = {SCENE_DRAFT_NODE_ID: _canvas_draft_model(prose)}
+    state = _workflow_input(scene.id)
+
+    result = _draft_prose_node(models)(state)
+
+    assert result["prose"] == prose
+    assert get_world().get_scene(scene.id).markdown == prose
+
+
+def test_draft_prose_node_raises_when_draft_is_only_a_title(isolated_world: World) -> None:
+    scene = create_scene()
+    set_scene_text(scene.id, "")
+    models = {SCENE_DRAFT_NODE_ID: _canvas_draft_model("# Just a Title")}
     state = _workflow_input(scene.id)
 
     with pytest.raises(SceneWorkflowError, match="no prose"):

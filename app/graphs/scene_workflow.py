@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from typing import Any
 
 from langchain.agents import create_agent
@@ -49,7 +50,13 @@ When the prompt includes related or next scenes by summary only, use read_scene 
 list_scenes to read their full prose if you need more detail for continuity.
 Write the full scene markdown inside <canvas>...</canvas> tags.
 You may use multiple canvas blocks; they append in order.
-Always close canvas tags. Everything inside the tags is scene prose, not chat."""
+Always close canvas tags. Everything inside the tags is scene prose, not chat.
+The canvas is the body text of one scene: do not include a scene title or any
+other heading at the top. Titles are stored and displayed outside the prose.
+Keep formatting minimal. You may separate sections with "---" divider lines,
+and if the scene genuinely moves between locations you may mark a section with
+a short level-3 or level-4 heading as a location tag. Otherwise write plain
+paragraphs of prose with no surrounding structure."""
 
 _PLAN_REVISE_SYSTEM_PROMPT = """You revise scene stances and outline beats to address a critique.
 Use edit_outline for batched text-anchored outline edits and update_stance for
@@ -324,6 +331,7 @@ def _draft_prose_node(models: dict[str, BaseChatModel] | None) -> Any:
         prose = result.get("current_scene", "")
         if not isinstance(prose, str):
             prose = ""
+        prose = _strip_leading_title(prose)
         _require_nonempty_prose(
             prose,
             "Draft step produced no prose (model emitted no canvas content)",
@@ -409,6 +417,25 @@ def _revise_prose_node(models: dict[str, BaseChatModel] | None) -> Any:
 def _require_nonempty_prose(prose: str, message: str) -> None:
     if not prose.strip():
         raise SceneWorkflowError(message)
+
+
+# Leading level-1/2 headings are titles; level 3+ headings are allowed as location tags.
+_LEADING_TITLE_PATTERN = re.compile(r"\s*#{1,2} [^\n]*\n*")
+
+
+def _strip_leading_title(prose: str) -> str:
+    """Remove leading markdown titles from drafted prose.
+
+    The scene title is stored and displayed outside the prose, but models
+    reliably open drafts with a `# Title` heading anyway. Strip level-1/2
+    headings (and surrounding blank lines) from the start of the text.
+    """
+    text = prose
+    while True:
+        match = _LEADING_TITLE_PATTERN.match(text)
+        if match is None:
+            return text
+        text = text[match.end() :]
 
 
 def _summary_node(models: dict[str, BaseChatModel] | None) -> Any:

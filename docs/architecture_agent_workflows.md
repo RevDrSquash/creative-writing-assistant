@@ -99,9 +99,13 @@ will be discarded).
    `update_scene_generated`. The review/revise loop is bounded by a configurable maximum
    (default 1) rather than looping until satisfied, to cap cost and latency.
 5. **Draft prose** — write the scene Markdown. This node is tool-enabled (read-only bible/scene
-   tools) so it can pull extra detail while drafting. If the draft agent emits no canvas content
-   (empty/whitespace prose), the node raises `SceneWorkflowError` and the generation job fails
-   without writing the empty text.
+   tools) so it can pull extra detail while drafting. The prompt frames the canvas as body prose
+   only: no scene title or top-level heading (the title is stored and displayed outside the
+   prose), with `---` divider lines and short level-3/4 location-tag headings allowed. Because
+   models still tend to open with a `# Title` anyway, the node strips leading level-1/2 headings
+   from the drafted text before persisting. If the draft agent emits no canvas content
+   (empty/whitespace prose, or nothing but a title), the node raises `SceneWorkflowError` and
+   the generation job fails without writing the empty text.
 6. **Review prose** — critique the drafted prose against premise, purpose, stances, outline,
    and continuity. Structured critique only. The critique schema includes a `prose_unusable`
    flag: when the model marks the draft missing, truncated, gibberish, or otherwise not an
