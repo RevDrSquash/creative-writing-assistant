@@ -26,6 +26,13 @@ def test_default_model_configs_include_required_roles() -> None:
     assert configs_by_id[STANDARD_CONFIG_ID].model == DEFAULT_MODEL
 
 
+def test_default_model_configs_use_anthropic_models_with_high_reasoning() -> None:
+    for config in DEFAULT_MODEL_CONFIGS:
+        assert config.model.startswith("anthropic/")
+        assert config.reasoning_effort == "high"
+        assert config.max_tokens is None
+
+
 def test_graph_nodes_register_chat_node_default() -> None:
     chat_node = next(node for node in GRAPH_NODES if node.node_id == CHAT_NODE_ID)
 

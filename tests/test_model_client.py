@@ -123,6 +123,16 @@ def test_get_chat_model_for_config_sets_model_temperature_and_reasoning() -> Non
     assert result.system_prompt_prefix == PREFIX
 
 
+def test_get_chat_model_for_config_sets_max_tokens() -> None:
+    settings = ModelSettings(OPENROUTER_API_KEY="sk-or-v1-test")
+    config = ModelConfig(id="custom", name="Custom", model="example/custom", max_tokens=16000)
+
+    result = client.get_chat_model_for_config(config, settings)
+
+    assert isinstance(result, PrefixedChatOpenAI)
+    assert result.max_tokens == 16000
+
+
 def test_get_chat_model_for_config_omits_optional_parameters() -> None:
     settings = ModelSettings(OPENROUTER_API_KEY="sk-or-v1-test")
     config = ModelConfig(id="custom", name="Custom", model="example/custom")
@@ -132,6 +142,7 @@ def test_get_chat_model_for_config_omits_optional_parameters() -> None:
     assert isinstance(result, PrefixedChatOpenAI)
     assert result.model_name == "example/custom"
     assert result.temperature is None
+    assert result.max_tokens is None
     assert result.extra_body is None
     assert result.system_prompt_prefix == ""
 

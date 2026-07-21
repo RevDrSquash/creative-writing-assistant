@@ -497,6 +497,8 @@ async def test_standard_model_config_page_renders(
     await user.open("/models/configs/standard")
     await user.should_see("Standard model configuration")
     await user.should_see("System prompt prefix")
+    await user.should_see("Reasoning effort")
+    await user.should_see("Max output tokens")
     await user.should_see("Provider")
     await user.should_see("Model")
 

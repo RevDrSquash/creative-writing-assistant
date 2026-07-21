@@ -17,12 +17,14 @@ from app.graphs.scene_workflow import (
     OutlineCritique,
     ProseCritique,
     SceneSummary,
+    SceneWorkflowError,
     StanceList,
     StanceOutput,
     _author_stances_node,
     _draft_prose_node,
     _outline_node,
     _review_outline_node,
+    _review_prose_node,
     _revise_plan_node,
     _summary_node,
     build_scene_writer_graph,
@@ -383,6 +385,65 @@ def test_summary_node_persists_summary_without_touching_title(isolated_world: Wo
     updated = get_world().get_scene(scene.id)
     assert updated.title == "Agent Chosen Title"
     assert updated.summary == "A quiet patrol."
+
+
+def test_draft_prose_node_raises_when_canvas_empty(isolated_world: World) -> None:
+    scene = create_scene()
+    # Generation clears markdown before the draft step; start empty to match that.
+    set_scene_text(scene.id, "")
+    models = {
+        SCENE_DRAFT_NODE_ID: ToolAwareFakeChatModel(
+            messages=iter([AIMessage(content="Sorry, I cannot draft that.")])
+        )
+    }
+    state = _workflow_input(scene.id)
+
+    with pytest.raises(SceneWorkflowError, match="no prose"):
+        _draft_prose_node(models)(state)
+
+    assert get_world().get_scene(scene.id).markdown == ""
+
+
+def test_review_prose_node_raises_when_prose_unusable(isolated_world: World) -> None:
+    scene = create_scene()
+    models = {
+        SCENE_PROSE_REVIEW_NODE_ID: structured_fake_model(
+            ProseCritique(
+                critique="The draft is empty gibberish, not a scene.",
+                prose_unusable=True,
+            )
+        )
+    }
+    state = _workflow_input(scene.id)
+    state["prose"] = ""
+
+    with pytest.raises(SceneWorkflowError, match="empty gibberish"):
+        _review_prose_node(models)(state)
+
+
+def test_full_graph_aborts_when_prose_marked_unusable(isolated_world: World) -> None:
+    character_id = _seed_character()
+    scene = create_scene("Proposed Title")
+    scene.blueprint = SceneBlueprint(
+        premise="Brief premise.",
+        purpose="Brief purpose.",
+        character_ids=[character_id],
+        event_ids=[_seed_event()],
+    )
+    scene.summary = "Pre-existing summary."
+    models = _workflow_models(prose="asdf asdf asdf")
+    models[SCENE_PROSE_REVIEW_NODE_ID] = structured_fake_model(
+        ProseCritique(critique="Gibberish, not a scene.", prose_unusable=True)
+    )
+    input_state = _workflow_input(scene.id, event_ids=scene.blueprint.event_ids)
+    input_state["character_ids"] = [character_id]
+
+    with pytest.raises(SceneWorkflowError, match="Gibberish"):
+        build_scene_writer_graph(models=models).invoke(input_state)
+
+    updated = get_world().get_scene(scene.id)
+    assert updated.summary == "Pre-existing summary."
+    assert updated.markdown == "asdf asdf asdf"
 
 
 def test_full_graph_drafts_end_to_end(isolated_world: World) -> None:

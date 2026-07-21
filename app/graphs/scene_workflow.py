@@ -38,6 +38,11 @@ from app.world.scene import (
 )
 from app.world.store import get_world
 
+
+class SceneWorkflowError(RuntimeError):
+    """Raised when a scene-writing workflow step fails in a way that should abort the job."""
+
+
 _DRAFT_SYSTEM_PROMPT = """You are drafting scene prose for a fiction project.
 Use read-only tools to pull story bible and scene blueprint detail when needed.
 When the prompt includes related or next scenes by summary only, use read_scene or
@@ -84,6 +89,7 @@ class PlanCritique(BaseModel):
 
 class ProseCritique(BaseModel):
     critique: str = ""
+    prose_unusable: bool = False
 
 
 class SceneSummary(BaseModel):
@@ -318,6 +324,10 @@ def _draft_prose_node(models: dict[str, BaseChatModel] | None) -> Any:
         prose = result.get("current_scene", "")
         if not isinstance(prose, str):
             prose = ""
+        _require_nonempty_prose(
+            prose,
+            "Draft step produced no prose (model emitted no canvas content)",
+        )
         set_scene_text(scene_id, prose)
         return {"prose": prose}
 
@@ -330,7 +340,10 @@ def _review_prose_node(models: dict[str, BaseChatModel] | None) -> Any:
         prompt = (
             "Critique the drafted scene prose against the premise, purpose, stances, "
             "outline, and continuity with surrounding scenes. Suggest concrete edits; "
-            "say if no changes are needed.\n\n"
+            "say if no changes are needed.\n"
+            "If the prose is missing, obviously truncated, gibberish, or otherwise not "
+            "an actual scene worth revising, set prose_unusable to true and explain why "
+            "in critique. Otherwise leave prose_unusable false and critique normally.\n\n"
             f"Premise: {state.get('premise', '')}\n"
             f"Purpose: {state.get('purpose', '')}\n"
             f"Stances:\n{_stances_text(state.get('stances', []))}\n"
@@ -339,6 +352,10 @@ def _review_prose_node(models: dict[str, BaseChatModel] | None) -> Any:
         )
         prompt = _append_continuity_context(prompt, state)
         result = _structured_invoke(SCENE_PROSE_REVIEW_NODE_ID, models, ProseCritique, prompt)
+        if result.prose_unusable:
+            reason = result.critique.strip() or "no reason given"
+            msg = f"Prose review marked the draft unusable: {reason}"
+            raise SceneWorkflowError(msg)
         return {"prose_critique": result.critique}
 
     return node
@@ -378,11 +395,20 @@ def _revise_prose_node(models: dict[str, BaseChatModel] | None) -> Any:
         revised = result.get("current_scene", prose)
         if not isinstance(revised, str):
             revised = prose
+        _require_nonempty_prose(
+            revised,
+            "Revise prose step left the scene empty",
+        )
         set_scene_text(scene_id, revised)
         prose_revision_count = state.get("prose_revision_count", 0) + 1
         return {"prose": revised, "prose_revision_count": prose_revision_count}
 
     return node
+
+
+def _require_nonempty_prose(prose: str, message: str) -> None:
+    if not prose.strip():
+        raise SceneWorkflowError(message)
 
 
 def _summary_node(models: dict[str, BaseChatModel] | None) -> Any:

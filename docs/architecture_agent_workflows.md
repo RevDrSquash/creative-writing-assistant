@@ -99,13 +99,19 @@ will be discarded).
    `update_scene_generated`. The review/revise loop is bounded by a configurable maximum
    (default 1) rather than looping until satisfied, to cap cost and latency.
 5. **Draft prose** — write the scene Markdown. This node is tool-enabled (read-only bible/scene
-   tools) so it can pull extra detail while drafting.
+   tools) so it can pull extra detail while drafting. If the draft agent emits no canvas content
+   (empty/whitespace prose), the node raises `SceneWorkflowError` and the generation job fails
+   without writing the empty text.
 6. **Review prose** — critique the drafted prose against premise, purpose, stances, outline,
-   and continuity. Structured critique only.
+   and continuity. Structured critique only. The critique schema includes a `prose_unusable`
+   flag: when the model marks the draft missing, truncated, gibberish, or otherwise not an
+   actual scene, the node raises `SceneWorkflowError` (including the critique text) and the
+   generation job fails before revise/summarize.
 7. **Revise prose** — a tool-enabled ReAct sub-loop that applies targeted search/replace edits
    via `edit_prose`. The agent works on `current_scene`; the node persists through
    `set_scene_text`. Bounded by the same `max_revisions` counter (tracked separately as
-   `prose_revision_count`).
+   `prose_revision_count`). If a revise pass leaves the scene empty, the node raises
+   `SceneWorkflowError` the same way draft does.
 8. **Summarize** — produce the one-line scene `summary` from the (possibly revised) prose. The
    title is never touched.
 

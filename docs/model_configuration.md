@@ -10,16 +10,26 @@ Each model configuration is represented by a `ModelConfig` value with:
 
 * `id` - stable identifier used by node selections.
 * `name` - user-facing label.
-* `model` - OpenRouter model id, such as `moonshotai/kimi-k2.6`.
+* `model` - OpenRouter model id, such as `anthropic/claude-sonnet-4.5`.
 * `temperature` - optional sampling temperature.
-* `reasoning_effort` - optional reasoning level: `low`, `medium`, or `high`.
+* `reasoning_effort` - optional reasoning level: `minimal`, `low`, `medium`, `high`, `xhigh`, or
+  `max`. Sent as OpenRouter's unified `reasoning.effort` parameter. On Anthropic models up
+  through Claude 4.5 this converts to a thinking token budget derived from `max_tokens`; on
+  Claude 4.6+ (adaptive thinking) it maps to Anthropic's `output_config.effort`, where `xhigh`
+  and `max` become meaningful (older models fall back to `high`).
+* `max_tokens` - optional cap on output tokens per call. For Anthropic models using
+  effort-based reasoning, OpenRouter also derives the thinking budget from this value, so it
+  must comfortably exceed the expected reasoning share.
 * `system_prompt_prefix` - optional text prepended to the base system prompt at agent-build time.
 
-The default configuration set contains three role-oriented configs:
+The default configuration set contains three role-oriented configs, all Anthropic models with
+`reasoning_effort` set to `high` (reasoning is opt-in on Anthropic models via OpenRouter, and
+high effort has produced clearly better writing results than the defaults):
 
-* `small` - fast, lower-cost tasks.
-* `standard` - default chat behavior; this keeps the current `moonshotai/kimi-k2.6` model.
-* `large` - higher-capability tasks where latency or cost is less important.
+* `small` - `anthropic/claude-haiku-4.5` for fast, lower-cost tasks.
+* `standard` - `anthropic/claude-sonnet-4.5` for default chat behavior.
+* `large` - `anthropic/claude-opus-4.5` for higher-capability tasks where latency or cost is
+  less important.
 
 Users may add custom configurations, but code should treat the three defaults as always available.
 
@@ -70,9 +80,10 @@ The persisted JSON shape is:
     {
       "id": "standard",
       "name": "Standard",
-      "model": "moonshotai/kimi-k2.6",
+      "model": "anthropic/claude-sonnet-4.5",
       "temperature": null,
-      "reasoning_effort": null,
+      "reasoning_effort": "high",
+      "max_tokens": null,
       "system_prompt_prefix": ""
     }
   ],

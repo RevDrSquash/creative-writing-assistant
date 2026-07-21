@@ -5,11 +5,14 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from app.models.settings import DEFAULT_MODEL
 
-ReasoningEffort = Literal["low", "medium", "high"]
+# OpenRouter's unified reasoning effort levels. Older Anthropic models map these to a
+# thinking token budget; Claude 4.6+ maps them to output_config.effort under adaptive
+# thinking, where "xhigh" and "max" become meaningful (older models fall back to "high").
+ReasoningEffort = Literal["minimal", "low", "medium", "high", "xhigh", "max"]
 
 SMALL_CONFIG_ID = "small"
 STANDARD_CONFIG_ID = "standard"
@@ -33,6 +36,7 @@ class ModelConfig(BaseModel):
     model: str
     temperature: float | None = None
     reasoning_effort: ReasoningEffort | None = None
+    max_tokens: int | None = Field(default=None, ge=1)
     system_prompt_prefix: str = ""
 
 
@@ -49,17 +53,20 @@ DEFAULT_MODEL_CONFIGS: tuple[ModelConfig, ...] = (
     ModelConfig(
         id=SMALL_CONFIG_ID,
         name="Small",
-        model="openai/gpt-4o-mini",
+        model="anthropic/claude-haiku-4.5",
+        reasoning_effort="high",
     ),
     ModelConfig(
         id=STANDARD_CONFIG_ID,
         name="Standard",
         model=DEFAULT_MODEL,
+        reasoning_effort="high",
     ),
     ModelConfig(
         id=LARGE_CONFIG_ID,
         name="Large",
-        model="anthropic/claude-3.5-sonnet",
+        model="anthropic/claude-opus-4.5",
+        reasoning_effort="high",
     ),
 )
 
