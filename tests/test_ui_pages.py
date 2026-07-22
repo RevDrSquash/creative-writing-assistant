@@ -476,7 +476,7 @@ async def test_model_selection_save_writes_isolated_store(
     config_path = isolated_data_dir / "model_configs.json"
     assert config_path.is_file()
     stored = json.loads(config_path.read_text(encoding="utf-8"))
-    assert stored["selections"]["chat"] == "standard"
+    assert stored["selections"]["chat"] == "orchestration"
 
 
 async def test_new_model_page_renders_with_catalog(
@@ -490,12 +490,12 @@ async def test_new_model_page_renders_with_catalog(
     await user.should_see("Model")
 
 
-async def test_standard_model_config_page_renders(
+async def test_default_model_config_page_renders(
     user: User,
     stub_model_catalog: list,
 ) -> None:
-    await user.open("/models/configs/standard")
-    await user.should_see("Standard model configuration")
+    await user.open("/models/configs/orchestration")
+    await user.should_see("Orchestration model configuration")
     await user.should_see("System prompt prefix")
     await user.should_see("Reasoning effort")
     await user.should_see("Max output tokens")

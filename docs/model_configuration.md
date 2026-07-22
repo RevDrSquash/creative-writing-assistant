@@ -14,7 +14,7 @@ Each model configuration is represented by a `ModelConfig` value with:
 
 * `id` - stable identifier used by node selections.
 * `name` - user-facing label.
-* `model` - OpenRouter model id, such as `anthropic/claude-sonnet-4.5`.
+* `model` - OpenRouter model id, such as `anthropic/claude-sonnet-5`.
 * `temperature` - optional sampling temperature.
 * `reasoning_effort` - optional reasoning level: `minimal`, `low`, `medium`, `high`, `xhigh`, or
   `max`. Sent as OpenRouter's unified `reasoning.effort` parameter. On Anthropic models up
@@ -26,16 +26,22 @@ Each model configuration is represented by a `ModelConfig` value with:
   must comfortably exceed the expected reasoning share.
 * `system_prompt_prefix` - optional text prepended to the base system prompt at agent-build time.
 
-The default configuration set contains three role-oriented configs, all Anthropic models with
-`reasoning_effort` set to `high` (reasoning is opt-in on Anthropic models via OpenRouter, and
-high effort has produced clearly better writing results than the defaults):
+The default configuration set contains four role-oriented configs. Each role captures a
+requirement profile rather than a model size, so node defaults encode *why* a model was chosen
+and each role carries the reasoning effort appropriate to its work (the rationale, node
+categories, and candidate analysis live in
+[model_selection_analysis.md](model_selection_analysis.md)):
 
-* `small` - `anthropic/claude-haiku-4.5` for fast, lower-cost tasks.
-* `standard` - `anthropic/claude-sonnet-4.5` for default chat behavior.
-* `large` - `anthropic/claude-opus-4.5` for higher-capability tasks where latency or cost is
-  less important.
+* `orchestration` - `anthropic/claude-sonnet-5` at `medium` effort. Tool-calling agent work:
+  strong tool reliability and instruction following over prose quality.
+* `writing` - `openai/gpt-5.6-luna` at `low` effort. Long-form prose drafting: best writing per
+  dollar and high throughput; planning already happened upstream, so low effort suffices.
+* `judgment` - `anthropic/claude-sonnet-5` at `medium` effort. Critique and targeted revision:
+  frontier judgment where outputs are short, so capability is cheap.
+* `structure` - `google/gemini-3.5-flash-lite` at `low` effort. Schema-filling and
+  summarization: fast, cheap structured output.
 
-Users may add custom configurations, but code should treat the three defaults as always available.
+Users may add custom configurations, but code should treat the four defaults as always available.
 
 ## Node Registry
 
@@ -47,20 +53,26 @@ LangGraph nodes select models through a small registry rather than hard-coded co
 
 The first registry entry is:
 
-* `chat` - "Chat Agent", defaulting to `standard`.
+* `chat` - "Chat Agent", defaulting to `orchestration`.
 
 Scene-writing workflow nodes (`generate_scene`):
 
-* `scene_stances` - "Scene: Author Stances", defaulting to `standard`.
-* `scene_outline` - "Scene: Outline", defaulting to `standard`.
-* `scene_outline_review` - "Scene: Review Plan", defaulting to `small`.
-* `scene_outline_revise` - "Scene: Revise Plan", defaulting to `standard`.
-* `scene_draft` - "Scene: Draft Prose", defaulting to `large`.
-* `scene_prose_review` - "Scene: Review Prose", defaulting to `small`.
-* `scene_prose_revise` - "Scene: Revise Prose", defaulting to `large`.
-* `scene_summary` - "Scene: Summary", defaulting to `small`.
+* `scene_stances` - "Scene: Author Stances", defaulting to `structure`.
+* `scene_outline` - "Scene: Outline", defaulting to `structure`.
+* `scene_outline_review` - "Scene: Review Plan", defaulting to `judgment`.
+* `scene_outline_revise` - "Scene: Revise Plan", defaulting to `judgment`.
+* `scene_draft` - "Scene: Draft Prose", defaulting to `writing`.
+* `scene_prose_review` - "Scene: Review Prose", defaulting to `judgment`.
+* `scene_prose_revise` - "Scene: Revise Prose", defaulting to `judgment`.
+* `scene_summary` - "Scene: Summary", defaulting to `structure`.
 
-Future graph nodes should be added to the registry with their own defaults before the UI exposes selectors for them.
+The revise nodes default to `judgment`, not `writing`: they are output-small precision work that
+shares economics with the reviews, and keeping them off the `writing` config lets that config
+point at a writing specialist with weak (or, after a future gather/write split, no) tool calling.
+
+Future graph nodes should be classified into one of the role categories in
+[model_selection_analysis.md](model_selection_analysis.md) and added to the registry with that
+default before the UI exposes selectors for them.
 
 ## Resolution Order
 
@@ -68,7 +80,7 @@ Model resolution is centralized in the repository facade. For a given `node_id`,
 
 1. The user's persisted selection for that node, when it points to an existing config.
 2. The node registry default, when it points to an existing config.
-3. The `standard` default config as a final fallback.
+3. The `orchestration` default config as a final fallback.
 
 Callers should resolve once for the node they are building, then pass the resolved config to `get_chat_model_for_config`. The returned model carries the prefix; node-specific base prompts (where needed) are supplied separately by each graph node.
 
@@ -82,17 +94,17 @@ The persisted JSON shape is:
 {
   "configs": [
     {
-      "id": "standard",
-      "name": "Standard",
-      "model": "anthropic/claude-sonnet-4.5",
+      "id": "orchestration",
+      "name": "Orchestration",
+      "model": "anthropic/claude-sonnet-5",
       "temperature": null,
-      "reasoning_effort": "high",
+      "reasoning_effort": "medium",
       "max_tokens": null,
       "system_prompt_prefix": ""
     }
   ],
   "selections": {
-    "chat": "standard"
+    "chat": "orchestration"
   }
 }
 ```

@@ -840,5 +840,5 @@ def test_get_chat_model_for_node_resolves_registered_nodes(
     )
 
     result = get_chat_model_for_node(SCENE_DRAFT_NODE_ID)
-    assert result == "model-large"
-    assert created == ["large"]
+    assert result == "model-writing"
+    assert created == ["writing"]

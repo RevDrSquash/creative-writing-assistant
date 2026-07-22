@@ -15,6 +15,8 @@ from app.models.config import (
     DEFAULT_MODEL_CONFIG_IDS,
     DEFAULT_MODEL_CONFIG_MAP,
     DEFAULT_MODEL_CONFIGS,
+    JUDGMENT_CONFIG_ID,
+    ORCHESTRATION_CONFIG_ID,
     SCENE_DRAFT_NODE_ID,
     SCENE_OUTLINE_NODE_ID,
     SCENE_OUTLINE_REVIEW_NODE_ID,
@@ -23,7 +25,8 @@ from app.models.config import (
     SCENE_PROSE_REVISE_NODE_ID,
     SCENE_STANCES_NODE_ID,
     SCENE_SUMMARY_NODE_ID,
-    STANDARD_CONFIG_ID,
+    STRUCTURE_CONFIG_ID,
+    WRITING_CONFIG_ID,
     ModelConfig,
     get_graph_node,
 )
@@ -40,15 +43,15 @@ def _default_configs() -> list[ModelConfig]:
 
 def _default_selections() -> dict[str, str]:
     return {
-        CHAT_NODE_ID: STANDARD_CONFIG_ID,
-        SCENE_STANCES_NODE_ID: STANDARD_CONFIG_ID,
-        SCENE_OUTLINE_NODE_ID: STANDARD_CONFIG_ID,
-        SCENE_OUTLINE_REVIEW_NODE_ID: "small",
-        SCENE_OUTLINE_REVISE_NODE_ID: STANDARD_CONFIG_ID,
-        SCENE_DRAFT_NODE_ID: "large",
-        SCENE_PROSE_REVIEW_NODE_ID: "small",
-        SCENE_PROSE_REVISE_NODE_ID: "large",
-        SCENE_SUMMARY_NODE_ID: "small",
+        CHAT_NODE_ID: ORCHESTRATION_CONFIG_ID,
+        SCENE_STANCES_NODE_ID: STRUCTURE_CONFIG_ID,
+        SCENE_OUTLINE_NODE_ID: STRUCTURE_CONFIG_ID,
+        SCENE_OUTLINE_REVIEW_NODE_ID: JUDGMENT_CONFIG_ID,
+        SCENE_OUTLINE_REVISE_NODE_ID: JUDGMENT_CONFIG_ID,
+        SCENE_DRAFT_NODE_ID: WRITING_CONFIG_ID,
+        SCENE_PROSE_REVIEW_NODE_ID: JUDGMENT_CONFIG_ID,
+        SCENE_PROSE_REVISE_NODE_ID: JUDGMENT_CONFIG_ID,
+        SCENE_SUMMARY_NODE_ID: STRUCTURE_CONFIG_ID,
     }
 
 
@@ -182,7 +185,7 @@ class ModelConfigRepository:
         if node is not None and node.default_config_id in configs_by_id:
             return configs_by_id[node.default_config_id]
 
-        return configs_by_id[STANDARD_CONFIG_ID]
+        return configs_by_id[ORCHESTRATION_CONFIG_ID]
 
     def export_state(self) -> StoredModelConfigs:
         """Return the full persisted document (defaults-normalized) for export."""

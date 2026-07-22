@@ -128,7 +128,7 @@ For each candidate we care about:
 | `z-ai/glm-5.2` | **0.80 / 2.50** | 1746 | **~168 tok/s** | permissive-ish | Matches opus-4.5's writing Elo at ~1/10 cost and 3–4x speed; open weights (MIT) |
 | `moonshotai/kimi-k2.6` | 0.68 / 3.42 | 1716 | moderate | moderate | Cheapest "frontier-adjacent" writer |
 | `x-ai/grok-4.5` | 2.00 / 6.00 | 1590 | fast | **most permissive** | Weakest prose in this tier but the least refusal friction; good fallback when Claude/GPT balk |
-| *(current)* `anthropic/claude-opus-4.5` | 5.00 / 25.00 | 1759 | ~40–67 tok/s | restrictive | Mid-table on writing now; paying top price for no-longer-top prose |
+| *(previous default)* `anthropic/claude-opus-4.5` | 5.00 / 25.00 | 1759 | ~40–67 tok/s | restrictive | Mid-table on writing now; paying top price for no-longer-top prose |
 
 Community fiction fine-tunes (TheDrummer's Cydonia/Skyfall, etc.) are maximally permissive and
 cheap but have **no tool support**, small contexts, and weak long-form coherence — unusable for
@@ -161,7 +161,7 @@ staying in the GPT family. Avoid small models here regardless of price.
 | `openai/gpt-5.4-mini` | 0.75 / 4.50 | Safe default; nano (0.20 / 1.25) for summary only |
 | `deepseek/deepseek-v4-flash` | 0.09 / 0.19 | Cheapest credible option; 1M context |
 | `qwen/qwen3.6-flash` | 0.19 / 1.12 | Strong schema discipline for the price |
-| *(current)* `anthropic/claude-haiku-4.5` | 1.00 / 5.00 | 2–10x the price of the options above |
+| *(previous default)* `anthropic/claude-haiku-4.5` | 1.00 / 5.00 | 2–10x the price of the options above |
 
 ## Pipeline restructuring options
 
@@ -230,7 +230,7 @@ tolerance depends on the project's content:
 
 ### Role-based default configs (replace the size ladder)
 
-The `small` / `standard` / `large` default configs force node assignment onto a single
+The original `small` / `standard` / `large` default configs forced node assignment onto a single
 capability-vs-price axis, which is how the review nodes ended up on a small model: they were
 classified "cheap" when their actual requirement (conceptual judgment) is what small models lack.
 The defaults should instead be four role-oriented configs matching the requirement profiles above:
@@ -239,7 +239,7 @@ The defaults should instead be four role-oriented configs matching the requireme
 | --- | --- | --- | --- |
 | `orchestration` | 1 (tool-calling agent) | `chat` | medium |
 | `writing` | 2 (long-form prose) | `scene_draft` | low–medium |
-| `judgment` | 3 + 4 (critique and targeted revision) | `scene_outline_review`, `scene_prose_review`, `scene_outline_revise`, `scene_prose_revise` | high (reviews are the one place reasoning is the product) |
+| `judgment` | 3 + 4 (critique and targeted revision) | `scene_outline_review`, `scene_prose_review`, `scene_outline_revise`, `scene_prose_revise` | medium (the config also serves the revise nodes, which need little reasoning; bump to high if the review and revise roles are ever split) |
 | `structure` | 5 (schema-filling) | `scene_stances`, `scene_outline`, `scene_summary` | minimal–low |
 
 Notes on the mapping:
@@ -253,15 +253,12 @@ Notes on the mapping:
 - Swapping one role's model updates every node of that role without disturbing the others —
   the main practical benefit for experimentation.
 
-Implementation notes (when adopted): the built-in ids live in `app/models/config.py`
-(`*_CONFIG_ID`, `DEFAULT_MODEL_CONFIGS`, `GRAPH_NODES`) and `_default_selections()` in
-`app/persistence/model_configs.py`. Persisted `data/model_configs.json` documents already contain
-the size-based ids and selections pointing at them, and `_with_defaults()` re-injects built-ins on
-every load — so renaming requires a load-time migration (alias `small`/`standard`/`large`
-selections to their nearest role id, and drop or convert the stale built-in configs) plus updating
-`DEFAULT_MODEL_CONFIG_IDS`-driven behavior (delete-resets-built-ins, UI ordering) and the tests
-that reference the old ids. Update [model_configuration.md](model_configuration.md) alongside the
-code.
+**Status: adopted.** The role configs are implemented in `app/models/config.py`
+(`ORCHESTRATION_CONFIG_ID`, `WRITING_CONFIG_ID`, `JUDGMENT_CONFIG_ID`, `STRUCTURE_CONFIG_ID`)
+with default models from the balanced bundle below, and node defaults/selections updated in
+`app/persistence/model_configs.py`. No migration was written: the persisted
+`data/model_configs.json` was deleted before the switch, so the new defaults materialize on first
+load. Current defaults are documented in [model_configuration.md](model_configuration.md).
 
 Estimated effect of the balanced bundle vs today's defaults, using the logged token volumes:
 per-scene LLM cost drops from roughly $0.50 to roughly $0.10–0.15, and wall-clock generation time
