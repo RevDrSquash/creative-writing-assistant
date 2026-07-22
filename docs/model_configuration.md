@@ -2,6 +2,10 @@
 
 Model configuration is app data that controls which OpenRouter-compatible model each LangGraph node uses and which static system-prompt prefix is composed into that node's prompt.
 
+For an analysis of *which* models fit each node category (requirements per node type, candidate
+models, cost/speed/quality/censorship trade-offs, and proposed default bundles), see
+[model_selection_analysis.md](model_selection_analysis.md).
+
 These settings are separate from world data. They are persisted locally for the application and are not included in world ZIP import/export.
 
 ## Data Model

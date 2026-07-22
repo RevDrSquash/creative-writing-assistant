@@ -190,5 +190,6 @@ structured operations described in [story_bible_model.md](story_bible_model.md).
 - Story Bible data model (characters, intimacies, events, signals, effects): see [story_bible_model.md](story_bible_model.md).
 - Scene model, blueprint vs generated split, and scene editor UI: see [forms_and_data_models.md](forms_and_data_models.md).
 - Per-node model selection used by workflow nodes: see [model_configuration.md](model_configuration.md).
+- Which models fit which node category (requirements and candidates): see [model_selection_analysis.md](model_selection_analysis.md).
 - Phased plan (completed core phases): see [implementation_plan.md](implementation_plan.md).
 - Planned enhancements, including scene review and copy-before-regenerate: see [future_work.md](future_work.md).
