@@ -6,13 +6,15 @@ from typing import Any
 
 import pytest
 from langchain_core.language_models.fake_chat_models import GenericFakeChatModel
-from langchain_core.messages import AIMessage, ToolMessage
+from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from langchain_core.tools import ToolException
 from langgraph.types import Command
 
 from app.graphs.jobs import JobManager
 from app.graphs.scene_generation import run_scene_generation
 from app.graphs.scene_workflow import (
+    MAX_DOSSIER_SCENES,
+    ContextSelection,
     OutlineBeats,
     OutlineCritique,
     ProseCritique,
@@ -22,7 +24,9 @@ from app.graphs.scene_workflow import (
     StanceOutput,
     _author_stances_node,
     _draft_prose_node,
+    _gather_context_node,
     _outline_node,
+    _render_dossier,
     _review_outline_node,
     _review_prose_node,
     _revise_plan_node,
@@ -35,7 +39,9 @@ from app.graphs.state import merge_stances
 from app.models.client import get_chat_model_for_node
 from app.models.config import (
     GRAPH_NODES,
+    ORCHESTRATION_CONFIG_ID,
     SCENE_DRAFT_NODE_ID,
+    SCENE_GATHER_NODE_ID,
     SCENE_OUTLINE_NODE_ID,
     SCENE_OUTLINE_REVIEW_NODE_ID,
     SCENE_OUTLINE_REVISE_NODE_ID,
@@ -49,13 +55,16 @@ from app.tools.story_bible import add_event, upsert_character
 from app.world.models import (
     Event,
     EventRelation,
+    Scene,
     SceneBlueprint,
     SceneCharacterStance,
     World,
+    WorldFact,
     blueprint_fingerprint,
 )
 from app.world.scene import create_scene, scene_is_stale, set_scene_text
-from app.world.store import get_world
+from app.world.scene_context import PREVIOUS_SCENE_PROSE_CAP
+from app.world.store import get_world, world_transaction
 
 
 class ToolAwareFakeChatModel(GenericFakeChatModel):
@@ -69,8 +78,39 @@ class ToolAwareFakeChatModel(GenericFakeChatModel):
         return self
 
 
-def _canvas_draft_model(prose: str = "Drafted scene prose.") -> ToolAwareFakeChatModel:
-    return ToolAwareFakeChatModel(messages=iter([AIMessage(content=f"<canvas>{prose}</canvas>")]))
+def _draft_prose_model(prose: str = "Drafted scene prose.") -> ToolAwareFakeChatModel:
+    return ToolAwareFakeChatModel(messages=iter([AIMessage(content=prose)]))
+
+
+def _gather_selection_model(
+    selection: ContextSelection | None = None,
+) -> ToolAwareFakeChatModel:
+    payload = (selection or ContextSelection()).model_dump()
+    tool_call = {
+        "name": "ContextSelection",
+        "args": payload,
+        "id": "gather-1",
+        "type": "tool_call",
+    }
+    return ToolAwareFakeChatModel(messages=iter([AIMessage(content="", tool_calls=[tool_call])]))
+
+
+class CapturingDraftFakeModel:
+    """Draft fake that records the human prompt passed to invoke()."""
+
+    def __init__(self, prose: str = "Drafted scene prose.") -> None:
+        self.last_prompt = ""
+        self._inner = ToolAwareFakeChatModel(messages=iter([AIMessage(content=prose)]))
+
+    def bind_tools(self, tools: Any, **kwargs: Any) -> CapturingDraftFakeModel:
+        return self
+
+    def invoke(self, input: Any, config: Any = None, **kwargs: Any) -> Any:
+        for message in input:
+            if isinstance(message, HumanMessage):
+                self.last_prompt = message.content
+                break
+        return self._inner.invoke(input, config, **kwargs)
 
 
 def _plan_revise_model(
@@ -160,7 +200,8 @@ def _workflow_models(
             OutlineCritique(critique="Tighten the opening beat.")
         ),
         SCENE_OUTLINE_REVISE_NODE_ID: _plan_revise_model(),
-        SCENE_DRAFT_NODE_ID: _canvas_draft_model(prose),
+        SCENE_GATHER_NODE_ID: _gather_selection_model(),
+        SCENE_DRAFT_NODE_ID: _draft_prose_model(prose),
         SCENE_PROSE_REVIEW_NODE_ID: structured_fake_model(
             ProseCritique(critique="Looks solid." if not revise_prose else "Sharpen the opening.")
         ),
@@ -306,11 +347,12 @@ def test_workflow_nodes_include_continuity_context_in_prompts(isolated_world: Wo
     )
     outline_model = CapturingStructuredFakeModel(OutlineBeats(beats=["Beat."]))
     review_model = CapturingStructuredFakeModel(OutlineCritique(critique="Looks good."))
+    draft_model = CapturingDraftFakeModel()
     models = {
         SCENE_STANCES_NODE_ID: stances_model,
         SCENE_OUTLINE_NODE_ID: outline_model,
         SCENE_OUTLINE_REVIEW_NODE_ID: review_model,
-        SCENE_DRAFT_NODE_ID: _canvas_draft_model(),
+        SCENE_DRAFT_NODE_ID: draft_model,
     }
 
     _author_stances_node(models)(state)
@@ -318,40 +360,13 @@ def test_workflow_nodes_include_continuity_context_in_prompts(isolated_world: Wo
     _outline_node(models)(state)
     state["outline"] = get_world().get_scene(scene.id).generated.outline
     _review_outline_node(models)(state)
-
-    captured_prompts: list[str] = []
-
-    def capturing_create_agent(*args: Any, **kwargs: Any) -> Any:
-        from langchain.agents import create_agent as real_create_agent
-
-        agent = real_create_agent(*args, **kwargs)
-        original_invoke = agent.invoke
-
-        def invoke_with_capture(input_state: dict[str, Any], *args: Any, **kwargs: Any) -> Any:
-            messages = input_state.get("messages", [])
-            if messages:
-                captured_prompts.append(messages[0].content)
-            return original_invoke(input_state, *args, **kwargs)
-
-        agent.invoke = invoke_with_capture  # type: ignore[method-assign]
-        return agent
-
-    import app.graphs.scene_workflow as scene_workflow_module
-
-    original_create_agent = scene_workflow_module.create_agent
-    scene_workflow_module.create_agent = capturing_create_agent
-    try:
-        state["revision_count"] = 1
-        state["max_revisions"] = 1
-        _draft_prose_node(models)(state)
-    finally:
-        scene_workflow_module.create_agent = original_create_agent
+    _draft_prose_node(models)(state)
 
     for prompt in [
         stances_model.last_prompt,
         outline_model.last_prompt,
         review_model.last_prompt,
-        *captured_prompts,
+        draft_model.last_prompt,
     ]:
         assert "She left the room." in prompt
         assert "Maintain continuity with the surrounding scenes" in prompt
@@ -388,15 +403,11 @@ def test_summary_node_persists_summary_without_touching_title(isolated_world: Wo
     assert updated.summary == "A quiet patrol."
 
 
-def test_draft_prose_node_raises_when_canvas_empty(isolated_world: World) -> None:
+def test_draft_prose_node_raises_when_response_empty(isolated_world: World) -> None:
     scene = create_scene()
     # Generation clears markdown before the draft step; start empty to match that.
     set_scene_text(scene.id, "")
-    models = {
-        SCENE_DRAFT_NODE_ID: ToolAwareFakeChatModel(
-            messages=iter([AIMessage(content="Sorry, I cannot draft that.")])
-        )
-    }
+    models = {SCENE_DRAFT_NODE_ID: ToolAwareFakeChatModel(messages=iter([AIMessage(content="")]))}
     state = _workflow_input(scene.id)
 
     with pytest.raises(SceneWorkflowError, match="no prose"):
@@ -425,7 +436,7 @@ def test_draft_prose_node_strips_leading_title(isolated_world: World) -> None:
     scene = create_scene()
     set_scene_text(scene.id, "")
     models = {
-        SCENE_DRAFT_NODE_ID: _canvas_draft_model("# The Confrontation\n\nShe entered the room.")
+        SCENE_DRAFT_NODE_ID: _draft_prose_model("# The Confrontation\n\nShe entered the room.")
     }
     state = _workflow_input(scene.id)
 
@@ -439,7 +450,7 @@ def test_draft_prose_node_keeps_dividers_and_location_tags(isolated_world: World
     scene = create_scene()
     set_scene_text(scene.id, "")
     prose = "### The Docks\n\nShe waited.\n\n---\n\nHe arrived."
-    models = {SCENE_DRAFT_NODE_ID: _canvas_draft_model(prose)}
+    models = {SCENE_DRAFT_NODE_ID: _draft_prose_model(prose)}
     state = _workflow_input(scene.id)
 
     result = _draft_prose_node(models)(state)
@@ -451,13 +462,130 @@ def test_draft_prose_node_keeps_dividers_and_location_tags(isolated_world: World
 def test_draft_prose_node_raises_when_draft_is_only_a_title(isolated_world: World) -> None:
     scene = create_scene()
     set_scene_text(scene.id, "")
-    models = {SCENE_DRAFT_NODE_ID: _canvas_draft_model("# Just a Title")}
+    models = {SCENE_DRAFT_NODE_ID: _draft_prose_model("# Just a Title")}
     state = _workflow_input(scene.id)
 
     with pytest.raises(SceneWorkflowError, match="no prose"):
         _draft_prose_node(models)(state)
 
     assert get_world().get_scene(scene.id).markdown == ""
+
+
+def test_draft_prose_prompt_includes_context_dossier(isolated_world: World) -> None:
+    scene = create_scene()
+    set_scene_text(scene.id, "")
+    draft_model = CapturingDraftFakeModel("Prose from dossier.")
+    models = {SCENE_DRAFT_NODE_ID: draft_model}
+    state = _workflow_input(scene.id)
+    state["context_dossier"] = "## Characters\n\nCanon line about the harbor lantern."
+
+    _draft_prose_node(models)(state)
+
+    assert "Context dossier:" in draft_model.last_prompt
+    assert "Canon line about the harbor lantern." in draft_model.last_prompt
+
+
+def test_gather_context_renders_selected_entries_verbatim(isolated_world: World) -> None:
+    character_id = _seed_character()
+    with world_transaction() as world:
+        character = world.story_bible.get_character(character_id)
+        assert character is not None
+        character.identity.traits = "scarred left hand"
+        world.story_bible.timeline.append(
+            Event(id="evt_the_ambush", title="The Ambush", description="Bandits strike at dusk.")
+        )
+        world.story_bible.world_facts.append(
+            WorldFact(id="fact_harbor", title="Harbor", text="Salt air and wet rope.")
+        )
+        world.scenes.append(
+            Scene(id="scene_prior", title="Prior", markdown="She watched the tide turn.")
+        )
+
+    scene = create_scene()
+    selection = ContextSelection(
+        character_ids=[character_id],
+        event_ids=["evt_the_ambush"],
+        scene_ids=["scene_prior"],
+        world_fact_ids=["fact_harbor"],
+        notes="Emphasize dusk timing.",
+    )
+    models = {SCENE_GATHER_NODE_ID: _gather_selection_model(selection)}
+    result = _gather_context_node(models)(_workflow_input(scene.id))
+    dossier = result["context_dossier"]
+
+    assert "scarred left hand" in dossier
+    assert "Bandits strike at dusk." in dossier
+    assert "Salt air and wet rope." in dossier
+    assert "She watched the tide turn." in dossier
+    assert "Emphasize dusk timing." in dossier
+
+
+def test_gather_context_resolves_drifted_ids_and_drops_unknown(isolated_world: World) -> None:
+    with world_transaction() as world:
+        world.story_bible.timeline.append(
+            Event(id="evt_the_ambush", title="The Ambush", description="Unique ambush prose.")
+        )
+        world.story_bible.timeline.append(
+            Event(id="evt_the_guard_shift", title="Guard Shift", description="Morning relief.")
+        )
+        world.story_bible.timeline.append(
+            Event(id="evt_the_guard_patrol", title="Guard Patrol", description="Night route.")
+        )
+        world.scenes.append(Scene(id="scene_first", title="First", markdown="FIRST SCENE PROSE"))
+        world.scenes.append(Scene(id="scene_second", title="Second", markdown="SECOND SCENE PROSE"))
+
+    scene = create_scene()
+    selection = ContextSelection(
+        event_ids=["evt_ambush", "evt_missing", "evt_guard"],
+        scene_ids=["scene_unknown"],
+        notes="",
+    )
+    models = {SCENE_GATHER_NODE_ID: _gather_selection_model(selection)}
+    dossier = _gather_context_node(models)(_workflow_input(scene.id))["context_dossier"]
+
+    assert "Unique ambush prose." in dossier
+    assert "evt_missing" in dossier
+    assert "Dropped references:" in dossier
+    assert "evt_guard" in dossier  # ambiguous between two guard events
+    assert "scene_unknown" in dossier
+    assert "FIRST SCENE PROSE" not in dossier
+    assert "SECOND SCENE PROSE" not in dossier
+
+
+def test_render_dossier_empty_selection_is_notes_only(isolated_world: World) -> None:
+    dossier = _render_dossier(ContextSelection(notes="Watch the weather."))
+    assert dossier == "## Gatherer notes\n\nWatch the weather."
+    assert _render_dossier(ContextSelection()) == ""
+
+
+def test_render_dossier_enforces_scene_cap(isolated_world: World) -> None:
+    with world_transaction() as world:
+        for index in range(MAX_DOSSIER_SCENES + 2):
+            world.scenes.append(
+                Scene(
+                    id=f"scene_cap_{index}",
+                    title=f"Cap {index}",
+                    markdown=f"PROSE_{index}",
+                )
+            )
+
+    scene_ids = [f"scene_cap_{index}" for index in range(MAX_DOSSIER_SCENES + 2)]
+    dossier = _render_dossier(ContextSelection(scene_ids=scene_ids))
+
+    for index in range(MAX_DOSSIER_SCENES):
+        assert f"PROSE_{index}" in dossier
+    assert f"PROSE_{MAX_DOSSIER_SCENES}" not in dossier
+    assert f"scene_cap_{MAX_DOSSIER_SCENES} (scene cap)" in dossier
+
+
+def test_render_dossier_truncates_long_scene_prose(isolated_world: World) -> None:
+    long_prose = "x" * (PREVIOUS_SCENE_PROSE_CAP + 50)
+    with world_transaction() as world:
+        world.scenes.append(Scene(id="scene_long", title="Long", markdown=long_prose))
+
+    dossier = _render_dossier(ContextSelection(scene_ids=["scene_long"]))
+    assert "[... truncated ...]" in dossier
+    assert long_prose not in dossier
 
 
 def test_review_prose_node_raises_when_prose_unusable(isolated_world: World) -> None:
@@ -814,12 +942,16 @@ def test_graph_nodes_register_scene_workflow_nodes() -> None:
         SCENE_OUTLINE_NODE_ID,
         SCENE_OUTLINE_REVIEW_NODE_ID,
         SCENE_OUTLINE_REVISE_NODE_ID,
+        SCENE_GATHER_NODE_ID,
         SCENE_DRAFT_NODE_ID,
         SCENE_PROSE_REVIEW_NODE_ID,
         SCENE_PROSE_REVISE_NODE_ID,
         SCENE_SUMMARY_NODE_ID,
     }
     assert expected <= node_ids
+    node_map = {node.node_id: node for node in GRAPH_NODES}
+    assert node_map[SCENE_GATHER_NODE_ID].default_config_id == ORCHESTRATION_CONFIG_ID
+    assert node_map[SCENE_GATHER_NODE_ID].label == "Scene: Gather Context"
 
 
 def test_get_chat_model_for_node_resolves_registered_nodes(

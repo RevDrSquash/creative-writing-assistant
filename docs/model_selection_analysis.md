@@ -56,13 +56,13 @@ matters only for conversational tone; the agent rarely produces long prose itsel
 ### 2. Long-form prose drafting — `scene_draft`
 
 The single most expensive and latency-visible step. Produces ~10k+ characters of scene prose.
-Currently also tool-enabled (read-only context pulls), which forces the drafter to be a competent
-tool caller *and* the best writer — the most expensive intersection there is.
+After the gather/write split, this node is a tool-free one-shot call that consumes a pre-built
+context dossier — so the drafter no longer needs to be a competent tool caller.
 
 - **Must have:** best available prose quality per dollar, high output throughput (tok/s), enough
-  context for continuity block + blueprint + pulled details.
+  context for continuity block + blueprint + dossier.
 - **Nice to have:** low refusal rate on dark/mature fiction themes.
-- **Doesn't need (if the pipeline is split, see below):** tool calling.
+- **Doesn't need:** tool calling.
 
 ### 3. Targeted revision (edit-tool ReAct) — `scene_outline_revise`, `scene_prose_revise`
 
@@ -167,23 +167,24 @@ staying in the GPT family. Avoid small models here regardless of price.
 
 These interact with model choice; each can be adopted independently.
 
-### Split drafting into "gather" + "write"
+### Split drafting into "gather" + "write" — adopted
 
-Today `scene_draft` is a tool-enabled ReAct loop, so the drafter must be both the best writer and
-a reliable tool caller. The logs show the loop making 1–3 small tool-selection calls (each
-replaying the growing context at opus input prices) before the big generation. Splitting it:
+`scene_draft` was a tool-enabled ReAct loop, so the drafter had to be both the best writer and
+a reliable tool caller. The logs showed the loop making 1–3 small tool-selection calls (each
+replaying the growing context at writer input prices) before the big generation. The pipeline now
+splits that work:
 
-1. **Gather node** (new, category 1/5 hybrid): a strong cheap tool caller (e.g. gemini-3.5-flash
-   or sonnet-5) reads the blueprint + continuity block, pulls whatever Story Bible detail it
-   needs via the existing read-only tools, and emits a consolidated context dossier.
+1. **Gather node** (`scene_gather`, category 1/5 hybrid): a strong cheap tool caller reads the
+   blueprint + continuity block, pulls Story Bible detail via read-only tools, and returns a
+   structured id selection. The workflow renders selected entries verbatim into an ephemeral
+   context dossier (not paraphrased by the model).
 2. **Write node** (`scene_draft`, now tool-free single-shot): the best writer-per-dollar gets one
-   prompt with everything it needs and streams prose.
+   prompt with the dossier and streams prose.
 
 Benefits: the writer pool expands to models with weak or no tool calling (several of the best
 writing values — glm-5.2, gpt-5.6-luna — are much better writers than tool agents); the expensive
 model sees exactly one input instead of a replayed ReAct transcript; the gather step is faster on
-a flash-class model. Cost: one extra node, and the dossier must be good — a weak gatherer starves
-the writer. Keep the gather node on at least sonnet/flash class.
+a flash-class model. Keep the gather node on at least sonnet/flash class.
 
 ### Draft small, revise large — or draft large, revise cheap?
 
@@ -237,7 +238,7 @@ The defaults should instead be four role-oriented configs matching the requireme
 
 | Role config | Serves node categories | Nodes | Effort default |
 | --- | --- | --- | --- |
-| `orchestration` | 1 (tool-calling agent) | `chat` | medium |
+| `orchestration` | 1 (tool-calling agent) | `chat`, `scene_gather` | medium |
 | `writing` | 2 (long-form prose) | `scene_draft` | low–medium |
 | `judgment` | 3 + 4 (critique and targeted revision) | `scene_outline_review`, `scene_prose_review`, `scene_outline_revise`, `scene_prose_revise` | medium (the config also serves the revise nodes, which need little reasoning; bump to high if the review and revise roles are ever split) |
 | `structure` | 5 (schema-filling) | `scene_stances`, `scene_outline`, `scene_summary` | minimal–low |
@@ -246,8 +247,10 @@ Notes on the mapping:
 
 - The revise nodes live under `judgment`, not `writing`: they are output-tiny frontier work that
   needs exact quoting and shares a model with the reviews in both recommended bundles. This also
-  keeps revision functional if a future gather/write split assigns a weak- or no-tool writing
-  specialist to the `writing` config.
+  keeps revision functional while the `writing` config points at a weak- or no-tool writing
+  specialist (safe after the gather/write split).
+- Context gathering lives on `scene_gather` under `orchestration` so tool calling stays off the
+  writing specialist.
 - Each role carries its own `reasoning_effort` default, which fixes the
   small-model-at-high-effort pathology structurally instead of as one-time tuning.
 - Swapping one role's model updates every node of that role without disturbing the others —

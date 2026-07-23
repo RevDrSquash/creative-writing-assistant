@@ -26,6 +26,7 @@ SCENE_STANCES_NODE_ID = "scene_stances"
 SCENE_OUTLINE_NODE_ID = "scene_outline"
 SCENE_OUTLINE_REVIEW_NODE_ID = "scene_outline_review"
 SCENE_OUTLINE_REVISE_NODE_ID = "scene_outline_revise"
+SCENE_GATHER_NODE_ID = "scene_gather"
 SCENE_DRAFT_NODE_ID = "scene_draft"
 SCENE_PROSE_REVIEW_NODE_ID = "scene_prose_review"
 SCENE_PROSE_REVISE_NODE_ID = "scene_prose_revise"
@@ -100,6 +101,11 @@ GRAPH_NODES: tuple[GraphNode, ...] = (
         SCENE_OUTLINE_REVISE_NODE_ID,
         "Scene: Revise Plan",
         default_config_id=JUDGMENT_CONFIG_ID,
+    ),
+    GraphNode(
+        SCENE_GATHER_NODE_ID,
+        "Scene: Gather Context",
+        default_config_id=ORCHESTRATION_CONFIG_ID,
     ),
     GraphNode(SCENE_DRAFT_NODE_ID, "Scene: Draft Prose", default_config_id=WRITING_CONFIG_ID),
     GraphNode(

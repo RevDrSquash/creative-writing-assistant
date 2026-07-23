@@ -61,6 +61,7 @@ Scene-writing workflow nodes (`generate_scene`):
 * `scene_outline` - "Scene: Outline", defaulting to `structure`.
 * `scene_outline_review` - "Scene: Review Plan", defaulting to `judgment`.
 * `scene_outline_revise` - "Scene: Revise Plan", defaulting to `judgment`.
+* `scene_gather` - "Scene: Gather Context", defaulting to `orchestration`.
 * `scene_draft` - "Scene: Draft Prose", defaulting to `writing`.
 * `scene_prose_review` - "Scene: Review Prose", defaulting to `judgment`.
 * `scene_prose_revise` - "Scene: Revise Prose", defaulting to `judgment`.
@@ -68,7 +69,9 @@ Scene-writing workflow nodes (`generate_scene`):
 
 The revise nodes default to `judgment`, not `writing`: they are output-small precision work that
 shares economics with the reviews, and keeping them off the `writing` config lets that config
-point at a writing specialist with weak (or, after a future gather/write split, no) tool calling.
+point at a writing specialist. After the gather/write split, `scene_draft` is tool-free, so the
+`writing` config no longer needs tool calling. Context gathering lives on `scene_gather` (default
+`orchestration`).
 
 Future graph nodes should be classified into one of the role categories in
 [model_selection_analysis.md](model_selection_analysis.md) and added to the registry with that

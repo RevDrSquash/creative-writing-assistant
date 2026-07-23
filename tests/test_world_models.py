@@ -25,6 +25,7 @@ from app.world.models import (
     UpdateIntimacy,
     UpdateWorldStateEntry,
     World,
+    WorldFact,
     WorldStateEntry,
     slugify,
     unique_slug,
@@ -453,3 +454,64 @@ def test_resolve_character_id_respects_allowed_set() -> None:
         bible.resolve_character_id("char_narrator", allowed=["char_the_narrator"])
         == "char_the_narrator"
     )
+
+
+def test_resolve_event_id_exact_and_drift() -> None:
+    bible = StoryBible(
+        timeline=[
+            Event(id="evt_the_ambush", title="The Ambush"),
+            Event(id="evt_the_feast", title="The Feast"),
+        ]
+    )
+
+    assert bible.resolve_event_id("evt_the_ambush") == "evt_the_ambush"
+    assert bible.resolve_event_id("evt_ambush") == "evt_the_ambush"
+    assert bible.resolve_event_id("evt_missing") is None
+
+
+def test_resolve_event_id_returns_none_when_ambiguous() -> None:
+    bible = StoryBible(
+        timeline=[
+            Event(id="evt_the_guard_shift", title="Guard Shift"),
+            Event(id="evt_the_guard_patrol", title="Guard Patrol"),
+        ]
+    )
+
+    assert bible.resolve_event_id("evt_guard") is None
+
+
+def test_resolve_world_fact_id_exact_and_drift() -> None:
+    bible = StoryBible(
+        world_facts=[
+            WorldFact(id="fact_the_harbor", title="The Harbor", text="Salt."),
+            WorldFact(id="fact_the_market", title="The Market", text="Crowds."),
+        ]
+    )
+
+    assert bible.resolve_world_fact_id("fact_the_harbor") == "fact_the_harbor"
+    assert bible.resolve_world_fact_id("fact_harbor") == "fact_the_harbor"
+    assert bible.resolve_world_fact_id("fact_missing") is None
+
+
+def test_resolve_scene_id_exact_and_drift() -> None:
+    world = World(
+        scenes=[
+            Scene(id="scene_the_docks", title="The Docks"),
+            Scene(id="scene_the_tower", title="The Tower"),
+        ]
+    )
+
+    assert world.resolve_scene_id("scene_the_docks") == "scene_the_docks"
+    assert world.resolve_scene_id("scene_docks") == "scene_the_docks"
+    assert world.resolve_scene_id("scene_missing") is None
+
+
+def test_resolve_scene_id_returns_none_when_ambiguous() -> None:
+    world = World(
+        scenes=[
+            Scene(id="scene_the_guard_post", title="Guard Post"),
+            Scene(id="scene_the_guard_tower", title="Guard Tower"),
+        ]
+    )
+
+    assert world.resolve_scene_id("scene_guard") is None

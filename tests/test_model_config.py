@@ -7,6 +7,7 @@ from app.models.config import (
     JUDGMENT_CONFIG_ID,
     ORCHESTRATION_CONFIG_ID,
     SCENE_DRAFT_NODE_ID,
+    SCENE_GATHER_NODE_ID,
     SCENE_OUTLINE_NODE_ID,
     SCENE_OUTLINE_REVIEW_NODE_ID,
     SCENE_OUTLINE_REVISE_NODE_ID,
@@ -52,6 +53,7 @@ def test_graph_nodes_register_scene_workflow_nodes() -> None:
         SCENE_OUTLINE_NODE_ID,
         SCENE_OUTLINE_REVIEW_NODE_ID,
         SCENE_OUTLINE_REVISE_NODE_ID,
+        SCENE_GATHER_NODE_ID,
         SCENE_DRAFT_NODE_ID,
         SCENE_PROSE_REVIEW_NODE_ID,
         SCENE_PROSE_REVISE_NODE_ID,
@@ -65,10 +67,17 @@ def test_graph_nodes_register_scene_workflow_nodes() -> None:
     assert node_map[SCENE_OUTLINE_REVIEW_NODE_ID].label == "Scene: Review Plan"
     assert node_map[SCENE_OUTLINE_REVISE_NODE_ID].label == "Scene: Revise Plan"
     assert node_map[SCENE_OUTLINE_REVISE_NODE_ID].default_config_id == JUDGMENT_CONFIG_ID
+    assert node_map[SCENE_GATHER_NODE_ID].label == "Scene: Gather Context"
+    assert node_map[SCENE_GATHER_NODE_ID].default_config_id == ORCHESTRATION_CONFIG_ID
     assert node_map[SCENE_DRAFT_NODE_ID].default_config_id == WRITING_CONFIG_ID
     assert node_map[SCENE_PROSE_REVIEW_NODE_ID].default_config_id == JUDGMENT_CONFIG_ID
     assert node_map[SCENE_PROSE_REVISE_NODE_ID].default_config_id == JUDGMENT_CONFIG_ID
     assert node_map[SCENE_SUMMARY_NODE_ID].default_config_id == STRUCTURE_CONFIG_ID
+
+    # Gather sits between revise plan and draft in the UI registry order.
+    node_ids = [node.node_id for node in GRAPH_NODES]
+    assert node_ids.index(SCENE_GATHER_NODE_ID) == node_ids.index(SCENE_OUTLINE_REVISE_NODE_ID) + 1
+    assert node_ids.index(SCENE_DRAFT_NODE_ID) == node_ids.index(SCENE_GATHER_NODE_ID) + 1
 
 
 def test_resolve_default_model_config_uses_orchestration_for_unknown_nodes() -> None:

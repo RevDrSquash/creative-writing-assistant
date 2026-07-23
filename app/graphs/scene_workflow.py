@@ -9,17 +9,17 @@ from typing import Any
 from langchain.agents import create_agent
 from langchain.agents.middleware import ToolRetryMiddleware
 from langchain_core.language_models import BaseChatModel
-from langchain_core.messages import HumanMessage
+from langchain_core.messages import HumanMessage, SystemMessage
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.state import CompiledStateGraph
 from pydantic import BaseModel, Field
 
-from app.graphs.canvas_middleware import CanvasAppendMiddleware
 from app.graphs.state import PlanReviseAgentState, WritingAgentState
 from app.graphs.workflow_state import SceneWorkflowState
 from app.models.client import get_chat_model_for_node
 from app.models.config import (
     SCENE_DRAFT_NODE_ID,
+    SCENE_GATHER_NODE_ID,
     SCENE_OUTLINE_NODE_ID,
     SCENE_OUTLINE_REVIEW_NODE_ID,
     SCENE_OUTLINE_REVISE_NODE_ID,
@@ -30,6 +30,7 @@ from app.models.config import (
 )
 from app.tools import READ_ONLY_WRITING_TOOLS
 from app.tools.scene_generated import edit_outline, edit_prose, update_stance
+from app.tools.story_bible import read_character, read_event, read_world_fact
 from app.world.models import SceneCharacterStance
 from app.world.scene import (
     get_scene_text,
@@ -37,22 +38,27 @@ from app.world.scene import (
     set_scene_text,
     update_scene_generated,
 )
+from app.world.scene_context import PREVIOUS_SCENE_PROSE_CAP
 from app.world.store import get_world
+
+MAX_DOSSIER_SCENES = 3
 
 
 class SceneWorkflowError(RuntimeError):
     """Raised when a scene-writing workflow step fails in a way that should abort the job."""
 
 
+_GATHER_SYSTEM_PROMPT = """You gather Story Bible and scene context for a prose drafter.
+Use read-only tools to explore characters, events, world facts, and related/next scenes
+(the continuity block may give only summaries — call read_scene when full prose is needed).
+Then select what the drafter needs by returning ids only — do not restate or paraphrase
+entry content. Use notes only for short observations, warnings, or emphasis that no
+entry captures. Read-tool output already labels entities with [id: ...]; prefer those ids."""
+
 _DRAFT_SYSTEM_PROMPT = """You are drafting scene prose for a fiction project.
-Use read-only tools to pull story bible and scene blueprint detail when needed.
-When the prompt includes related or next scenes by summary only, use read_scene or
-list_scenes to read their full prose if you need more detail for continuity.
-Write the full scene markdown inside <canvas>...</canvas> tags.
-You may use multiple canvas blocks; they append in order.
-Always close canvas tags. Everything inside the tags is scene prose, not chat.
-The canvas is the body text of one scene: do not include a scene title or any
-other heading at the top. Titles are stored and displayed outside the prose.
+Output only the scene body prose — no preamble, commentary, or title.
+The scene title is stored and displayed outside the prose; do not open with a
+heading for the scene name.
 Keep formatting minimal. You may separate sections with "---" divider lines,
 and if the scene genuinely moves between locations you may mark a section with
 a short level-3 or level-4 heading as a location tag. Otherwise write plain
@@ -103,6 +109,16 @@ class SceneSummary(BaseModel):
     summary: str
 
 
+class ContextSelection(BaseModel):
+    """Ids of Story Bible entries and scenes to include verbatim in the draft dossier."""
+
+    character_ids: list[str] = Field(default_factory=list)
+    event_ids: list[str] = Field(default_factory=list)
+    scene_ids: list[str] = Field(default_factory=list)
+    world_fact_ids: list[str] = Field(default_factory=list)
+    notes: str = ""
+
+
 # Backward-compatible alias used by older tests/imports.
 OutlineCritique = PlanCritique
 
@@ -118,6 +134,7 @@ def build_scene_writer_graph(
     graph.add_node("outline", _outline_node(models))
     graph.add_node("review_plan", _review_plan_node(models))
     graph.add_node("revise_plan", _revise_plan_node(models))
+    graph.add_node("gather_context", _gather_context_node(models))
     graph.add_node("draft_prose", _draft_prose_node(models))
     graph.add_node("review_prose", _review_prose_node(models))
     graph.add_node("revise_prose", _revise_prose_node(models))
@@ -130,8 +147,9 @@ def build_scene_writer_graph(
     graph.add_conditional_edges(
         "revise_plan",
         _route_after_plan_revise,
-        {"review_plan": "review_plan", "draft_prose": "draft_prose"},
+        {"review_plan": "review_plan", "gather_context": "gather_context"},
     )
+    graph.add_edge("gather_context", "draft_prose")
     graph.add_edge("draft_prose", "review_prose")
     graph.add_edge("review_prose", "revise_prose")
     graph.add_conditional_edges(
@@ -291,24 +309,21 @@ def _revise_plan_node(models: dict[str, BaseChatModel] | None) -> Any:
     return node
 
 
-def _draft_prose_node(models: dict[str, BaseChatModel] | None) -> Any:
+def _gather_context_node(models: dict[str, BaseChatModel] | None) -> Any:
     def node(state: SceneWorkflowState) -> dict[str, Any]:
         scene_id = state["scene_id"]
-        model = _resolve_model(SCENE_DRAFT_NODE_ID, models)
+        model = _resolve_model(SCENE_GATHER_NODE_ID, models)
         agent = create_agent(
             model=model,
             tools=READ_ONLY_WRITING_TOOLS,
             state_schema=WritingAgentState,
-            system_prompt=_DRAFT_SYSTEM_PROMPT,
-            middleware=[
-                CanvasAppendMiddleware(),
-                ToolRetryMiddleware(max_retries=0, on_failure="continue"),
-            ],
+            system_prompt=_GATHER_SYSTEM_PROMPT,
+            response_format=ContextSelection,
+            middleware=[ToolRetryMiddleware(max_retries=0, on_failure="continue")],
         )
         prompt = (
-            "Draft the full scene prose in markdown.\n"
-            "The scene must enact the events listed below; use the related events only as "
-            "background context.\n\n"
+            "Select Story Bible and scene context the prose drafter needs.\n"
+            "Return ids only; do not rewrite entry content.\n\n"
             f"Premise: {state.get('premise', '')}\n"
             f"Purpose: {state.get('purpose', '')}\n"
             f"POV: {state.get('pov', '')}\n"
@@ -328,13 +343,117 @@ def _draft_prose_node(models: dict[str, BaseChatModel] | None) -> Any:
                 "current_scene": get_scene_text(scene_id),
             }
         )
-        prose = result.get("current_scene", "")
-        if not isinstance(prose, str):
-            prose = ""
+        selection = result.get("structured_response")
+        if not isinstance(selection, ContextSelection):
+            selection = ContextSelection()
+        return {"context_dossier": _render_dossier(selection)}
+
+    return node
+
+
+def _render_dossier(selection: ContextSelection) -> str:
+    """Resolve selected ids and assemble a verbatim markdown dossier for drafting."""
+
+    world = get_world()
+    bible = world.story_bible
+    sections: list[str] = []
+    dropped: list[str] = []
+
+    character_blocks: list[str] = []
+    for raw_id in selection.character_ids:
+        resolved = bible.resolve_character_id(raw_id)
+        if resolved is None:
+            dropped.append(raw_id)
+            continue
+        character_blocks.append(read_character.invoke({"character_id": resolved}))
+    if character_blocks:
+        sections.append("## Characters\n\n" + "\n\n".join(character_blocks))
+
+    event_blocks: list[str] = []
+    for raw_id in selection.event_ids:
+        resolved = bible.resolve_event_id(raw_id)
+        if resolved is None:
+            dropped.append(raw_id)
+            continue
+        event_blocks.append(read_event.invoke({"event_id": resolved}))
+    if event_blocks:
+        sections.append("## Events\n\n" + "\n\n".join(event_blocks))
+
+    fact_blocks: list[str] = []
+    for raw_id in selection.world_fact_ids:
+        resolved = bible.resolve_world_fact_id(raw_id)
+        if resolved is None:
+            dropped.append(raw_id)
+            continue
+        fact_blocks.append(read_world_fact.invoke({"fact_id": resolved}))
+    if fact_blocks:
+        sections.append("## World facts\n\n" + "\n\n".join(fact_blocks))
+
+    scene_blocks: list[str] = []
+    for index, raw_id in enumerate(selection.scene_ids):
+        if index >= MAX_DOSSIER_SCENES:
+            dropped.append(f"{raw_id} (scene cap)")
+            continue
+        resolved = world.resolve_scene_id(raw_id)
+        if resolved is None:
+            dropped.append(raw_id)
+            continue
+        # Exact lookup only — never get_scene_text(), which falls back to the first scene.
+        scene = world.get_scene(resolved)
+        if scene is None:
+            dropped.append(raw_id)
+            continue
+        markdown = scene.markdown
+        if len(markdown) > PREVIOUS_SCENE_PROSE_CAP:
+            markdown = markdown[:PREVIOUS_SCENE_PROSE_CAP] + "\n\n[... truncated ...]"
+        scene_blocks.append(f"### {scene.title} [id: {scene.id}]\n\n{markdown}")
+    if scene_blocks:
+        sections.append("## Scenes\n\n" + "\n\n".join(scene_blocks))
+
+    notes = selection.notes.strip()
+    if notes:
+        sections.append(f"## Gatherer notes\n\n{notes}")
+
+    if dropped:
+        sections.append("Dropped references: " + ", ".join(dropped))
+
+    return "\n\n".join(sections)
+
+
+def _draft_prose_node(models: dict[str, BaseChatModel] | None) -> Any:
+    def node(state: SceneWorkflowState) -> dict[str, Any]:
+        scene_id = state["scene_id"]
+        model = _resolve_model(SCENE_DRAFT_NODE_ID, models)
+        prompt = (
+            "Draft the full scene prose in markdown.\n"
+            "The scene must enact the events listed below; use the related events only as "
+            "background context.\n\n"
+            f"Premise: {state.get('premise', '')}\n"
+            f"Purpose: {state.get('purpose', '')}\n"
+            f"POV: {state.get('pov', '')}\n"
+            f"Arc beats:\n{_arc_text(state.get('arc', []))}\n"
+            f"Events this scene enacts:\n{_event_context(state.get('event_ids', []))}\n"
+            f"Related events (context only):\n{_event_context(state.get('related_event_ids', []))}\n"
+            f"Stances:\n{_stances_text(state.get('stances', []))}\n"
+            f"Outline:\n{_outline_text(state.get('outline', []))}\n"
+            f"Constraints: {state.get('constraints', '') or '(none)'}\n"
+            f"Notes: {state.get('notes', '') or '(none)'}"
+        )
+        dossier = state.get("context_dossier", "")
+        if dossier:
+            prompt = f"{prompt}\n\nContext dossier:\n{dossier}"
+        prompt = _append_continuity_context(prompt, state)
+        response = model.invoke(
+            [
+                SystemMessage(content=_DRAFT_SYSTEM_PROMPT),
+                HumanMessage(content=prompt),
+            ]
+        )
+        prose = response.content if isinstance(response.content, str) else ""
         prose = _strip_leading_title(prose)
         _require_nonempty_prose(
             prose,
-            "Draft step produced no prose (model emitted no canvas content)",
+            "Draft step produced no prose",
         )
         set_scene_text(scene_id, prose)
         return {"prose": prose}
@@ -464,7 +583,7 @@ def _route_after_plan_revise(state: SceneWorkflowState) -> str:
     max_revisions = state.get("max_revisions", 1)
     if revision_count < max_revisions:
         return "review_plan"
-    return "draft_prose"
+    return "gather_context"
 
 
 def _route_after_prose_revise(state: SceneWorkflowState) -> str:
