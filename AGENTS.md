@@ -67,3 +67,17 @@ Before declaring any task complete:
 - Persistence is plain JSON files under `data/`; tests must use `tmp_path`, never `data/`.
 - Before editing anything under `app/ui/`, follow the `nicegui-ui-changes` skill
   (`.cursor/skills/nicegui-ui-changes/`).
+
+## Cursor Cloud specific instructions
+
+- Poetry is installed at `~/.local/bin`; the startup update script runs `poetry install`. If
+  `poetry` is not found, ensure `~/.local/bin` is on `PATH` (already appended to `~/.bashrc`).
+- `OPENROUTER_API_KEY` is provided as an environment secret. A `.env` is generated from it during
+  setup; the app reads the key via `app/models/settings.py`. AI chat/agent features require a valid
+  key (`sk-or-v1-...`); the UI still boots without one, but AI calls will error.
+- Run the app with `poetry run writing-agent`; it serves at `http://localhost:8080` (NiceGUI
+  default, `reload=False`). On this headless VM, NiceGUI tries to auto-open a browser and logs
+  noisy `dbus`/Chrome connection errors to the console — these are harmless; the server still
+  serves on 8080 (confirm with `curl -s -o /dev/null -w '%{http_code}' http://localhost:8080/`).
+- Tests and lint run fully offline and do not need the API key: `poetry run pytest`,
+  `poetry run ruff check .` (see Commands table above).
