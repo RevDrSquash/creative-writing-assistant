@@ -72,9 +72,11 @@ Before declaring any task complete:
 
 - Poetry is installed at `~/.local/bin`; the startup update script runs `poetry install`. If
   `poetry` is not found, ensure `~/.local/bin` is on `PATH` (already appended to `~/.bashrc`).
-- `OPENROUTER_API_KEY` is provided as an environment secret. A `.env` is generated from it during
-  setup; the app reads the key via `app/models/settings.py`. AI chat/agent features require a valid
-  key (`sk-or-v1-...`); the UI still boots without one, but AI calls will error.
+- `OPENROUTER_API_KEY` is provided as a runtime secret (env var). `ModelSettings` in
+  `app/models/settings.py` is pydantic-settings and reads real env vars directly, so no `.env` file
+  is needed in Cloud (a `.env` is only an optional local fallback; env vars take precedence). AI
+  chat/agent features require a valid key (`sk-or-v1-...`); the UI still boots without one, but AI
+  calls will error.
 - Run the app with `poetry run writing-agent`; it serves at `http://localhost:8080` (NiceGUI
   default, `reload=False`). On this headless VM, NiceGUI tries to auto-open a browser and logs
   noisy `dbus`/Chrome connection errors to the console — these are harmless; the server still
