@@ -20,7 +20,9 @@ from app.persistence.model_configs import (
     ModelConfigRepository,
     ModelConfigStore,
     StoredModelConfigs,
+    export_model_configs_json,
     get_model_config_repository,
+    import_model_configs_json,
 )
 from app.persistence.world import (
     JsonFileWorldStore,
@@ -45,11 +47,13 @@ __all__ = [
     "StoredModelConfigs",
     "WorldStorePort",
     "default_world",
+    "export_model_configs_json",
     "get_chat_conversation",
     "get_chat_message_store",
     "get_llm_call_log_store",
     "get_model_config_repository",
     "get_world_store",
+    "import_model_configs_json",
     "messages_to_stored",
     "stored_to_messages",
     "validate_world_payload",

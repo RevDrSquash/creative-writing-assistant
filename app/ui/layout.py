@@ -8,6 +8,11 @@ from collections.abc import Iterable
 from nicegui import app, events, ui
 
 from app.graphs.jobs import get_job_manager
+from app.persistence.model_configs import (
+    export_model_configs_json,
+    get_model_config_repository,
+    import_model_configs_json,
+)
 from app.persistence.story_export import export_story_zip
 from app.persistence.world_zip import export_world_zip, import_world_zip
 from app.ui.config import APP_TITLE
@@ -66,6 +71,12 @@ def render_header(active_path: str) -> None:
                 ui.menu_item("Import World", on_click=_open_import_dialog)
                 ui.menu_item("Export World", on_click=_export_world)
                 ui.menu_item("Export Scenes", on_click=_export_scenes)
+                import_configs_item = ui.menu_item(
+                    "Import Model Configs",
+                    on_click=_open_import_model_configs_dialog,
+                )
+                import_configs_item.mark("import-model-configs-menu-item")
+                ui.menu_item("Export Model Configs", on_click=_export_model_configs)
                 generate_item = ui.menu_item(
                     "Generate All Scenes...",
                     on_click=_open_generate_all_scenes_dialog,
@@ -118,6 +129,37 @@ def _export_scenes() -> None:
         export_story_zip(world),
         f"{_slugify(world.metadata.title)}-story.zip",
     )
+
+
+def _export_model_configs() -> None:
+    state = get_model_config_repository().export_state()
+    ui.download.content(export_model_configs_json(state), "model_configs.json")
+
+
+def _open_import_model_configs_dialog() -> None:
+    async def handle_upload(event: events.UploadEventArguments) -> None:
+        data = await event.file.read()
+        try:
+            state = import_model_configs_json(data)
+        except ValueError as exc:
+            ui.notify(f"Import failed: {exc}", type="negative")
+            return
+        get_model_config_repository().replace_state(state)
+        dialog.close()
+        ui.notify("Model configs imported.", type="positive")
+
+    with ui.dialog() as dialog, ui.card():
+        ui.label("Import Model Configs").classes("text-lg font-semibold")
+        ui.label(
+            "Importing replaces the current model configurations entirely. "
+            "Export the current model configs first if you want to keep them."
+        ).classes("text-grey-7")
+        ui.upload(on_upload=handle_upload, auto_upload=True).props('accept=".json"').classes(
+            "w-full"
+        )
+        ui.button("Cancel", on_click=dialog.close).props("flat")
+
+    dialog.open()
 
 
 def _open_import_dialog() -> None:
