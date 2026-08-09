@@ -85,3 +85,36 @@ Before declaring any task complete:
   serves on 8080 (confirm with `curl -s -o /dev/null -w '%{http_code}' http://localhost:8080/`).
 - Tests and lint run fully offline and do not need the API key: `poetry run pytest`,
   `poetry run ruff check .` (see Commands table above).
+
+## Linear
+
+This repo maps to one Linear project by naming convention (see the workspace "Linear Conventions"
+doc):
+
+- Team: **Default** (key `DEF`, id `2b4eae87-5660-438d-87c4-1443877bb1ea`). Never create teams.
+- Project: **repo/creative-writing-assistant** (id `7e458d77-c46f-4459-9918-ac5887a51aa8`). One
+  project per repo; never create a duplicate.
+
+### Issue vs. just do the work
+
+- Create a Linear issue when: work spans sessions, needs human review/decision, is a handoff to
+  another agent or person, or should be traceable later.
+- Just do the work when: single-session, low-risk, fully specified in the prompt, and nobody needs
+  the paper trail.
+
+### Labels
+
+- `Bug` - defect in existing behavior.
+- `Improvement` - enhancement to existing functionality.
+- `Feature` - net-new functionality.
+- `ready-for-agent` - workspace label; the **only** signal that may trigger a Cursor agent. Apply
+  it only to fully specified coding tasks an agent can execute unattended - never to brainstorms,
+  handoff notes, or manual todos.
+
+### Issue types
+
+- **Context / handoff** - background, decisions, links for a human or future agent. Never
+  `ready-for-agent`.
+- **Manual todo** - a human will do it. Never `ready-for-agent`.
+- **Coding task** - scoped, actionable work an agent could pick up. Eligible for `ready-for-agent`
+  once fully specified.
