@@ -41,6 +41,12 @@ All commands run through Poetry from the repo root (the system Python does not h
 | Format | `poetry run ruff format .` |
 | Verify (definition of done) | `poetry run ruff check . && poetry run pytest` |
 
+## Git workflow
+
+- Never commit directly to `master`. All changes to `master` land via pull request, no exceptions
+  (including docs-only and config-only changes).
+- Do work on a feature branch, commit there, and open a PR (or leave the branch ready for one).
+
 ## Definition of done
 
 Before declaring any task complete:

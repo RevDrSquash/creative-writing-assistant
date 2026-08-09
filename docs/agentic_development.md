@@ -72,6 +72,10 @@ instead of shipping them.
 - **Pre-commit hooks** (`.pre-commit-config.yaml`): Ruff lint + format on every commit, wired
   through `poetry run` so the hook uses the project's pinned Ruff. Installed with
   `poetry run pre-commit install`.
+- **Branch + PR gate**: `master` is never committed to directly -- every change, including
+  docs-only ones, lands through a pull request from a feature branch (see "Git workflow" in
+  `AGENTS.md`). This keeps agent-made changes reviewable before they become the baseline other
+  agents build on.
 - **CI** (future): once the repo has a remote, a workflow running the same verify chain makes
   the gate independent of any one machine (tracked in [future_work.md](future_work.md)).
 
