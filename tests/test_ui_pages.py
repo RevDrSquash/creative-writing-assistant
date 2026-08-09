@@ -534,7 +534,16 @@ async def test_header_menu_includes_clear_state(user: User) -> None:
     await user.should_see("Clear State...")
     await user.should_see("Export Scenes")
     await user.should_see("Export World")
+    await user.should_see("Import Model Configs")
+    await user.should_see("Export Model Configs")
     await user.should_see("Generate All Scenes...")
+
+
+async def test_header_menu_opens_import_model_configs_dialog(user: User) -> None:
+    await user.open("/workspace/narrative-style")
+    user.find(marker="header-overflow-menu").click()
+    user.find(marker="import-model-configs-menu-item").click()
+    await user.should_see("Importing replaces the current model configurations entirely.")
 
 
 async def test_work_queue_nav_and_empty_page(user: User) -> None:

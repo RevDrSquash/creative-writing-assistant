@@ -8,7 +8,7 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import Protocol
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
 
 from app.models.config import (
     CHAT_NODE_ID,
@@ -183,6 +183,48 @@ class ModelConfigRepository:
             return configs_by_id[node.default_config_id]
 
         return configs_by_id[STANDARD_CONFIG_ID]
+
+    def export_state(self) -> StoredModelConfigs:
+        """Return the full persisted document (defaults-normalized) for export."""
+
+        return self.store.load()
+
+    def replace_state(self, state: StoredModelConfigs) -> None:
+        """Replace the persisted document, dropping dangling selections."""
+
+        normalized = _with_defaults(state)
+        configs_by_id = _config_map(normalized.configs)
+        selections = {
+            node_id: selected_id
+            for node_id, selected_id in normalized.selections.items()
+            if get_graph_node(node_id) is not None and selected_id in configs_by_id
+        }
+        self.store.save(StoredModelConfigs(configs=normalized.configs, selections=selections))
+
+
+def export_model_configs_json(state: StoredModelConfigs) -> bytes:
+    """Serialize a model config document to JSON bytes for download."""
+
+    return (json.dumps(state.model_dump(mode="json"), indent=2) + "\n").encode("utf-8")
+
+
+def import_model_configs_json(data: bytes) -> StoredModelConfigs:
+    """Parse JSON bytes into a config document; raises ``ValueError`` on invalid input."""
+
+    try:
+        payload = json.loads(data.decode("utf-8"))
+    except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+        msg = f"Not valid JSON: {exc}"
+        raise ValueError(msg) from exc
+    if not isinstance(payload, dict):
+        msg = "Model config JSON must contain a JSON object."
+        raise ValueError(msg)
+
+    try:
+        return StoredModelConfigs.model_validate(payload)
+    except ValidationError as exc:
+        msg = f"Model config JSON failed validation: {exc}"
+        raise ValueError(msg) from exc
 
 
 def get_model_config_repository() -> ModelConfigRepository:
