@@ -1,0 +1,3 @@
+{
+  "install": "export PATH=\"$HOME/.local/bin:$PATH\"; command -v poetry >/dev/null || pipx install poetry; poetry install --no-interaction"
+}

@@ -70,6 +70,8 @@ Before declaring any task complete:
 
 ## Cursor Cloud specific instructions
 
+- The environment is defined in `.cursor/environment.json` (install command); rationale and
+  setup details are in `docs/agentic_development.md` ("Cloud execution environment").
 - Poetry is installed at `~/.local/bin`; the startup update script runs `poetry install`. If
   `poetry` is not found, ensure `~/.local/bin` is on `PATH` (already appended to `~/.bashrc`).
 - `OPENROUTER_API_KEY` is provided as a runtime secret (env var). `ModelSettings` in

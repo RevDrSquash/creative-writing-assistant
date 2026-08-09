@@ -58,6 +58,8 @@ Exports must not include local-only app data:
 - app preferences
 - other local secrets or machine-specific configuration
 
+Model configurations have their own separate JSON import/export in the header menu (see `model_configuration.md`, "Import/Export").
+
 ## Import Behavior
 
 Import reads `world.json`, validates it, loads scene Markdown files back into their matching `Scene.markdown` fields, and replaces the active world with the imported world.

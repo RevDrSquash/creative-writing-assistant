@@ -82,7 +82,17 @@ The persisted JSON shape is:
 }
 ```
 
-The repository facade owns list, get, save, delete, select, and resolve operations. UI code should call the facade rather than reading or writing this file directly.
+The repository facade owns list, get, save, delete, select, resolve, and import/export operations. UI code should call the facade rather than reading or writing this file directly.
+
+## Import/Export
+
+The header overflow menu offers **Export Model Configs** and **Import Model Configs** so model configuration can be moved between installations independently of world data.
+
+- **Format**: a plain JSON file (`model_configs.json` download) containing the persisted document shape above (`configs` + `selections`). There is no ZIP wrapper; model configuration has no per-item files or assets.
+- **Export**: serializes the current repository state. The exported document is defaults-normalized, so the three built-in configs are always present.
+- **Import replaces the current configuration entirely** (same semantics as Import World). The built-in `small`, `standard`, and `large` configs are always re-added if missing from the imported file.
+- **Validation**: import parses and validates the JSON against the stored document schema and fails with a clear error on malformed input (bad encoding, invalid JSON, non-object payload, or schema violations). Selections referencing unknown graph nodes or configs that do not exist after import are dropped, mirroring the cleanup performed on config deletion, so no dangling references are persisted.
+- The file contains no API keys or other secrets; `OPENROUTER_API_KEY` lives only in the environment/`.env`.
 
 ## Live OpenRouter Catalog
 

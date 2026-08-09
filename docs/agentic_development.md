@@ -75,6 +75,29 @@ instead of shipping them.
 - **CI** (future): once the repo has a remote, a workflow running the same verify chain makes
   the gate independent of any one machine (tracked in [future_work.md](future_work.md)).
 
+### Cloud execution environment (Cursor Cloud Agents)
+
+Cloud agents run on Cursor's default Ubuntu VM with internet access; there is no custom
+Dockerfile because the project needs nothing beyond Python 3.10+ and Poetry, and the test suite
+runs fully offline (see the verification layer above). The setup is:
+
+- **`.cursor/environment.json`** (committed, authoritative) defines the `install` command:
+  ensure Poetry is on `PATH` (installing via pipx if missing), then `poetry install`. Cursor
+  runs it when building the environment and snapshots the result, so subsequent agents boot
+  fast. Keeping this file in the repo makes the environment reproducible and reviewable rather
+  than living only in dashboard state.
+- **`OPENROUTER_API_KEY`** is a Cloud Agents runtime secret (encrypted, injected as an env
+  var). `ModelSettings` reads env vars directly, so no `.env` file exists in Cloud. Tests and
+  lint never need it; only running the app with live AI calls does. Use a dedicated key so it
+  can be revoked and its spend tracked independently of local development.
+- **Operational notes for agents** (Poetry location, headless-browser log noise, port 8080)
+  live in the "Cursor Cloud specific instructions" section of `AGENTS.md`, where every agent
+  reads them.
+
+To re-verify the environment end-to-end, launch a cloud agent with a smoke task such as "run
+`poetry run ruff check . && poetry run pytest` and report the results; change nothing" and
+confirm the environment build succeeds and the suite passes.
+
 ## When to reach for which mechanism
 
 | Mechanism | Use when | Avoid when |
