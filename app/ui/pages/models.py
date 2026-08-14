@@ -211,10 +211,27 @@ def _render_config_form(config: ModelConfig, *, is_new: bool) -> None:
         temperature.props("clearable")
 
         reasoning = ui.select(
-            {"": "No reasoning override", "low": "Low", "medium": "Medium", "high": "High"},
+            {
+                "": "No reasoning override",
+                "minimal": "Minimal",
+                "low": "Low",
+                "medium": "Medium",
+                "high": "High",
+                "xhigh": "X-High (Claude 4.6+, falls back to High)",
+                "max": "Max (Claude 4.6+, falls back to High)",
+            },
             value=config.reasoning_effort or "",
             label="Reasoning effort",
         ).classes("w-full")
+
+        max_tokens = ui.number(
+            "Max output tokens",
+            value=config.max_tokens,
+            min=1,
+            step=1,
+            format="%.0f",
+        ).classes("w-full")
+        max_tokens.props("clearable")
 
         prefix = ui.textarea(
             "System prompt prefix",
@@ -233,6 +250,7 @@ def _render_config_form(config: ModelConfig, *, is_new: bool) -> None:
                     cast(Callable[[], str], lambda: model_id.value),
                     lambda: temperature.value,
                     cast(Callable[[], str], lambda: reasoning.value),
+                    lambda: max_tokens.value,
                     cast(Callable[[], str], lambda: prefix.value),
                     is_new=is_new,
                 ),
@@ -267,18 +285,21 @@ def _config_save_handler(
     model_id: Callable[[], str],
     temperature: Callable[[], float | None],
     reasoning_effort: Callable[[], str],
+    max_tokens: Callable[[], float | None],
     system_prompt_prefix: Callable[[], str],
     *,
     is_new: bool,
 ) -> Callable[[], None]:
     def save_config() -> None:
         try:
+            max_tokens_value = max_tokens()
             config = ModelConfig(
                 id=config_id().strip(),
                 name=name().strip(),
                 model=model_id().strip(),
                 temperature=temperature(),
                 reasoning_effort=_reasoning_effort(reasoning_effort()),
+                max_tokens=int(max_tokens_value) if max_tokens_value is not None else None,
                 system_prompt_prefix=system_prompt_prefix() or "",
             )
         except ValidationError as exc:
@@ -379,7 +400,7 @@ def _catalog_by_provider(catalog: list[OpenRouterModel]) -> dict[str, dict[str, 
 
 
 def _reasoning_effort(value: str | None) -> ReasoningEffort | None:
-    if value in {"low", "medium", "high"}:
+    if value in {"minimal", "low", "medium", "high", "xhigh", "max"}:
         return cast(ReasoningEffort, value)
     return None
 

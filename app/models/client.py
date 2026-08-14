@@ -170,6 +170,8 @@ def get_chat_model_for_config(
     }
     if config.temperature is not None:
         model_kwargs["temperature"] = config.temperature
+    if config.max_tokens is not None:
+        model_kwargs["max_tokens"] = config.max_tokens
     if config.reasoning_effort is not None:
         model_kwargs["extra_body"] = {"reasoning": {"effort": config.reasoning_effort}}
 

@@ -15,8 +15,9 @@ A workflow is an enforced LangGraph workflow graph exposed as a single entry poi
   steps; user-triggered generation runs the whole pipeline. This is the reason workflows are
   LangGraph graphs rather than extra tools on the ReAct loop — we want to own the control flow.
 - **Tool-enabled nodes**: an individual node may itself be a tool-enabled ReAct sub-loop. This
-  lets a node (for example, drafting) pull extra Story Bible detail on demand while still being
+  lets a node (for example, gather context) pull Story Bible detail on demand while still being
   confined to its place in the enforced sequence. Nodes that fetch context use read-only tools.
+  Drafting itself is a tool-free one-shot call that consumes a pre-gathered dossier.
 - **User-triggered**: the compiled graph is registered in a workflow registry in `app/graphs/`
   and invoked by `run_scene_generation()` from the scene editor (via the background generation
   manager). The main agent authors scene blueprints but does not run this workflow.
@@ -69,13 +70,15 @@ Selection rules:
 Context depth: **full prose** for the previous scene (with a defensive character cap), **title and
 summary only** for next and related scenes. When a neighbor has no prose or summary yet, its
 **blueprint** (premise, purpose, POV, arc, characters, constraints, notes) is included instead,
-clearly labeled as planned content rather than written prose. The draft node may call `read_scene`
-for full prose of related scenes when summaries are not enough.
+clearly labeled as planned content rather than written prose. The **gather context** node may call
+`read_scene` for full prose of related scenes when summaries are not enough, then select those
+scenes by id for verbatim inclusion in the draft dossier.
 
 The continuity block and explicit continuity instructions are injected into the **stances**,
-**outline**, **review plan**, **draft prose**, **review prose**, and **revise** prompts. The
-plan-review node critiques stances and outline for continuity breaks against this context; the
-prose-review node does the same for drafted prose. The **summarize** node does not receive it.
+**outline**, **review plan**, **gather context**, **draft prose**, **review prose**, and **revise**
+prompts. The plan-review node critiques stances and outline for continuity breaks against this
+context; the prose-review node does the same for drafted prose. The **summarize** node does not
+receive it.
 
 ### Staleness
 
@@ -98,15 +101,32 @@ will be discarded).
    agent works on injected outline/stances state; the node persists the result through
    `update_scene_generated`. The review/revise loop is bounded by a configurable maximum
    (default 1) rather than looping until satisfied, to cap cost and latency.
-5. **Draft prose** — write the scene Markdown. This node is tool-enabled (read-only bible/scene
-   tools) so it can pull extra detail while drafting.
-6. **Review prose** — critique the drafted prose against premise, purpose, stances, outline,
-   and continuity. Structured critique only.
-7. **Revise prose** — a tool-enabled ReAct sub-loop that applies targeted search/replace edits
+5. **Gather context** — a tool-enabled ReAct sub-loop with read-only Story Bible/scene tools.
+   It explores what the outline and continuity block imply, then returns a structured
+   `ContextSelection` (character/event/scene/world-fact ids plus short free-text notes). The
+   workflow resolves those ids (exact match, then unique token-drift match; unknown or ambiguous
+   ids are dropped and listed in the dossier) and renders selected entries **verbatim** into an
+   ephemeral `context_dossier` string on workflow state (not persisted on `Scene.generated`). An
+   empty selection does not abort the run — drafting still has blueprint, stances, outline, and
+   continuity context.
+6. **Draft prose** — a tool-free one-shot model call that writes the scene Markdown. The prompt
+   includes the context dossier plus continuity block. Instructions require scene body prose only
+   (no preamble, commentary, or title); `---` divider lines and short level-3/4 location-tag
+   headings are allowed. Because models still tend to open with a `# Title` anyway, the node
+   strips leading level-1/2 headings from the drafted text before persisting. If the response is
+   empty/whitespace (or nothing but a title), the node raises `SceneWorkflowError` and the
+   generation job fails without writing the empty text.
+7. **Review prose** — critique the drafted prose against premise, purpose, stances, outline,
+   and continuity. Structured critique only. The critique schema includes a `prose_unusable`
+   flag: when the model marks the draft missing, truncated, gibberish, or otherwise not an
+   actual scene, the node raises `SceneWorkflowError` (including the critique text) and the
+   generation job fails before revise/summarize.
+8. **Revise prose** — a tool-enabled ReAct sub-loop that applies targeted search/replace edits
    via `edit_prose`. The agent works on `current_scene`; the node persists through
    `set_scene_text`. Bounded by the same `max_revisions` counter (tracked separately as
-   `prose_revision_count`).
-8. **Summarize** — produce the one-line scene `summary` from the (possibly revised) prose. The
+   `prose_revision_count`). If a revise pass leaves the scene empty, the node raises
+   `SceneWorkflowError` the same way draft does.
+9. **Summarize** — produce the one-line scene `summary` from the (possibly revised) prose. The
    title is never touched.
 
 The former **Formalize essential details** node was removed: the blueprint *is* the input; the
@@ -153,8 +173,8 @@ The structured-output nodes (stances, outline, plan review, prose review, summar
 model with `streaming=False`. They are one-shot `with_structured_output(...).invoke()` calls that
 do not need token streaming, and streaming aggregation serializes the structured `parsed` payload,
 which emits noisy Pydantic serializer warnings; the non-streaming path excludes that field.
-The drafting and revise nodes keep the default streaming model; drafting still uses canvas tags
-internally.
+The gather and revise nodes keep the default streaming model (tool-enabled ReAct loops). Drafting
+is a tool-free, tag-free one-shot call on the streaming writing model.
 
 ### Background execution
 
@@ -180,5 +200,6 @@ structured operations described in [story_bible_model.md](story_bible_model.md).
 - Story Bible data model (characters, intimacies, events, signals, effects): see [story_bible_model.md](story_bible_model.md).
 - Scene model, blueprint vs generated split, and scene editor UI: see [forms_and_data_models.md](forms_and_data_models.md).
 - Per-node model selection used by workflow nodes: see [model_configuration.md](model_configuration.md).
+- Which models fit which node category (requirements and candidates): see [model_selection_analysis.md](model_selection_analysis.md).
 - Phased plan (completed core phases): see [implementation_plan.md](implementation_plan.md).
 - Planned enhancements, including scene review and copy-before-regenerate: see [future_work.md](future_work.md).

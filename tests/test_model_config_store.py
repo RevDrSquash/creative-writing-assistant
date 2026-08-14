@@ -4,7 +4,7 @@ import json
 
 import pytest
 
-from app.models.config import CHAT_NODE_ID, STANDARD_CONFIG_ID, ModelConfig
+from app.models.config import CHAT_NODE_ID, ORCHESTRATION_CONFIG_ID, ModelConfig
 from app.persistence import (
     JsonFileModelConfigStore,
     ModelConfigRepository,
@@ -20,7 +20,12 @@ def test_load_missing_model_config_file_returns_defaults(tmp_path) -> None:
 
     state = store.load()
 
-    assert {config.id for config in state.configs} == {"small", "standard", "large"}
+    assert {config.id for config in state.configs} == {
+        "orchestration",
+        "writing",
+        "judgment",
+        "structure",
+    }
     assert state.selections == _default_selections()
 
 
@@ -49,31 +54,31 @@ def test_model_config_repository_resolves_override_then_node_default(tmp_path) -
     repo = ModelConfigRepository(JsonFileModelConfigStore(tmp_path / "model_configs.json"))
     custom = ModelConfig(id="custom", name="Custom", model="example/custom")
 
-    assert repo.resolve_model_config(CHAT_NODE_ID).id == STANDARD_CONFIG_ID
+    assert repo.resolve_model_config(CHAT_NODE_ID).id == ORCHESTRATION_CONFIG_ID
 
     repo.save_config(custom)
     repo.set_selection(CHAT_NODE_ID, custom.id)
     assert repo.resolve_model_config(CHAT_NODE_ID).id == custom.id
 
     repo.delete_config(custom.id)
-    assert repo.resolve_model_config(CHAT_NODE_ID).id == STANDARD_CONFIG_ID
+    assert repo.resolve_model_config(CHAT_NODE_ID).id == ORCHESTRATION_CONFIG_ID
 
 
 def test_delete_default_config_resets_it_to_builtin(tmp_path) -> None:
     repo = ModelConfigRepository(JsonFileModelConfigStore(tmp_path / "model_configs.json"))
-    edited_standard = ModelConfig(
-        id=STANDARD_CONFIG_ID,
-        name="Edited Standard",
+    edited_orchestration = ModelConfig(
+        id=ORCHESTRATION_CONFIG_ID,
+        name="Edited Orchestration",
         model="example/edited",
     )
 
-    repo.save_config(edited_standard)
-    assert repo.get_config(STANDARD_CONFIG_ID) == edited_standard
+    repo.save_config(edited_orchestration)
+    assert repo.get_config(ORCHESTRATION_CONFIG_ID) == edited_orchestration
 
-    repo.delete_config(STANDARD_CONFIG_ID)
+    repo.delete_config(ORCHESTRATION_CONFIG_ID)
 
-    assert repo.get_config(STANDARD_CONFIG_ID) != edited_standard
-    assert repo.resolve_model_config(CHAT_NODE_ID).id == STANDARD_CONFIG_ID
+    assert repo.get_config(ORCHESTRATION_CONFIG_ID) != edited_orchestration
+    assert repo.resolve_model_config(CHAT_NODE_ID).id == ORCHESTRATION_CONFIG_ID
 
 
 def test_export_import_round_trips_configs_and_selections(tmp_path) -> None:
@@ -105,7 +110,12 @@ def test_import_replaces_existing_configs(tmp_path) -> None:
     repo.replace_state(StoredModelConfigs())
 
     assert repo.get_config("stale") is None
-    assert {config.id for config in repo.list_configs()} == {"small", "standard", "large"}
+    assert {config.id for config in repo.list_configs()} == {
+        "orchestration",
+        "writing",
+        "judgment",
+        "structure",
+    }
 
 
 @pytest.mark.parametrize(
@@ -129,14 +139,19 @@ def test_import_drops_dangling_selections_and_keeps_defaults(tmp_path) -> None:
             "configs": [],
             "selections": {
                 CHAT_NODE_ID: "no-such-config",
-                "no-such-node": STANDARD_CONFIG_ID,
+                "no-such-node": ORCHESTRATION_CONFIG_ID,
             },
         }
     ).encode("utf-8")
 
     repo.replace_state(import_model_configs_json(payload))
 
-    assert {config.id for config in repo.list_configs()} == {"small", "standard", "large"}
+    assert {config.id for config in repo.list_configs()} == {
+        "orchestration",
+        "writing",
+        "judgment",
+        "structure",
+    }
     assert repo.get_selection("no-such-node") is None
-    assert repo.get_selection(CHAT_NODE_ID) == STANDARD_CONFIG_ID
-    assert repo.resolve_model_config(CHAT_NODE_ID).id == STANDARD_CONFIG_ID
+    assert repo.get_selection(CHAT_NODE_ID) == ORCHESTRATION_CONFIG_ID
+    assert repo.resolve_model_config(CHAT_NODE_ID).id == ORCHESTRATION_CONFIG_ID

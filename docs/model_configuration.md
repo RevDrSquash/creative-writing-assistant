@@ -2,6 +2,10 @@
 
 Model configuration is app data that controls which OpenRouter-compatible model each LangGraph node uses and which static system-prompt prefix is composed into that node's prompt.
 
+For an analysis of *which* models fit each node category (requirements per node type, candidate
+models, cost/speed/quality/censorship trade-offs, and proposed default bundles), see
+[model_selection_analysis.md](model_selection_analysis.md).
+
 These settings are separate from world data. They are persisted locally for the application and are not included in world ZIP import/export.
 
 ## Data Model
@@ -10,18 +14,34 @@ Each model configuration is represented by a `ModelConfig` value with:
 
 * `id` - stable identifier used by node selections.
 * `name` - user-facing label.
-* `model` - OpenRouter model id, such as `moonshotai/kimi-k2.6`.
+* `model` - OpenRouter model id, such as `anthropic/claude-sonnet-5`.
 * `temperature` - optional sampling temperature.
-* `reasoning_effort` - optional reasoning level: `low`, `medium`, or `high`.
+* `reasoning_effort` - optional reasoning level: `minimal`, `low`, `medium`, `high`, `xhigh`, or
+  `max`. Sent as OpenRouter's unified `reasoning.effort` parameter. On Anthropic models up
+  through Claude 4.5 this converts to a thinking token budget derived from `max_tokens`; on
+  Claude 4.6+ (adaptive thinking) it maps to Anthropic's `output_config.effort`, where `xhigh`
+  and `max` become meaningful (older models fall back to `high`).
+* `max_tokens` - optional cap on output tokens per call. For Anthropic models using
+  effort-based reasoning, OpenRouter also derives the thinking budget from this value, so it
+  must comfortably exceed the expected reasoning share.
 * `system_prompt_prefix` - optional text prepended to the base system prompt at agent-build time.
 
-The default configuration set contains three role-oriented configs:
+The default configuration set contains four role-oriented configs. Each role captures a
+requirement profile rather than a model size, so node defaults encode *why* a model was chosen
+and each role carries the reasoning effort appropriate to its work (the rationale, node
+categories, and candidate analysis live in
+[model_selection_analysis.md](model_selection_analysis.md)):
 
-* `small` - fast, lower-cost tasks.
-* `standard` - default chat behavior; this keeps the current `moonshotai/kimi-k2.6` model.
-* `large` - higher-capability tasks where latency or cost is less important.
+* `orchestration` - `anthropic/claude-sonnet-5` at `medium` effort. Tool-calling agent work:
+  strong tool reliability and instruction following over prose quality.
+* `writing` - `openai/gpt-5.6-luna` at `low` effort. Long-form prose drafting: best writing per
+  dollar and high throughput; planning already happened upstream, so low effort suffices.
+* `judgment` - `anthropic/claude-sonnet-5` at `medium` effort. Critique and targeted revision:
+  frontier judgment where outputs are short, so capability is cheap.
+* `structure` - `google/gemini-3.5-flash-lite` at `low` effort. Schema-filling and
+  summarization: fast, cheap structured output.
 
-Users may add custom configurations, but code should treat the three defaults as always available.
+Users may add custom configurations, but code should treat the four defaults as always available.
 
 ## Node Registry
 
@@ -33,20 +53,29 @@ LangGraph nodes select models through a small registry rather than hard-coded co
 
 The first registry entry is:
 
-* `chat` - "Chat Agent", defaulting to `standard`.
+* `chat` - "Chat Agent", defaulting to `orchestration`.
 
 Scene-writing workflow nodes (`generate_scene`):
 
-* `scene_stances` - "Scene: Author Stances", defaulting to `standard`.
-* `scene_outline` - "Scene: Outline", defaulting to `standard`.
-* `scene_outline_review` - "Scene: Review Plan", defaulting to `small`.
-* `scene_outline_revise` - "Scene: Revise Plan", defaulting to `standard`.
-* `scene_draft` - "Scene: Draft Prose", defaulting to `large`.
-* `scene_prose_review` - "Scene: Review Prose", defaulting to `small`.
-* `scene_prose_revise` - "Scene: Revise Prose", defaulting to `large`.
-* `scene_summary` - "Scene: Summary", defaulting to `small`.
+* `scene_stances` - "Scene: Author Stances", defaulting to `structure`.
+* `scene_outline` - "Scene: Outline", defaulting to `structure`.
+* `scene_outline_review` - "Scene: Review Plan", defaulting to `judgment`.
+* `scene_outline_revise` - "Scene: Revise Plan", defaulting to `judgment`.
+* `scene_gather` - "Scene: Gather Context", defaulting to `orchestration`.
+* `scene_draft` - "Scene: Draft Prose", defaulting to `writing`.
+* `scene_prose_review` - "Scene: Review Prose", defaulting to `judgment`.
+* `scene_prose_revise` - "Scene: Revise Prose", defaulting to `judgment`.
+* `scene_summary` - "Scene: Summary", defaulting to `structure`.
 
-Future graph nodes should be added to the registry with their own defaults before the UI exposes selectors for them.
+The revise nodes default to `judgment`, not `writing`: they are output-small precision work that
+shares economics with the reviews, and keeping them off the `writing` config lets that config
+point at a writing specialist. After the gather/write split, `scene_draft` is tool-free, so the
+`writing` config no longer needs tool calling. Context gathering lives on `scene_gather` (default
+`orchestration`).
+
+Future graph nodes should be classified into one of the role categories in
+[model_selection_analysis.md](model_selection_analysis.md) and added to the registry with that
+default before the UI exposes selectors for them.
 
 ## Resolution Order
 
@@ -54,7 +83,7 @@ Model resolution is centralized in the repository facade. For a given `node_id`,
 
 1. The user's persisted selection for that node, when it points to an existing config.
 2. The node registry default, when it points to an existing config.
-3. The `standard` default config as a final fallback.
+3. The `orchestration` default config as a final fallback.
 
 Callers should resolve once for the node they are building, then pass the resolved config to `get_chat_model_for_config`. The returned model carries the prefix; node-specific base prompts (where needed) are supplied separately by each graph node.
 
@@ -68,16 +97,17 @@ The persisted JSON shape is:
 {
   "configs": [
     {
-      "id": "standard",
-      "name": "Standard",
-      "model": "moonshotai/kimi-k2.6",
+      "id": "orchestration",
+      "name": "Orchestration",
+      "model": "anthropic/claude-sonnet-5",
       "temperature": null,
-      "reasoning_effort": null,
+      "reasoning_effort": "medium",
+      "max_tokens": null,
       "system_prompt_prefix": ""
     }
   ],
   "selections": {
-    "chat": "standard"
+    "chat": "orchestration"
   }
 }
 ```

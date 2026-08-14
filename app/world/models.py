@@ -38,20 +38,40 @@ DIRECTED_EVENT_RELATION_KINDS: tuple[EventRelationKind, ...] = (
     "depends_on",
 )
 
-# Articles dropped when comparing character ids, so a model that emits
+# Articles dropped when comparing entity ids, so a model that emits
 # ``char_narrator`` still resolves to the real ``char_the_narrator``.
-_CHARACTER_ID_STOPWORDS = frozenset({"the", "a", "an"})
+_ID_STOPWORDS = frozenset({"the", "a", "an"})
+_ID_TYPE_PREFIXES = ("char_", "evt_", "fact_", "scene_", "wse_")
 
 
-def _character_id_tokens(value: str) -> frozenset[str]:
-    """Return the significant tokens of a character id for fuzzy matching."""
+def _entity_id_tokens(value: str) -> frozenset[str]:
+    """Return the significant tokens of an entity id for fuzzy matching."""
 
     cleaned = value.strip().lower()
-    if cleaned.startswith("char_"):
-        cleaned = cleaned[len("char_") :]
-    return frozenset(
-        token for token in cleaned.split("_") if token and token not in _CHARACTER_ID_STOPWORDS
-    )
+    for prefix in _ID_TYPE_PREFIXES:
+        if cleaned.startswith(prefix):
+            cleaned = cleaned[len(prefix) :]
+            break
+    return frozenset(token for token in cleaned.split("_") if token and token not in _ID_STOPWORDS)
+
+
+# Backward-compatible alias used by older imports/tests.
+_character_id_tokens = _entity_id_tokens
+
+
+def _resolve_entity_id(raw_id: str, candidate_ids: list[str]) -> str | None:
+    """Resolve a possibly-imprecise id against candidates (exact, then unique token match)."""
+
+    if raw_id in candidate_ids:
+        return raw_id
+
+    target = _entity_id_tokens(raw_id)
+    if not target:
+        return None
+    matches = [candidate for candidate in candidate_ids if target <= _entity_id_tokens(candidate)]
+    if len(matches) == 1:
+        return matches[0]
+    return None
 
 
 def new_id() -> str:
@@ -303,16 +323,17 @@ class StoryBible(BaseModel):
             allowed_set = set(allowed)
             candidate_ids = [cid for cid in candidate_ids if cid in allowed_set]
 
-        if character_id in candidate_ids:
-            return character_id
+        return _resolve_entity_id(character_id, candidate_ids)
 
-        target = _character_id_tokens(character_id)
-        if not target:
-            return None
-        matches = [cid for cid in candidate_ids if target <= _character_id_tokens(cid)]
-        if len(matches) == 1:
-            return matches[0]
-        return None
+    def resolve_event_id(self, event_id: str) -> str | None:
+        """Resolve a possibly-imprecise event id (exact, then unique token match)."""
+
+        return _resolve_entity_id(event_id, [event.id for event in self.timeline])
+
+    def resolve_world_fact_id(self, fact_id: str) -> str | None:
+        """Resolve a possibly-imprecise world-fact id (exact, then unique token match)."""
+
+        return _resolve_entity_id(fact_id, [fact.id for fact in self.world_facts])
 
     def get_world_fact(self, fact_id: str) -> WorldFact | None:
         return next((fact for fact in self.world_facts if fact.id == fact_id), None)
@@ -424,3 +445,8 @@ class World(BaseModel):
 
     def get_scene(self, scene_id: str) -> Scene | None:
         return next((scene for scene in self.scenes if scene.id == scene_id), None)
+
+    def resolve_scene_id(self, scene_id: str) -> str | None:
+        """Resolve a possibly-imprecise scene id (exact, then unique token match)."""
+
+        return _resolve_entity_id(scene_id, [scene.id for scene in self.scenes])
