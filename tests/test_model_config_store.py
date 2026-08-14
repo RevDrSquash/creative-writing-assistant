@@ -110,7 +110,12 @@ def test_import_replaces_existing_configs(tmp_path) -> None:
     repo.replace_state(StoredModelConfigs())
 
     assert repo.get_config("stale") is None
-    assert {config.id for config in repo.list_configs()} == {"small", "standard", "large"}
+    assert {config.id for config in repo.list_configs()} == {
+        "orchestration",
+        "writing",
+        "judgment",
+        "structure",
+    }
 
 
 @pytest.mark.parametrize(
@@ -134,14 +139,19 @@ def test_import_drops_dangling_selections_and_keeps_defaults(tmp_path) -> None:
             "configs": [],
             "selections": {
                 CHAT_NODE_ID: "no-such-config",
-                "no-such-node": STANDARD_CONFIG_ID,
+                "no-such-node": ORCHESTRATION_CONFIG_ID,
             },
         }
     ).encode("utf-8")
 
     repo.replace_state(import_model_configs_json(payload))
 
-    assert {config.id for config in repo.list_configs()} == {"small", "standard", "large"}
+    assert {config.id for config in repo.list_configs()} == {
+        "orchestration",
+        "writing",
+        "judgment",
+        "structure",
+    }
     assert repo.get_selection("no-such-node") is None
-    assert repo.get_selection(CHAT_NODE_ID) == STANDARD_CONFIG_ID
-    assert repo.resolve_model_config(CHAT_NODE_ID).id == STANDARD_CONFIG_ID
+    assert repo.get_selection(CHAT_NODE_ID) == ORCHESTRATION_CONFIG_ID
+    assert repo.resolve_model_config(CHAT_NODE_ID).id == ORCHESTRATION_CONFIG_ID
