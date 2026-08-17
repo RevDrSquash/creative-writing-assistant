@@ -19,6 +19,28 @@ def keep_last(current: Any, update: Any) -> Any:
     return update
 
 
+CHARACTER_CRITIQUES_RESET = object()
+
+
+def merge_character_critiques(
+    current: list[dict[str, Any]] | None,
+    update: list[dict[str, Any]] | object | None,
+) -> list[dict[str, Any]]:
+    """Append character critiques, or replace the list when ``update`` is the reset sentinel.
+
+    Parallel ``review_character`` nodes each return one critique. Draft and revise-prose
+    emit ``CHARACTER_CRITIQUES_RESET`` before a review round so leftover entries from the
+    previous round are dropped.
+    """
+
+    if update is CHARACTER_CRITIQUES_RESET:
+        return []
+    merged = list(current or [])
+    if not update:
+        return merged
+    return merged + list(update)
+
+
 def merge_stances(current: list[Any] | None, update: list[Any] | None) -> list[Any]:
     """Merge stance updates by ``character_id``.
 

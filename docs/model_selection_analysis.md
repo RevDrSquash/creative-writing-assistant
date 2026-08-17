@@ -76,7 +76,7 @@ whole pipeline to buy frontier capability.
   drafter (replacement text sits inline with drafted prose).
 - **Cost shape:** input-moderate, output-trivial.
 
-### 4. Structured critique/review — `scene_outline_review`, `scene_prose_review`
+### 4. Structured critique/review — `scene_outline_review`, `scene_prose_review`, `scene_character_review`
 
 One-shot `with_structured_output` calls whose value is *judgment*: catching conceptual
 inconsistencies, continuity breaks, and flat writing. A small model can fill the schema but
@@ -240,7 +240,7 @@ The defaults should instead be four role-oriented configs matching the requireme
 | --- | --- | --- | --- |
 | `orchestration` | 1 (tool-calling agent) | `chat`, `scene_gather` | medium |
 | `writing` | 2 (long-form prose) | `scene_draft` | low–medium |
-| `judgment` | 3 + 4 (critique and targeted revision) | `scene_outline_review`, `scene_prose_review`, `scene_outline_revise`, `scene_prose_revise` | medium (the config also serves the revise nodes, which need little reasoning; bump to high if the review and revise roles are ever split) |
+| `judgment` | 3 + 4 (critique and targeted revision) | `scene_outline_review`, `scene_prose_review`, `scene_character_review`, `scene_outline_revise`, `scene_prose_revise` | medium (the config also serves the revise nodes, which need little reasoning; bump to high if the review and revise roles are ever split) |
 | `structure` | 5 (schema-filling) | `scene_stances`, `scene_outline`, `scene_summary` | minimal–low |
 
 Notes on the mapping:

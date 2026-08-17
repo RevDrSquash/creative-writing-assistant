@@ -1,5 +1,8 @@
 """Unit tests for LLM debug call-log persistence."""
 
+import json
+from concurrent.futures import ThreadPoolExecutor
+
 from app.persistence import JsonFileLLMCallLogStore, LLMCallRecord
 
 
@@ -63,3 +66,43 @@ def test_finish_upserts_existing_record_by_run_id(tmp_path) -> None:
     assert records[0].response_text == "Done."
     assert records[0].response_metadata == {"model_name": "example/model"}
     assert records[0].duration_ms == 1000
+
+
+def test_concurrent_writers_wait_for_lock_without_losing_records(tmp_path) -> None:
+    path = tmp_path / "llm_call_logs.json"
+    store = JsonFileLLMCallLogStore(path, max_records=500)
+    worker_count = 16
+
+    def start_and_finish(index: int) -> None:
+        run_id = f"run-{index}"
+        store.start(_record(run_id, "2026-05-30T10:00:00+00:00"))
+        store.finish(
+            run_id,
+            status="success",
+            finished_at="2026-05-30T10:00:01+00:00",
+            response_text=f"response-{index}",
+        )
+
+    with ThreadPoolExecutor(max_workers=worker_count) as executor:
+        for future in [executor.submit(start_and_finish, index) for index in range(worker_count)]:
+            future.result()
+
+    # The file on disk must be valid JSON and contain every record.
+    persisted = json.loads(path.read_text(encoding="utf-8"))
+    assert len(persisted) == worker_count
+    records = {record.run_id: record for record in store.list()}
+    assert len(records) == worker_count
+    assert all(record.status == "success" for record in records.values())
+
+
+def test_corrupted_log_file_is_discarded_and_logging_recovers(tmp_path) -> None:
+    path = tmp_path / "llm_call_logs.json"
+    path.write_text('[]\ngarbage trailing bytes from a torn write"', encoding="utf-8")
+    store = JsonFileLLMCallLogStore(path)
+
+    assert store.list() == []
+
+    store.start(_record("run-1", "2026-05-30T10:00:00+00:00"))
+
+    loaded = JsonFileLLMCallLogStore(path).list()
+    assert [record.run_id for record in loaded] == ["run-1"]

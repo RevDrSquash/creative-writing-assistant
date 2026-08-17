@@ -64,6 +64,7 @@ Scene-writing workflow nodes (`generate_scene`):
 * `scene_gather` - "Scene: Gather Context", defaulting to `orchestration`.
 * `scene_draft` - "Scene: Draft Prose", defaulting to `writing`.
 * `scene_prose_review` - "Scene: Review Prose", defaulting to `judgment`.
+* `scene_character_review` - "Scene: Character Review", defaulting to `judgment`.
 * `scene_prose_revise` - "Scene: Revise Prose", defaulting to `judgment`.
 * `scene_summary` - "Scene: Summary", defaulting to `structure`.
 
@@ -140,6 +141,6 @@ Catalog fetch failure should not block editing saved configs. When the live list
 
 `system_prompt_prefix` is static prompt text for a resolved config. It is bound to the model returned by `get_chat_model_for_config` (`PrefixedChatOpenAI`) and injected on every LLM call for that config: chat agent, workflow structured nodes, and workflow drafting nodes all receive it automatically when they resolve a model through the repository.
 
-When a node also supplies a base system prompt (for example the chat agent's `DEFAULT_SYSTEM_PROMPT` or the scene draft node's prose instructions), the prefix is merged into that leading system message. Nodes that send only a user message get a standalone system message containing the prefix. The merged prompt is observable in `data/llm_call_logs.json` (`prompt` / `prompt_messages` on each record).
+When a node also supplies a base system prompt (for example the chat agent's `DEFAULT_SYSTEM_PROMPT`, a scene-workflow structured node passing `STORY_BIBLE_PRIMER` plus usage instructions, or the scene draft node's prose instructions), the prefix is merged into that leading system message. Nodes that send only a user message get a standalone system message containing the prefix. The merged prompt is observable in `data/llm_call_logs.json` (`prompt` / `prompt_messages` on each record).
 
 Do not inject these prefixes through message-channel middleware. The prompt assembly details and rationale are documented in [architecture_prompt_assembly.md](architecture_prompt_assembly.md).

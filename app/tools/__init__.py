@@ -13,6 +13,7 @@ from app.tools.scene import (
 from app.tools.story_bible import (
     STORY_BIBLE_TOOLS,
     read_character,
+    read_character_arc,
     read_event,
     read_story_bible,
     read_timeline,
@@ -27,6 +28,7 @@ READ_ONLY_WRITING_TOOLS = [
     read_story_bible,
     read_world_fact,
     read_character,
+    read_character_arc,
     read_timeline,
     read_event,
     read_world_state,

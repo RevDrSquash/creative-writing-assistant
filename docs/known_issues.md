@@ -119,14 +119,13 @@ fix so the context is not lost between phases.
 - **Severity:** Low (partially addressed; residual gaps)
 - **Location:** `app/world/scene_context.py`, `app/graphs/scene_workflow.py`
 - **Introduced:** Phase 3 (scene workflow); cross-scene context added 2026
-- **Symptom:** The scene-writing workflow now injects continuity context from neighboring scenes
-  (previous scene full prose; next and related scenes by summary). Selection uses enacted-event
-  chronology and `directly_follows` / `during` / `related_event_ids` links. Remaining gaps:
-  scenes without event links fall back to list order only; character stances are authored from
-  names alone without derived intimacies or world state at the scene's timeline position.
-- **Possible fix:** Include derived character/world state at the scene's enacted events in stance
-  and outline prompts (`read_world_state` at the latest enacted event). For list-order fallback,
-  consider explicit scene-to-scene links when event linking is absent.
+- **Symptom:** The scene-writing workflow injects continuity context from neighboring scenes
+  (previous scene full prose; next and related scenes by summary) and scoped character arcs
+  (identity plus intimacies entering and during the scene) into stance and outline prompts.
+  Remaining gap: scenes without event links fall back to list order only for neighbor
+  selection.
+- **Possible fix:** For list-order fallback, consider explicit scene-to-scene links when
+  event linking is absent.
 
 ## 9. Save retry blocks the NiceGUI event loop on transient file locks
 

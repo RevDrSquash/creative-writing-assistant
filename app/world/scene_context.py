@@ -82,6 +82,26 @@ def format_continuity_context(context: SceneContinuityContext) -> str:
     return "\n".join(lines)
 
 
+def scene_event_window(bible: StoryBible, event_ids: list[str]) -> tuple[str, str]:
+    """Return (start_event_id, end_event_id) for enacted events on the timeline.
+
+    Resolves ``event_ids`` against ``chronological_order`` and takes the earliest
+    and latest. Unresolved ids are ignored. If none resolve, both values are
+    empty (full-timeline behavior).
+    """
+
+    chrono_index = _event_chronological_index(bible)
+    resolved = [
+        (chrono_index[event_id], event_id)
+        for event_id in event_ids
+        if event_id in chrono_index
+    ]
+    if not resolved:
+        return "", ""
+    resolved.sort(key=lambda item: item[0])
+    return resolved[0][1], resolved[-1][1]
+
+
 def _event_chronological_index(bible: StoryBible) -> dict[str, int]:
     return {event.id: index for index, event in enumerate(chronological_order(bible))}
 

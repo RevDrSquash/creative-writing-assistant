@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-from typing import TypedDict
+from typing import Annotated, Any, TypedDict
 
+from app.graphs.state import merge_character_critiques
 from app.world.models import SceneCharacterStance
 
 
@@ -16,6 +17,8 @@ class SceneWorkflowState(TypedDict, total=False):
     character_ids: list[str]
     event_ids: list[str]
     related_event_ids: list[str]
+    scene_start_event_id: str
+    scene_end_event_id: str
     constraints: str
     scene_id: str
     arc: list[str]
@@ -28,6 +31,8 @@ class SceneWorkflowState(TypedDict, total=False):
     revision_count: int
     prose: str
     prose_critique: str
+    character_critiques: Annotated[list[dict[str, Any]], merge_character_critiques]
+    review_character_id: str
     prose_revision_count: int
     summary: str
     max_revisions: int

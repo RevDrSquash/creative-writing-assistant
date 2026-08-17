@@ -9,7 +9,11 @@ from app.world.scene import (
     scene_is_generatable,
     update_scene_generated,
 )
-from app.world.scene_context import build_scene_continuity_context, format_continuity_context
+from app.world.scene_context import (
+    build_scene_continuity_context,
+    format_continuity_context,
+    scene_event_window,
+)
 from app.world.store import get_world, world_transaction
 
 
@@ -33,6 +37,7 @@ def run_scene_generation(scene_id: str, *, max_revisions: int = 1) -> None:
     fingerprint = blueprint_fingerprint(blueprint)
     update_scene_generated(scene_id, clear=True)
     continuity_context = format_continuity_context(build_scene_continuity_context(world, scene_id))
+    start_event_id, end_event_id = scene_event_window(world.story_bible, blueprint.event_ids)
 
     workflow = get_workflow("generate_scene")
     workflow.invoke(
@@ -44,6 +49,8 @@ def run_scene_generation(scene_id: str, *, max_revisions: int = 1) -> None:
             "character_ids": list(blueprint.character_ids),
             "event_ids": list(blueprint.event_ids),
             "related_event_ids": list(blueprint.related_event_ids),
+            "scene_start_event_id": start_event_id,
+            "scene_end_event_id": end_event_id,
             "constraints": blueprint.constraints,
             "arc": list(blueprint.arc),
             "notes": blueprint.notes,
