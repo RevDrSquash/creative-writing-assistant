@@ -36,6 +36,8 @@ Each record is represented by `LLMCallRecord` with:
 
 `JsonFileLLMCallLogStore` follows the existing JSON-file persistence pattern: load the full document, write a temporary file, then atomically replace the target file. The store keeps only the newest records up to its `max_records` cap, defaulting to 200.
 
+Because parallel workflow nodes (for example the scene review fan-out) fire callbacks concurrently, every store operation runs its full read-modify-write cycle under a blocking `threading.Lock`: concurrent writers queue and wait rather than colliding on the shared file (which previously caused Windows `PermissionError`s and torn-write corruption). If the log file is ever found corrupted on load, the store logs a warning and discards it — call logs are disposable debug data, and recovering beats failing on every subsequent call.
+
 ## Debug Page
 
 The `/debug` page reads from `get_llm_call_log_store()`.

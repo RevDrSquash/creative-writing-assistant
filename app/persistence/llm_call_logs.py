@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
+import threading
 from collections.abc import Sequence
 from pathlib import Path
 from typing import Any, Literal, Protocol
@@ -11,6 +13,8 @@ from typing import Any, Literal, Protocol
 from pydantic import BaseModel, Field
 
 from app.persistence.paths import get_data_dir
+
+LOGGER = logging.getLogger("app.persistence.llm_call_logs")
 
 DEFAULT_LLM_CALL_LOG_PATH = get_data_dir() / "llm_call_logs.json"
 DEFAULT_MAX_LLM_CALL_LOG_RECORDS = 200
@@ -67,7 +71,13 @@ class LLMCallLogStore(Protocol):
 
 
 class JsonFileLLMCallLogStore:
-    """JSON-file-backed LLM call log store with bounded retention."""
+    """JSON-file-backed LLM call log store with bounded retention.
+
+    Parallel workflow nodes (e.g. the scene review fan-out) invoke the debug
+    callback concurrently, so every read-modify-write cycle runs under a
+    blocking lock: concurrent writers wait for each other instead of failing
+    or corrupting the file.
+    """
 
     def __init__(
         self,
@@ -77,22 +87,26 @@ class JsonFileLLMCallLogStore:
     ) -> None:
         self.path = path or DEFAULT_LLM_CALL_LOG_PATH
         self.max_records = max_records
+        self._lock = threading.Lock()
 
     def list(self) -> list[LLMCallRecord]:
         """Return call records newest-first for display."""
 
-        return list(reversed(self._load()))
+        with self._lock:
+            return list(reversed(self._load()))
 
     def get(self, run_id: str) -> LLMCallRecord | None:
         """Return one call record by run id."""
 
-        return next((record for record in self._load() if record.run_id == run_id), None)
+        with self._lock:
+            return next((record for record in self._load() if record.run_id == run_id), None)
 
     def start(self, record: LLMCallRecord) -> None:
         """Persist a running call record."""
 
-        records = _upsert_record(self._load(), record)
-        self._write(records)
+        with self._lock:
+            records = _upsert_record(self._load(), record)
+            self._write(records)
 
     def finish(
         self,
@@ -108,26 +122,27 @@ class JsonFileLLMCallLogStore:
     ) -> None:
         """Persist the terminal state for a call record."""
 
-        records = self._load()
-        existing = next((record for record in records if record.run_id == run_id), None)
-        if existing is None:
-            existing = LLMCallRecord(
-                run_id=run_id,
-                status=status,
-                started_at=finished_at,
+        with self._lock:
+            records = self._load()
+            existing = next((record for record in records if record.run_id == run_id), None)
+            if existing is None:
+                existing = LLMCallRecord(
+                    run_id=run_id,
+                    status=status,
+                    started_at=finished_at,
+                )
+            updated = existing.model_copy(
+                update={
+                    "status": status,
+                    "finished_at": finished_at,
+                    "response_text": response_text,
+                    "response_tool_calls": response_tool_calls or [],
+                    "response_metadata": response_metadata or {},
+                    "error": error,
+                    "duration_ms": duration_ms,
+                }
             )
-        updated = existing.model_copy(
-            update={
-                "status": status,
-                "finished_at": finished_at,
-                "response_text": response_text,
-                "response_tool_calls": response_tool_calls or [],
-                "response_metadata": response_metadata or {},
-                "error": error,
-                "duration_ms": duration_ms,
-            }
-        )
-        self._write(_upsert_record(records, updated))
+            self._write(_upsert_record(records, updated))
 
     def _load(self) -> list[LLMCallRecord]:
         if not self.path.exists():
@@ -137,7 +152,16 @@ class JsonFileLLMCallLogStore:
         if not raw.strip():
             return []
 
-        data = json.loads(raw)
+        try:
+            data = json.loads(raw)
+        except json.JSONDecodeError:
+            # A corrupted log (e.g. from a torn write before locking existed) is
+            # debug-only data; discard it so logging recovers instead of failing
+            # on every subsequent call.
+            LOGGER.warning(
+                "Discarding corrupted LLM call log at %s; starting a fresh log.", self.path
+            )
+            return []
         if not isinstance(data, list):
             msg = f"Expected LLM call log JSON list at {self.path}"
             raise ValueError(msg)
