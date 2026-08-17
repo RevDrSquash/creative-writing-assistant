@@ -6,14 +6,26 @@ from typing import Any
 
 import pytest
 from langchain_core.language_models.fake_chat_models import GenericFakeChatModel
-from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 from langchain_core.tools import ToolException
-from langgraph.types import Command
+from langgraph.types import Command, Send
 
+from app.graphs.context import STORY_BIBLE_PRIMER
 from app.graphs.jobs import JobManager
 from app.graphs.scene_generation import run_scene_generation
 from app.graphs.scene_workflow import (
+    _CHARACTER_REVIEW_SYSTEM_PROMPT,
+    _DRAFT_SYSTEM_PROMPT,
+    _GATHER_SYSTEM_PROMPT,
+    _OUTLINE_SYSTEM_PROMPT,
+    _PLAN_REVIEW_SYSTEM_PROMPT,
+    _PLAN_REVISE_SYSTEM_PROMPT,
+    _PROSE_REVIEW_SYSTEM_PROMPT,
+    _PROSE_REVISE_SYSTEM_PROMPT,
+    _STANCES_SYSTEM_PROMPT,
+    _SUMMARY_SYSTEM_PROMPT,
     MAX_DOSSIER_SCENES,
+    CharacterCritique,
     ContextSelection,
     OutlineBeats,
     OutlineCritique,
@@ -24,22 +36,27 @@ from app.graphs.scene_workflow import (
     StanceOutput,
     _author_stances_node,
     _draft_prose_node,
+    _fanout_prose_reviews,
     _gather_context_node,
     _outline_node,
+    _prose_revise_prompt,
     _render_dossier,
+    _review_character_node,
     _review_outline_node,
     _review_prose_node,
     _revise_plan_node,
+    _revise_prose_node,
     _strip_leading_title,
     _summary_node,
     build_scene_writer_graph,
     structured_fake_model,
 )
-from app.graphs.state import merge_stances
+from app.graphs.state import CHARACTER_CRITIQUES_RESET, merge_character_critiques, merge_stances
 from app.models.client import get_chat_model_for_node
 from app.models.config import (
     GRAPH_NODES,
     ORCHESTRATION_CONFIG_ID,
+    SCENE_CHARACTER_REVIEW_NODE_ID,
     SCENE_DRAFT_NODE_ID,
     SCENE_GATHER_NODE_ID,
     SCENE_OUTLINE_NODE_ID,
@@ -100,6 +117,7 @@ class CapturingDraftFakeModel:
 
     def __init__(self, prose: str = "Drafted scene prose.") -> None:
         self.last_prompt = ""
+        self.last_system = ""
         self._inner = ToolAwareFakeChatModel(messages=iter([AIMessage(content=prose)]))
 
     def bind_tools(self, tools: Any, **kwargs: Any) -> CapturingDraftFakeModel:
@@ -107,7 +125,9 @@ class CapturingDraftFakeModel:
 
     def invoke(self, input: Any, config: Any = None, **kwargs: Any) -> Any:
         for message in input:
-            if isinstance(message, HumanMessage):
+            if isinstance(message, SystemMessage):
+                self.last_system = message.content
+            elif isinstance(message, HumanMessage):
                 self.last_prompt = message.content
                 break
         return self._inner.invoke(input, config, **kwargs)
@@ -202,6 +222,9 @@ def _workflow_models(
         SCENE_OUTLINE_REVISE_NODE_ID: _plan_revise_model(),
         SCENE_GATHER_NODE_ID: _gather_selection_model(),
         SCENE_DRAFT_NODE_ID: _draft_prose_model(prose),
+        SCENE_CHARACTER_REVIEW_NODE_ID: structured_fake_model(
+            CharacterCritique(character_id="char_hero", critique="Portrayal is consistent.")
+        ),
         SCENE_PROSE_REVIEW_NODE_ID: structured_fake_model(
             ProseCritique(critique="Looks solid." if not revise_prose else "Sharpen the opening.")
         ),
@@ -252,6 +275,7 @@ class CapturingStructuredFakeModel:
     def __init__(self, response: Any) -> None:
         self.response = response
         self.last_prompt = ""
+        self.last_system = ""
 
     def with_structured_output(self, schema: type[Any], **kwargs: Any) -> Any:
         response = self.response
@@ -259,8 +283,12 @@ class CapturingStructuredFakeModel:
 
         class _Runnable:
             def invoke(self, input: Any, config: Any = None, **kwargs: Any) -> Any:
-                if input:
-                    capture.last_prompt = input[0].content
+                for message in input:
+                    if isinstance(message, SystemMessage):
+                        capture.last_system = message.content
+                    elif isinstance(message, HumanMessage):
+                        capture.last_prompt = message.content
+                        break
                 return response
 
         return _Runnable()
@@ -319,6 +347,117 @@ def test_outline_node_persists_generated_beats(isolated_world: World) -> None:
     assert get_world().get_scene(scene.id).generated.outline == ["Open.", "Close."]
 
 
+def _seed_arc_character() -> tuple[str, str, str]:
+    """Return (character_id, meeting_id, betrayal_id) with a later unused exile event."""
+
+    upsert_character.invoke(
+        {
+            "name": "Mira",
+            "traits": "Curious, guarded",
+            "voice": "Short sentences",
+            "intimacies": [{"text": "Wary of outsiders", "strength": "minor"}],
+        }
+    )
+    character = get_world().story_bible.characters[-1]
+    add_event.invoke(
+        {
+            "title": "Meeting",
+            "signals": [
+                {
+                    "character_id": character.id,
+                    "interpretation": "This stranger may be useful.",
+                    "effects": [
+                        {
+                            "op": "add_intimacy",
+                            "intimacy": {"text": "Owes Kael a debt", "strength": "major"},
+                        }
+                    ],
+                }
+            ],
+        }
+    )
+    meeting = get_world().story_bible.timeline[-1]
+    add_event.invoke(
+        {
+            "title": "Betrayal",
+            "relations": [{"kind": "follows", "event_id": meeting.id}],
+            "signals": [
+                {
+                    "character_id": character.id,
+                    "interpretation": "Outsiders cannot be trusted.",
+                    "effects": [
+                        {
+                            "op": "add_intimacy",
+                            "intimacy": {"text": "Kael will pay", "strength": "defining"},
+                        }
+                    ],
+                }
+            ],
+        }
+    )
+    betrayal = get_world().story_bible.timeline[-1]
+    add_event.invoke(
+        {
+            "title": "Exile",
+            "relations": [{"kind": "follows", "event_id": betrayal.id}],
+            "signals": [
+                {
+                    "character_id": character.id,
+                    "interpretation": "The valley is lost.",
+                    "effects": [
+                        {
+                            "op": "add_intimacy",
+                            "intimacy": {"text": "Never go home", "strength": "major"},
+                        }
+                    ],
+                }
+            ],
+        }
+    )
+    return character.id, meeting.id, betrayal.id
+
+
+def test_stance_and_outline_prompts_include_scoped_intimacies(isolated_world: World) -> None:
+    character_id, _meeting_id, betrayal_id = _seed_arc_character()
+    scene = create_scene()
+    state = _workflow_input(scene.id)
+    state["character_ids"] = [character_id]
+    state["scene_start_event_id"] = betrayal_id
+    state["scene_end_event_id"] = betrayal_id
+
+    stances_model = CapturingStructuredFakeModel(
+        StanceList(
+            stances=[
+                StanceOutput(
+                    character_id=character_id,
+                    mood=["Wary"],
+                    intent="Confront",
+                    tactics="Ask",
+                    stakes="Trust",
+                )
+            ]
+        )
+    )
+    outline_model = CapturingStructuredFakeModel(OutlineBeats(beats=["Beat."]))
+    models = {
+        SCENE_STANCES_NODE_ID: stances_model,
+        SCENE_OUTLINE_NODE_ID: outline_model,
+    }
+
+    _author_stances_node(models)(state)
+    _outline_node(models)(state)
+
+    for prompt in (stances_model.last_prompt, outline_model.last_prompt):
+        assert "Curious, guarded" in prompt
+        assert "Short sentences" in prompt
+        assert "Wary of outsiders" in prompt
+        assert "Owes Kael a debt" in prompt
+        assert "Kael will pay" in prompt
+        assert "### State at start" in prompt
+        assert "### Transitions" in prompt
+        assert "Never go home" not in prompt
+
+
 def test_workflow_nodes_include_continuity_context_in_prompts(isolated_world: World) -> None:
     character_id = _seed_character()
     scene = create_scene()
@@ -370,6 +509,95 @@ def test_workflow_nodes_include_continuity_context_in_prompts(isolated_world: Wo
     ]:
         assert "She left the room." in prompt
         assert "Maintain continuity with the surrounding scenes" in prompt
+
+
+def test_workflow_system_prompts_include_story_bible_primer() -> None:
+    prompts = {
+        "stances": _STANCES_SYSTEM_PROMPT,
+        "outline": _OUTLINE_SYSTEM_PROMPT,
+        "plan_review": _PLAN_REVIEW_SYSTEM_PROMPT,
+        "plan_revise": _PLAN_REVISE_SYSTEM_PROMPT,
+        "gather": _GATHER_SYSTEM_PROMPT,
+        "draft": _DRAFT_SYSTEM_PROMPT,
+        "prose_review": _PROSE_REVIEW_SYSTEM_PROMPT,
+        "character_review": _CHARACTER_REVIEW_SYSTEM_PROMPT,
+        "prose_revise": _PROSE_REVISE_SYSTEM_PROMPT,
+        "summary": _SUMMARY_SYSTEM_PROMPT,
+    }
+    for name, prompt in prompts.items():
+        assert STORY_BIBLE_PRIMER in prompt, name
+
+    assert "identity and intimacies" in _STANCES_SYSTEM_PROMPT
+    assert "intimacy strength" in _STANCES_SYSTEM_PROMPT
+    assert "intimacies drive decisions" in _OUTLINE_SYSTEM_PROMPT
+    assert "strength-weighted" in _PLAN_REVIEW_SYSTEM_PROMPT
+    assert "strength-weighted" in _PLAN_REVISE_SYSTEM_PROMPT
+    assert "current intimacies" in _GATHER_SYSTEM_PROMPT
+    assert "strength-weighted" in _DRAFT_SYSTEM_PROMPT
+    assert "defining intimacy" in _PROSE_REVIEW_SYSTEM_PROMPT
+    assert "identity over intimacies" in _CHARACTER_REVIEW_SYSTEM_PROMPT
+    assert "intimacy-driven" in _PROSE_REVISE_SYSTEM_PROMPT
+    assert "Do not invent world-state or intimacy changes" in _SUMMARY_SYSTEM_PROMPT
+
+
+def test_structured_and_draft_nodes_send_primer_as_system_message(
+    isolated_world: World,
+) -> None:
+    character_id = _seed_character()
+    scene = create_scene()
+    state = _workflow_input(scene.id)
+    state["character_ids"] = [character_id]
+    state["prose"] = "Drafted scene prose."
+
+    stances_model = CapturingStructuredFakeModel(
+        StanceList(
+            stances=[
+                StanceOutput(
+                    character_id=character_id,
+                    mood=["Focused"],
+                    intent="Continue",
+                    tactics="Observe",
+                    stakes="Trust",
+                )
+            ]
+        )
+    )
+    outline_model = CapturingStructuredFakeModel(OutlineBeats(beats=["Beat."]))
+    plan_review_model = CapturingStructuredFakeModel(OutlineCritique(critique="Looks good."))
+    prose_review_model = CapturingStructuredFakeModel(ProseCritique(critique="Fine."))
+    character_review_model = CapturingStructuredFakeModel(
+        CharacterCritique(character_id=character_id, critique="Fine.")
+    )
+    summary_model = CapturingStructuredFakeModel(SceneSummary(summary="A short summary."))
+    draft_model = CapturingDraftFakeModel()
+    models = {
+        SCENE_STANCES_NODE_ID: stances_model,
+        SCENE_OUTLINE_NODE_ID: outline_model,
+        SCENE_OUTLINE_REVIEW_NODE_ID: plan_review_model,
+        SCENE_PROSE_REVIEW_NODE_ID: prose_review_model,
+        SCENE_CHARACTER_REVIEW_NODE_ID: character_review_model,
+        SCENE_SUMMARY_NODE_ID: summary_model,
+        SCENE_DRAFT_NODE_ID: draft_model,
+    }
+
+    _author_stances_node(models)(state)
+    _outline_node(models)(state)
+    _review_outline_node(models)(state)
+    _draft_prose_node(models)(state)
+    _review_prose_node(models)(state)
+    state["review_character_id"] = character_id
+    _review_character_node(models)(state)
+    _summary_node(models)(state)
+
+    assert stances_model.last_system == _STANCES_SYSTEM_PROMPT
+    assert outline_model.last_system == _OUTLINE_SYSTEM_PROMPT
+    assert plan_review_model.last_system == _PLAN_REVIEW_SYSTEM_PROMPT
+    assert prose_review_model.last_system == _PROSE_REVIEW_SYSTEM_PROMPT
+    assert character_review_model.last_system == _CHARACTER_REVIEW_SYSTEM_PROMPT
+    assert summary_model.last_system == _SUMMARY_SYSTEM_PROMPT
+    assert draft_model.last_system == _DRAFT_SYSTEM_PROMPT
+    assert STORY_BIBLE_PRIMER not in stances_model.last_prompt
+    assert STORY_BIBLE_PRIMER not in draft_model.last_prompt
 
 
 def test_workflow_nodes_work_with_empty_continuity_context(isolated_world: World) -> None:
@@ -588,6 +816,24 @@ def test_render_dossier_truncates_long_scene_prose(isolated_world: World) -> Non
     assert long_prose not in dossier
 
 
+def test_render_dossier_scopes_character_to_scene_window(isolated_world: World) -> None:
+    character_id, meeting_id, _betrayal_id = _seed_arc_character()
+
+    scoped = _render_dossier(
+        ContextSelection(character_ids=[character_id]),
+        start_event_id=meeting_id,
+        end_event_id=meeting_id,
+    )
+    unscoped = _render_dossier(ContextSelection(character_ids=[character_id]))
+
+    assert "### State at start" in scoped
+    assert "Owes Kael a debt" in scoped
+    assert "Never go home" not in scoped
+    assert "Current State (after full timeline)" not in scoped
+    assert "Current State (after full timeline)" in unscoped
+    assert "Never go home" in unscoped
+
+
 def test_review_prose_node_raises_when_prose_unusable(isolated_world: World) -> None:
     scene = create_scene()
     models = {
@@ -754,6 +1000,77 @@ def test_run_scene_generation_passes_continuity_context(
     continuity_context = captured["state"]["continuity_context"]
     assert "Previous scene ending." in continuity_context
     assert "Maintain continuity with the surrounding scenes" in continuity_context
+    assert captured["state"]["scene_start_event_id"] == "event_b"
+    assert captured["state"]["scene_end_event_id"] == "event_b"
+
+
+def test_run_scene_generation_computes_event_window_from_blueprint(
+    isolated_world: World,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    with world_transaction() as world:
+        world.story_bible.timeline = [
+            Event(id="event_later", title="Listed first"),
+            Event(id="event_earlier", title="Listed last"),
+        ]
+        world.story_bible.event_relations = [
+            EventRelation(kind="follows", source_id="event_later", target_id="event_earlier"),
+        ]
+
+    character_id = _seed_character()
+    scene = create_scene("Windowed")
+    scene.blueprint = SceneBlueprint(
+        premise="Current premise.",
+        purpose="Current purpose.",
+        character_ids=[character_id],
+        event_ids=["event_later", "event_missing", "event_earlier"],
+    )
+
+    captured: dict[str, Any] = {}
+
+    class CapturingWorkflow:
+        def invoke(self, state: dict[str, Any]) -> None:
+            captured["state"] = state
+
+    monkeypatch.setattr(
+        "app.graphs.scene_generation.get_workflow",
+        lambda name, **kwargs: CapturingWorkflow(),
+    )
+
+    run_scene_generation(scene.id)
+
+    assert captured["state"]["scene_start_event_id"] == "event_earlier"
+    assert captured["state"]["scene_end_event_id"] == "event_later"
+
+
+def test_run_scene_generation_empty_window_when_no_enacted_event_resolves(
+    isolated_world: World,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    character_id = _seed_character()
+    scene = create_scene("Unresolved")
+    scene.blueprint = SceneBlueprint(
+        premise="Current premise.",
+        purpose="Current purpose.",
+        character_ids=[character_id],
+        event_ids=["event_missing"],
+    )
+
+    captured: dict[str, Any] = {}
+
+    class CapturingWorkflow:
+        def invoke(self, state: dict[str, Any]) -> None:
+            captured["state"] = state
+
+    monkeypatch.setattr(
+        "app.graphs.scene_generation.get_workflow",
+        lambda name, **kwargs: CapturingWorkflow(),
+    )
+
+    run_scene_generation(scene.id)
+
+    assert captured["state"]["scene_start_event_id"] == ""
+    assert captured["state"]["scene_end_event_id"] == ""
 
 
 def test_merge_stances_combines_updates_for_different_characters() -> None:
@@ -775,6 +1092,222 @@ def test_merge_stances_appends_unknown_character_and_handles_none() -> None:
     assert merge_stances(None, None) == []
     merged = merge_stances(None, [{"character_id": "char_new", "intent": "Arrive"}])
     assert merged == [{"character_id": "char_new", "intent": "Arrive"}]
+
+
+def test_merge_character_critiques_appends_and_resets() -> None:
+    first = [{"character_id": "char_a", "critique": "A", "revision_round": 0}]
+    second = [{"character_id": "char_b", "critique": "B", "revision_round": 0}]
+
+    merged = merge_character_critiques(None, first)
+    merged = merge_character_critiques(merged, second)
+    assert merged == first + second
+
+    assert merge_character_critiques(merged, CHARACTER_CRITIQUES_RESET) == []
+    assert merge_character_critiques(None, CHARACTER_CRITIQUES_RESET) == []
+    assert merge_character_critiques(merged, None) == merged
+
+
+def test_fanout_prose_reviews_sends_one_per_stance_character_plus_prose() -> None:
+    state = {
+        "prose": "Drafted scene prose.",
+        "prose_revision_count": 0,
+        "stances": [
+            SceneCharacterStance(character_id="char_a", intent="Hold"),
+            SceneCharacterStance(character_id="char_b", intent="Flee"),
+        ],
+    }
+
+    sends = _fanout_prose_reviews(state)
+
+    assert all(isinstance(send, Send) for send in sends)
+    character_sends = [send for send in sends if send.node == "review_character"]
+    prose_sends = [send for send in sends if send.node == "review_prose"]
+    assert {send.arg["review_character_id"] for send in character_sends} == {"char_a", "char_b"}
+    assert len(prose_sends) == 1
+    assert prose_sends[0].arg["prose"] == "Drafted scene prose."
+
+
+def test_review_character_node_returns_critique_for_sent_character(isolated_world: World) -> None:
+    upsert_character.invoke(
+        {
+            "name": "Mira",
+            "traits": "scarred left hand",
+            "voice": "clipped",
+            "intimacies": [{"text": "Wary of outsiders", "strength": "defining"}],
+        }
+    )
+    character_id = get_world().story_bible.characters[-1].id
+    scene = create_scene()
+    review_model = CapturingStructuredFakeModel(
+        CharacterCritique(character_id="hallucinated", critique="Give her more caution.")
+    )
+    state = _workflow_input(scene.id)
+    state["character_ids"] = [character_id]
+    state["review_character_id"] = character_id
+    state["prose"] = "Mira waved at the stranger."
+    state["stances"] = [
+        SceneCharacterStance(character_id=character_id, intent="Stay hidden", mood=["Wary"])
+    ]
+    state["scene_start_event_id"] = ""
+    state["scene_end_event_id"] = ""
+
+    result = _review_character_node({SCENE_CHARACTER_REVIEW_NODE_ID: review_model})(state)
+
+    assert result["character_critiques"] == [
+        {
+            "character_id": character_id,
+            "critique": "Give her more caution.",
+            "revision_round": 0,
+        }
+    ]
+    assert "scarred left hand" in review_model.last_prompt
+    assert "Wary of outsiders" in review_model.last_prompt
+    assert "Stay hidden" in review_model.last_prompt
+    assert "identity over intimacies" in review_model.last_prompt
+    assert "Mira waved at the stranger." in review_model.last_prompt
+
+
+def test_revise_prose_prompt_lists_general_and_character_critiques(isolated_world: World) -> None:
+    character_id = _seed_character()
+    scene = create_scene()
+    state = _workflow_input(scene.id)
+    state["character_ids"] = [character_id]
+    state["prose_critique"] = "Sharpen the opening."
+    state["character_critiques"] = [
+        {
+            "character_id": character_id,
+            "critique": "Show more wariness.",
+            "revision_round": 0,
+        },
+        {
+            "character_id": character_id,
+            "critique": "Stale note from last round.",
+            "revision_round": 1,
+        },
+    ]
+    state["prose_revision_count"] = 0
+
+    prompt = _prose_revise_prompt(state, "Current prose.")
+
+    assert "General critique:\nSharpen the opening." in prompt
+    assert "Character critiques:" in prompt
+    assert "Show more wariness." in prompt
+    assert f"[{character_id}]" in prompt
+    assert "Stale note from last round." not in prompt
+
+
+def test_draft_and_revise_prose_emit_critique_reset(isolated_world: World) -> None:
+    scene = create_scene()
+    set_scene_text(scene.id, "")
+    draft_state = _workflow_input(scene.id)
+    draft_result = _draft_prose_node({SCENE_DRAFT_NODE_ID: _draft_prose_model()})(draft_state)
+    assert draft_result["character_critiques"] is CHARACTER_CRITIQUES_RESET
+
+    revise_state = _workflow_input(scene.id)
+    revise_state["prose"] = "Drafted scene prose."
+    revise_state["prose_critique"] = "Looks solid."
+    revise_result = _revise_prose_node({SCENE_PROSE_REVISE_NODE_ID: _noop_agent_model()})(
+        revise_state
+    )
+    assert revise_result["character_critiques"] is CHARACTER_CRITIQUES_RESET
+
+
+def test_full_graph_collects_one_character_critique_per_stance(isolated_world: World) -> None:
+    upsert_character.invoke({"name": "Hero"})
+    upsert_character.invoke({"name": "Ally"})
+    hero_id = get_world().story_bible.characters[-2].id
+    ally_id = get_world().story_bible.characters[-1].id
+    scene = create_scene("Proposed Title")
+    scene.blueprint = SceneBlueprint(
+        premise="Brief premise.",
+        purpose="Brief purpose.",
+        character_ids=[hero_id, ally_id],
+        event_ids=[_seed_event()],
+    )
+    models = _workflow_models()
+    models[SCENE_STANCES_NODE_ID] = structured_fake_model(
+        StanceList(
+            stances=[
+                StanceOutput(character_id=hero_id, intent="Investigate"),
+                StanceOutput(character_id=ally_id, intent="Watch the door"),
+            ]
+        )
+    )
+    reviewed: list[str] = []
+
+    class _RecordingCharacterReview:
+        def with_structured_output(self, schema: type[Any], **kwargs: Any) -> Any:
+            class _Runnable:
+                def invoke(self, input: Any, config: Any = None, **kwargs: Any) -> Any:
+                    prompt = next(
+                        (message.content for message in input if isinstance(message, HumanMessage)),
+                        "",
+                    )
+                    character_id = hero_id if hero_id in prompt else ally_id
+                    reviewed.append(character_id)
+                    return CharacterCritique(
+                        character_id=character_id,
+                        critique=f"Note for {character_id}",
+                    )
+
+            return _Runnable()
+
+        def bind_tools(self, tools: Any, **kwargs: Any) -> Any:
+            return self
+
+    models[SCENE_CHARACTER_REVIEW_NODE_ID] = _RecordingCharacterReview()
+    input_state = _workflow_input(scene.id, event_ids=scene.blueprint.event_ids)
+    input_state["character_ids"] = [hero_id, ally_id]
+
+    result = build_scene_writer_graph(models=models).invoke(input_state)
+
+    assert set(reviewed) == {hero_id, ally_id}
+    assert get_world().get_scene(scene.id).markdown == "Drafted scene prose."
+    assert result.get("prose") == "Drafted scene prose."
+
+
+def test_character_critiques_reset_between_review_rounds(isolated_world: World) -> None:
+    character_id = _seed_character()
+    scene = create_scene()
+    set_scene_text(scene.id, "")
+    review_model = structured_fake_model(
+        CharacterCritique(character_id=character_id, critique="Show more caution.")
+    )
+    models = {
+        SCENE_DRAFT_NODE_ID: _draft_prose_model(),
+        SCENE_CHARACTER_REVIEW_NODE_ID: review_model,
+        SCENE_PROSE_REVISE_NODE_ID: _noop_agent_model(),
+    }
+    state = _workflow_input(scene.id)
+    state["character_ids"] = [character_id]
+    state["stances"] = [SceneCharacterStance(character_id=character_id, intent="Investigate")]
+
+    draft = _draft_prose_node(models)(state)
+    assert draft["character_critiques"] is CHARACTER_CRITIQUES_RESET
+    state["prose"] = draft["prose"]
+    state["character_critiques"] = merge_character_critiques(
+        state.get("character_critiques"), draft["character_critiques"]
+    )
+    assert state["character_critiques"] == []
+
+    first_review = _review_character_node(models)({**state, "review_character_id": character_id})
+    assert first_review["character_critiques"][0]["revision_round"] == 0
+    state["character_critiques"] = merge_character_critiques(
+        state["character_critiques"], first_review["character_critiques"]
+    )
+    assert len(state["character_critiques"]) == 1
+
+    revise = _revise_prose_node(models)(state)
+    assert revise["character_critiques"] is CHARACTER_CRITIQUES_RESET
+    state["prose"] = revise["prose"]
+    state["prose_revision_count"] = revise["prose_revision_count"]
+    state["character_critiques"] = merge_character_critiques(
+        state["character_critiques"], revise["character_critiques"]
+    )
+    assert state["character_critiques"] == []
+
+    second_review = _review_character_node(models)({**state, "review_character_id": character_id})
+    assert second_review["character_critiques"][0]["revision_round"] == 1
 
 
 def test_revise_plan_survives_parallel_stance_updates(isolated_world: World) -> None:
@@ -945,6 +1478,7 @@ def test_graph_nodes_register_scene_workflow_nodes() -> None:
         SCENE_GATHER_NODE_ID,
         SCENE_DRAFT_NODE_ID,
         SCENE_PROSE_REVIEW_NODE_ID,
+        SCENE_CHARACTER_REVIEW_NODE_ID,
         SCENE_PROSE_REVISE_NODE_ID,
         SCENE_SUMMARY_NODE_ID,
     }
@@ -952,6 +1486,7 @@ def test_graph_nodes_register_scene_workflow_nodes() -> None:
     node_map = {node.node_id: node for node in GRAPH_NODES}
     assert node_map[SCENE_GATHER_NODE_ID].default_config_id == ORCHESTRATION_CONFIG_ID
     assert node_map[SCENE_GATHER_NODE_ID].label == "Scene: Gather Context"
+    assert node_map[SCENE_CHARACTER_REVIEW_NODE_ID].label == "Scene: Character Review"
 
 
 def test_get_chat_model_for_node_resolves_registered_nodes(

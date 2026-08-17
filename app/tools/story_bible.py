@@ -13,6 +13,7 @@ import json
 
 from langchain_core.tools import ToolException, tool
 
+from app.world.character_arc import CharacterArc, derive_character_arc, format_character_arc
 from app.world.models import (
     Character,
     Event,
@@ -253,14 +254,22 @@ def delete_world_state_entry(entry_id: str) -> str:
 
 
 @tool
-def read_character(character_id: str) -> str:
-    """Return a character's identity, baseline state, and derived current state
-    (after replaying the full timeline)."""
+def read_character(
+    character_id: str,
+    start_event_id: str = "",
+    end_event_id: str = "",
+) -> str:
+    """Return a character's identity, baseline state, and derived state.
+
+    By default, derived state is after the full timeline. When start_event_id
+    and/or end_event_id are given, that current-state section is replaced by a
+    scoped arc: state entering the window (before the start event), transitions
+    during the inclusive window, and state after the end event. Late-story
+    state is not included when a window is set.
+    """
 
     bible = get_world().story_bible
-    character = bible.get_character(character_id)
-    if character is None:
-        raise ToolException(f"No character with id {character_id}.")
+    character = _require_character(bible, character_id)
 
     identity = character.identity
     baseline = character.baseline_state
@@ -277,12 +286,38 @@ def read_character(character_id: str) -> str:
         "Intimacies:",
         *_intimacy_lines(baseline.intimacies),
         "",
-        "## Current State (after full timeline)",
     ]
-    derived = derive_state(bible).characters.get(character.id)
-    if derived is not None:
-        lines.extend(_derived_character_lines(derived))
+    if start_event_id.strip() or end_event_id.strip():
+        arc = _character_arc_or_raise(bible, character.id, start_event_id, end_event_id)
+        lines.append(format_character_arc(arc))
+    else:
+        lines.append("## Current State (after full timeline)")
+        derived = derive_state(bible).characters.get(character.id)
+        if derived is not None:
+            lines.extend(_derived_character_lines(derived))
     return "\n".join(lines)
+
+
+@tool
+def read_character_arc(
+    character_id: str,
+    start_event_id: str = "",
+    end_event_id: str = "",
+) -> str:
+    """Return a character's derived state entering and leaving a timeline window.
+
+    Start state is the character entering the window (before the start event;
+    baseline when start_event_id is omitted). End state is after the end event
+    (full timeline when end_event_id is omitted). The window is inclusive of
+    both endpoints. Transitions list only events in the window that carry a
+    signal for this character.
+    """
+
+    bible = get_world().story_bible
+    character = _require_character(bible, character_id)
+    arc = _character_arc_or_raise(bible, character.id, start_event_id, end_event_id)
+    name = character.identity.name or "Unnamed"
+    return f"# {name} [id: {character.id}]\n\n{format_character_arc(arc)}"
 
 
 @tool
@@ -684,6 +719,40 @@ def read_world_state(at_event_id: str = "") -> str:
     return "\n".join(lines)
 
 
+def _require_character(bible: StoryBible, character_id: str) -> Character:
+    character = bible.get_character(character_id)
+    if character is None:
+        raise ToolException(f"No character with id {character_id}. {_character_listing(bible)}")
+    return character
+
+
+def _character_arc_or_raise(
+    bible: StoryBible,
+    character_id: str,
+    start_event_id: str,
+    end_event_id: str,
+) -> CharacterArc:
+    try:
+        return derive_character_arc(
+            bible,
+            character_id,
+            start_event_id or None,
+            end_event_id or None,
+        )
+    except ValueError as exc:
+        raise ToolException(f"{exc} {_event_listing(bible)}") from exc
+
+
+def _character_listing(bible: StoryBible) -> str:
+    if not bible.characters:
+        return "No characters exist yet; create one first."
+    listing = ", ".join(
+        f"{character.identity.name or 'Unnamed'} [{character.id}]"
+        for character in bible.characters
+    )
+    return f"Valid characters: {listing}"
+
+
 def _event_listing(bible: StoryBible) -> str:
     if not bible.timeline:
         return "No events exist yet."
@@ -761,6 +830,7 @@ STORY_BIBLE_TOOLS = [
     upsert_world_state_entry,
     delete_world_state_entry,
     read_character,
+    read_character_arc,
     upsert_character,
     delete_character,
     read_timeline,

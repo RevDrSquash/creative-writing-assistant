@@ -11,6 +11,7 @@ from app.world.scene_context import (
     SceneSnapshot,
     build_scene_continuity_context,
     format_continuity_context,
+    scene_event_window,
 )
 from app.world.store import get_world, world_transaction
 
@@ -343,3 +344,34 @@ def test_format_context_empty_blueprint_falls_back_to_placeholders() -> None:
     assert "(no prose yet)" in formatted
     assert "Summary: (none)" in formatted
     assert "Blueprint:" not in formatted
+
+
+def test_scene_event_window_uses_chronological_earliest_and_latest(
+    isolated_world: World,
+) -> None:
+    with world_transaction() as world:
+        world.story_bible.timeline = [
+            Event(id="event_later", title="Listed first"),
+            Event(id="event_mid", title="Mid"),
+            Event(id="event_earlier", title="Listed last"),
+        ]
+        world.story_bible.event_relations = [
+            EventRelation(kind="follows", source_id="event_later", target_id="event_mid"),
+            EventRelation(kind="follows", source_id="event_mid", target_id="event_earlier"),
+        ]
+
+    start_id, end_id = scene_event_window(
+        isolated_world.story_bible,
+        ["event_later", "event_missing", "event_earlier"],
+    )
+
+    assert start_id == "event_earlier"
+    assert end_id == "event_later"
+
+
+def test_scene_event_window_empty_when_no_event_resolves(isolated_world: World) -> None:
+    with world_transaction() as world:
+        world.story_bible.timeline = [Event(id="event_a", title="Alpha")]
+
+    assert scene_event_window(isolated_world.story_bible, ["event_missing"]) == ("", "")
+    assert scene_event_window(isolated_world.story_bible, []) == ("", "")

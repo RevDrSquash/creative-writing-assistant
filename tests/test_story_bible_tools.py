@@ -5,8 +5,10 @@ from __future__ import annotations
 import pytest
 from langchain_core.tools import ToolException
 
+from app.tools import READ_ONLY_WRITING_TOOLS
 from app.tools.scene import read_scene_blueprint
 from app.tools.story_bible import (
+    STORY_BIBLE_TOOLS,
     add_event,
     add_event_relation,
     delete_character,
@@ -14,6 +16,7 @@ from app.tools.story_bible import (
     delete_world_fact,
     delete_world_state_entry,
     read_character,
+    read_character_arc,
     read_event,
     read_story_bible,
     read_timeline,
@@ -249,6 +252,110 @@ def test_read_character_includes_identity_baseline_and_derived_state(
     assert "Current State (after full timeline)" in detail
     assert "Shaken" in detail
     assert "## Stance" not in detail
+    assert "### State at start" not in detail
+
+
+def test_read_character_scoped_replaces_full_timeline_state(isolated_world: World) -> None:
+    upsert_character.func(
+        name="Mira",
+        intimacies=[Intimacy(text="Find the archive", strength="major")],
+    )
+    character = isolated_world.story_bible.characters[0]
+    add_event.func(
+        "Meeting",
+        signals=[
+            Signal(
+                character_id=character.id,
+                effects=[AddIntimacy(intimacy=Intimacy(text="Owes Kael a debt", strength="major"))],
+            )
+        ],
+    )
+    meeting = isolated_world.story_bible.timeline[0]
+    _add_follows_event(
+        "Betrayal",
+        meeting.id,
+        signals=[
+            Signal(
+                character_id=character.id,
+                effects=[AddIntimacy(intimacy=Intimacy(text="Shaken", strength="minor"))],
+            )
+        ],
+    )
+
+    scoped = read_character.func(character.id, end_event_id=meeting.id)
+    unscoped = read_character.func(character.id)
+
+    assert "### State at start" in scoped
+    assert "### Transitions" in scoped
+    assert "### State at end" in scoped
+    assert "Current State (after full timeline)" not in scoped
+    assert "Owes Kael a debt" in scoped
+    assert "Shaken" not in scoped
+    assert "Current State (after full timeline)" in unscoped
+    assert "Shaken" in unscoped
+
+
+def test_read_character_arc_happy_path(isolated_world: World) -> None:
+    upsert_character.func(
+        name="Mira",
+        intimacies=[Intimacy(text="Wary of outsiders", strength="minor")],
+    )
+    character = isolated_world.story_bible.characters[0]
+    add_event.func(
+        "Meeting at the gate",
+        signals=[
+            Signal(
+                character_id=character.id,
+                interpretation="This stranger may be useful.",
+                effects=[AddIntimacy(intimacy=Intimacy(text="Owes Kael a debt", strength="major"))],
+            )
+        ],
+    )
+    meeting = isolated_world.story_bible.timeline[0]
+
+    rendered = read_character_arc.func(character.id, end_event_id=meeting.id)
+
+    assert f"# Mira [id: {character.id}]" in rendered
+    assert "### State at start" in rendered
+    assert "### Transitions" in rendered
+    assert "### State at end" in rendered
+    assert "Wary of outsiders" in rendered
+    assert "Added intimacy Owes Kael a debt (major)" in rendered
+    assert "This stranger may be useful." in rendered
+
+
+def test_read_character_arc_rejects_hallucinated_character_id(isolated_world: World) -> None:
+    upsert_character.func(name="Mira")
+
+    with pytest.raises(ToolException, match="Mira \\[char_mira\\]"):
+        read_character_arc.func("char_missing")
+
+
+def test_read_character_arc_rejects_hallucinated_event_id(isolated_world: World) -> None:
+    upsert_character.func(name="Mira")
+    add_event.func("Meeting")
+    character = isolated_world.story_bible.characters[0]
+
+    with pytest.raises(ToolException, match=r"Meeting \[event_meeting\]"):
+        read_character_arc.func(character.id, start_event_id="event_missing")
+
+
+def test_read_character_rejects_hallucinated_ids_when_scoped(isolated_world: World) -> None:
+    upsert_character.func(name="Mira")
+    add_event.func("Meeting")
+    event = isolated_world.story_bible.timeline[0]
+    character = isolated_world.story_bible.characters[0]
+
+    with pytest.raises(ToolException, match="Mira \\[char_mira\\]"):
+        read_character.func("char_missing", end_event_id=event.id)
+
+    with pytest.raises(ToolException, match=r"Meeting \[event_meeting\]"):
+        read_character.func(character.id, end_event_id="event_missing")
+
+
+def test_read_character_arc_is_registered_on_tool_lists() -> None:
+    assert read_character_arc in STORY_BIBLE_TOOLS
+    assert read_character_arc in READ_ONLY_WRITING_TOOLS
 
 
 def test_read_scene_blueprint_includes_premise_outline_and_stances(

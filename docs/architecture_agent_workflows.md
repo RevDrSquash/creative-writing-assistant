@@ -26,6 +26,18 @@ A workflow is an enforced LangGraph workflow graph exposed as a single entry poi
   [model_configuration.md](model_configuration.md)). Cheap steps (outline, review) can use a
   smaller role while drafting uses a larger one. The resolved config's `system_prompt_prefix`
   is applied transparently on every LLM call via `PrefixedChatOpenAI` in `app/models/client.py`.
+- **Story Bible primer**: `STORY_BIBLE_PRIMER` in `app/graphs/context.py` is the shared,
+  model-facing description of the bible (narrative style; world facts; baseline vs event-sourced
+  state; events, signals, and effects; identity vs state; intimacies and how strength scales
+  influence; derived state and timeline positions). The chat agent's `DEFAULT_SYSTEM_PROMPT`
+  embeds it alongside tool guidance. Every scene-workflow LLM node whose prompt can contain
+  bible content receives the primer plus a short node-specific usage instruction as a system
+  message: structured nodes (stances, outline, plan review, prose review, character
+  review, summary) via `_structured_invoke(system=...)`; gather, draft, and both revise
+  nodes compose it into their existing system prompts. Stances derive mood/intent/tactics/stakes
+  from identity and intimacies, strength-weighted; outline beats should let intimacies drive
+  decisions and reactions. Character review judges portrayal against identity and intimacies
+  first, then stance.
 - **Persistence**: workflows write through to the `World` incrementally — each completed piece is
   saved as its step finishes, using the existing per-tool-call `world_transaction()` on the store.
   This makes progress visible in the UI and leaves partial-but-usable results if a later step
@@ -80,6 +92,19 @@ prompts. The plan-review node critiques stances and outline for continuity break
 context; the prose-review node does the same for drafted prose. The **summarize** node does not
 receive it.
 
+### Scene event window
+
+`run_scene_generation()` deterministically computes the scene's timeline window from
+`blueprint.event_ids`: resolve those ids against `chronological_order()`, then take the
+earliest and latest. The window is passed on workflow state as `scene_start_event_id` /
+`scene_end_event_id`. If no enacted event resolves, both are empty and full-timeline
+behavior applies.
+
+Stance and outline prompts include a per-character block built from the world (name,
+identity traits/voice, and the scoped arc via `format_character_arc`) — not model-supplied
+ids. The gather node's draft dossier calls `read_character` with the same window so
+selected characters show scene-relevant state rather than end-of-story state.
+
 ### Staleness
 
 `Scene.generated.blueprint_fingerprint` records the blueprint at generation time. If the blueprint
@@ -90,9 +115,11 @@ will be discarded).
 ### Nodes (enforced order)
 
 1. **Author initial stances** — write a `SceneCharacterStance` for each participating character
-   (`mood` as a list of statements; `intent`, `tactics`, `stakes` as single fields). Writes to
-   `Scene.generated.stances`.
-2. **Outline** — produce the scene's beats as a list of short, concise statements. Writes to
+   (`mood` as a list of statements; `intent`, `tactics`, `stakes` as single fields). The prompt
+   includes each character's identity and scoped arc (state entering the scene and transitions
+   during it). Writes to `Scene.generated.stances`.
+2. **Outline** — produce the scene's beats as a list of short, concise statements. The prompt
+   includes the same per-character identity and scoped-arc blocks. Writes to
    `Scene.generated.outline`.
 3. **Review plan** — critique the stances **and** outline against premise, purpose, and
    continuity with surrounding scenes. Structured critique only; nothing is mutated.
@@ -106,26 +133,40 @@ will be discarded).
    `ContextSelection` (character/event/scene/world-fact ids plus short free-text notes). The
    workflow resolves those ids (exact match, then unique token-drift match; unknown or ambiguous
    ids are dropped and listed in the dossier) and renders selected entries **verbatim** into an
-   ephemeral `context_dossier` string on workflow state (not persisted on `Scene.generated`). An
-   empty selection does not abort the run — drafting still has blueprint, stances, outline, and
-   continuity context.
+   ephemeral `context_dossier` string on workflow state (not persisted on `Scene.generated`).
+   Selected characters are read through `read_character` with the scene event window so the
+   dossier shows scene-relevant state rather than end-of-story state. An empty selection does
+   not abort the run — drafting still has blueprint, stances, outline, and continuity context.
 6. **Draft prose** — a tool-free one-shot model call that writes the scene Markdown. The prompt
    includes the context dossier plus continuity block. Instructions require scene body prose only
    (no preamble, commentary, or title); `---` divider lines and short level-3/4 location-tag
    headings are allowed. Because models still tend to open with a `# Title` anyway, the node
    strips leading level-1/2 headings from the drafted text before persisting. If the response is
    empty/whitespace (or nothing but a title), the node raises `SceneWorkflowError` and the
-   generation job fails without writing the empty text.
-7. **Review prose** — critique the drafted prose against premise, purpose, stances, outline,
-   and continuity. Structured critique only. The critique schema includes a `prose_unusable`
-   flag: when the model marks the draft missing, truncated, gibberish, or otherwise not an
-   actual scene, the node raises `SceneWorkflowError` (including the critique text) and the
-   generation job fails before revise/summarize.
+   generation job fails without writing the empty text. The node also writes a reset sentinel
+   into `character_critiques` so the following review round starts empty.
+7. **Review prose and characters (parallel)** — after draft (and after each prose revise when
+   looping), a conditional edge fans out with `Send`: one `review_character` task per stance
+   character, plus `review_prose`. All critiques run in parallel; `revise_prose` joins on both.
+   - **Review prose** — critique the drafted prose against premise, purpose, stances, outline,
+     and continuity. Structured critique only. The critique schema includes a `prose_unusable`
+     flag: when the model marks the draft missing, truncated, gibberish, or otherwise not an
+     actual scene, the node raises `SceneWorkflowError` (including the critique text) and the
+     generation job fails before revise/summarize.
+   - **Review character** — a structured one-shot per participating stance character
+     (`streaming=False`). The prompt contains the prose, that character's identity, scoped
+     intimacies (`format_character_arc` at the scene event window), and stance. When those
+     conflict, **identity over intimacies, both over stance**. The node is instructed to say
+     when no changes are needed. Each entry is stored on `character_critiques` (append reducer)
+     and tagged with the current prose revision round as a belt-and-braces filter. Model
+     config: `scene_character_review` ("Scene: Character Review"), default `judgment`.
 8. **Revise prose** — a tool-enabled ReAct sub-loop that applies targeted search/replace edits
    via `edit_prose`. The agent works on `current_scene`; the node persists through
-   `set_scene_text`. Bounded by the same `max_revisions` counter (tracked separately as
-   `prose_revision_count`). If a revise pass leaves the scene empty, the node raises
-   `SceneWorkflowError` the same way draft does.
+   `set_scene_text`. The prompt lists the general prose critique plus each character critique
+   under a labeled heading. Bounded by the same `max_revisions` counter (tracked separately as
+   `prose_revision_count`). After revising, the node resets `character_critiques` so a looped
+   review round cannot see the previous round's entries. If a revise pass leaves the scene
+   empty, the node raises `SceneWorkflowError` the same way draft does.
 9. **Summarize** — produce the one-line scene `summary` from the (possibly revised) prose. The
    title is never touched.
 
@@ -169,10 +210,11 @@ user/agent-editable inputs only. Generated outline and stances appear in a **Gen
 in the scene editor (still user-editable, but regenerate overwrites them). See
 [forms_and_data_models.md](forms_and_data_models.md).
 
-The structured-output nodes (stances, outline, plan review, prose review, summary) build their
-model with `streaming=False`. They are one-shot `with_structured_output(...).invoke()` calls that
-do not need token streaming, and streaming aggregation serializes the structured `parsed` payload,
-which emits noisy Pydantic serializer warnings; the non-streaming path excludes that field.
+The structured-output nodes (stances, outline, plan review, prose review, character review,
+summary) build their model with `streaming=False`. They are one-shot
+`with_structured_output(...).invoke()` calls that do not need token streaming, and streaming
+aggregation serializes the structured `parsed` payload, which emits noisy Pydantic serializer
+warnings; the non-streaming path excludes that field.
 The gather and revise nodes keep the default streaming model (tool-enabled ReAct loops). Drafting
 is a tool-free, tag-free one-shot call on the streaming writing model.
 

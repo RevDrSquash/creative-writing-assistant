@@ -212,6 +212,30 @@ Replay is tolerant of dangling references: an effect that targets a missing entr
 Preventing or auto-repairing dangling effects on edit is tracked in
 [known_issues.md](known_issues.md).
 
+## Character Arc Derivation
+
+`derive_character_arc` (`app/world/character_arc.py`) is a pure function over the bible. It
+returns a character's derived state entering a timeline window, the transitions inside that
+window, and the state after it. Chronology is the same graph-derived order replay uses.
+
+- **Start state**: `DerivedCharacterState` **before** the start event (`derive_state_at` at the
+  start index). When no start event is given, this is the baseline.
+- **End state**: `DerivedCharacterState` **after** the end event. When no end event is given,
+  this is the full timeline.
+- **Window**: inclusive of both endpoints. `transitions` has one entry per event in the window
+  that carries a signal for this character (events without such a signal are omitted). Each
+  transition records the event id/title/description, the signal interpretation, and
+  human-readable `changes` (for example "Added intimacy … (major)", "Strengthened … to
+  defining"). The names `transitions` and `changes` are change-kind-agnostic so later state
+  kinds (appearance and so on) can be added without renaming the API.
+- **Validation**: unknown event ids and a start that is chronologically after the end raise
+  `ValueError`. Tools that expose this derivation translate those errors to `ToolException`
+  listing valid event ids.
+
+`format_character_arc` renders the arc as markdown with `### State at start`,
+`### Transitions` (per event), and `### State at end`. Tools and the scene workflow reuse this
+renderer so scoped character context cannot leak late-story state into an earlier window.
+
 ## Editing Rules
 
 - Adding or deleting events is always allowed; derived state simply replays differently. To
@@ -233,6 +257,15 @@ Agent tools provide simple CRUD over the editable entities (narrative style fiel
 baseline world state, characters, events with world-state effects and signals, event
 relationships) plus read access to derived state at any timeline position. Tools mutate the in-memory `World` and write through
 to disk, the same as user edits via forms.
+
+`read_character_arc(character_id, start_event_id="", end_event_id="")` returns the formatted
+arc for a character. Start state is entering the window (before the start event); end state
+is after the window. Blank window ids mean the start or end of the timeline.
+
+`read_character` accepts the same optional window ids. When either is provided, the
+"Current State (after full timeline)" section is replaced by the scoped arc so late-story
+state cannot leak into an earlier scene's context. Unknown character or event ids, and a
+start that is chronologically after the end, raise `ToolException` listing valid ids.
 
 Intimacy effects are a planned exception: today the agent authors intimacy effects directly, but
 the intended design is that it should not. Under the planned intimacy review workflow the agent

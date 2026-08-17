@@ -6,6 +6,7 @@ from app.models.config import (
     GRAPH_NODES,
     JUDGMENT_CONFIG_ID,
     ORCHESTRATION_CONFIG_ID,
+    SCENE_CHARACTER_REVIEW_NODE_ID,
     SCENE_DRAFT_NODE_ID,
     SCENE_GATHER_NODE_ID,
     SCENE_OUTLINE_NODE_ID,
@@ -56,6 +57,7 @@ def test_graph_nodes_register_scene_workflow_nodes() -> None:
         SCENE_GATHER_NODE_ID,
         SCENE_DRAFT_NODE_ID,
         SCENE_PROSE_REVIEW_NODE_ID,
+        SCENE_CHARACTER_REVIEW_NODE_ID,
         SCENE_PROSE_REVISE_NODE_ID,
         SCENE_SUMMARY_NODE_ID,
     }
@@ -71,6 +73,8 @@ def test_graph_nodes_register_scene_workflow_nodes() -> None:
     assert node_map[SCENE_GATHER_NODE_ID].default_config_id == ORCHESTRATION_CONFIG_ID
     assert node_map[SCENE_DRAFT_NODE_ID].default_config_id == WRITING_CONFIG_ID
     assert node_map[SCENE_PROSE_REVIEW_NODE_ID].default_config_id == JUDGMENT_CONFIG_ID
+    assert node_map[SCENE_CHARACTER_REVIEW_NODE_ID].default_config_id == JUDGMENT_CONFIG_ID
+    assert node_map[SCENE_CHARACTER_REVIEW_NODE_ID].label == "Scene: Character Review"
     assert node_map[SCENE_PROSE_REVISE_NODE_ID].default_config_id == JUDGMENT_CONFIG_ID
     assert node_map[SCENE_SUMMARY_NODE_ID].default_config_id == STRUCTURE_CONFIG_ID
 

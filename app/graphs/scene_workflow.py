@@ -12,12 +12,15 @@ from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import HumanMessage, SystemMessage
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.state import CompiledStateGraph
+from langgraph.types import Send
 from pydantic import BaseModel, Field
 
-from app.graphs.state import PlanReviseAgentState, WritingAgentState
+from app.graphs.context import compose_story_bible_system_prompt
+from app.graphs.state import CHARACTER_CRITIQUES_RESET, PlanReviseAgentState, WritingAgentState
 from app.graphs.workflow_state import SceneWorkflowState
 from app.models.client import get_chat_model_for_node
 from app.models.config import (
+    SCENE_CHARACTER_REVIEW_NODE_ID,
     SCENE_DRAFT_NODE_ID,
     SCENE_GATHER_NODE_ID,
     SCENE_OUTLINE_NODE_ID,
@@ -31,6 +34,7 @@ from app.models.config import (
 from app.tools import READ_ONLY_WRITING_TOOLS
 from app.tools.scene_generated import edit_outline, edit_prose, update_stance
 from app.tools.story_bible import read_character, read_event, read_world_fact
+from app.world.character_arc import derive_character_arc, format_character_arc
 from app.world.models import SceneCharacterStance
 from app.world.scene import (
     get_scene_text,
@@ -48,36 +52,85 @@ class SceneWorkflowError(RuntimeError):
     """Raised when a scene-writing workflow step fails in a way that should abort the job."""
 
 
-_GATHER_SYSTEM_PROMPT = """You gather Story Bible and scene context for a prose drafter.
+_STANCES_SYSTEM_PROMPT = compose_story_bible_system_prompt(
+    "Derive mood, intent, tactics, and stakes from the character's identity and intimacies. "
+    "Weight influence by intimacy strength: defining intimacies dominate, major ones regularly "
+    "shape choices, and minor ones color reactions."
+)
+
+_OUTLINE_SYSTEM_PROMPT = compose_story_bible_system_prompt(
+    "Let intimacies drive decisions and reactions in the beats. A character should act from "
+    "their beliefs and attachments, with stronger intimacies weighing more than weaker ones."
+)
+
+_PLAN_REVIEW_SYSTEM_PROMPT = compose_story_bible_system_prompt(
+    "When judging stances and outline, check that characters act from identity and intimacies "
+    "(strength-weighted) and that world state at this point in the story is respected."
+)
+
+_PLAN_REVISE_SYSTEM_PROMPT = compose_story_bible_system_prompt(
+    """You revise scene stances and outline beats to address a critique.
+Use edit_outline for batched text-anchored outline edits and update_stance for
+field-level stance changes. Prefer targeted edits over rewriting everything.
+Match outline beats with a short unique fragment of the existing beat text.
+If the critique needs no changes, make no tool calls and say so briefly.
+Read-only tools are available when you need story bible or scene context.""",
+    "When editing stances or beats, keep identity and intimacies (strength-weighted) as the "
+    "drivers of behavior. Do not invent world-state or intimacy changes the critique did not "
+    "call for.",
+)
+
+_GATHER_SYSTEM_PROMPT = compose_story_bible_system_prompt(
+    """You gather Story Bible and scene context for a prose drafter.
 Use read-only tools to explore characters, events, world facts, and related/next scenes
 (the continuity block may give only summaries — call read_scene when full prose is needed).
 Then select what the drafter needs by returning ids only — do not restate or paraphrase
 entry content. Use notes only for short observations, warnings, or emphasis that no
-entry captures. Read-tool output already labels entities with [id: ...]; prefer those ids."""
+entry captures. Read-tool output already labels entities with [id: ...]; prefer those ids.""",
+    "Prefer characters' current intimacies and the world state at this scene's place on the "
+    "timeline. Select the entries the drafter needs to portray those forces accurately.",
+)
 
-_DRAFT_SYSTEM_PROMPT = """You are drafting scene prose for a fiction project.
+_DRAFT_SYSTEM_PROMPT = compose_story_bible_system_prompt(
+    """You are drafting scene prose for a fiction project.
 Output only the scene body prose — no preamble, commentary, or title.
 The scene title is stored and displayed outside the prose; do not open with a
 heading for the scene name.
 Keep formatting minimal. You may separate sections with "---" divider lines,
 and if the scene genuinely moves between locations you may mark a section with
 a short level-3 or level-4 heading as a location tag. Otherwise write plain
-paragraphs of prose with no surrounding structure."""
+paragraphs of prose with no surrounding structure.""",
+    "Let identity and intimacies (strength-weighted) shape how characters speak, decide, and "
+    "react. Honor world state as it stands at this point in the story.",
+)
 
-_PLAN_REVISE_SYSTEM_PROMPT = """You revise scene stances and outline beats to address a critique.
-Use edit_outline for batched text-anchored outline edits and update_stance for
-field-level stance changes. Prefer targeted edits over rewriting everything.
-Match outline beats with a short unique fragment of the existing beat text.
-If the critique needs no changes, make no tool calls and say so briefly.
-Read-only tools are available when you need story bible or scene context."""
+_PROSE_REVIEW_SYSTEM_PROMPT = compose_story_bible_system_prompt(
+    "Judge whether the prose portrays identity and intimacies (strength-weighted) and respects "
+    "world state. Call out moments where a character acts against a defining intimacy without "
+    "cause."
+)
 
-_PROSE_REVISE_SYSTEM_PROMPT = """You revise drafted scene prose to address a critique.
+_CHARACTER_REVIEW_SYSTEM_PROMPT = compose_story_bible_system_prompt(
+    "Judge how this one character is portrayed in the drafted prose. "
+    "When identity, intimacies, and stance conflict, prefer identity over intimacies, "
+    "and both over stance. Say when no changes are needed."
+)
+
+_PROSE_REVISE_SYSTEM_PROMPT = compose_story_bible_system_prompt(
+    """You revise drafted scene prose to address a critique.
 Use edit_prose for batched search/replace edits. Prefer targeted edits that
 preserve wording the critique did not call out. Match with a short unique
 fragment of existing prose. Empty replacement deletes a fragment; insert by
 replacing an anchor with the anchor plus new text.
 If the critique needs no changes, make no tool calls and say so briefly.
-Read-only tools are available when you need story bible or scene context."""
+Read-only tools are available when you need story bible or scene context.""",
+    "When editing, restore identity and intimacy-driven behavior (strength-weighted) and "
+    "world-state consistency where the critique calls for it.",
+)
+
+_SUMMARY_SYSTEM_PROMPT = compose_story_bible_system_prompt(
+    "Summarize only what the prose shows. Do not invent world-state or intimacy changes."
+)
 
 
 class StanceOutput(BaseModel):
@@ -103,6 +156,11 @@ class PlanCritique(BaseModel):
 class ProseCritique(BaseModel):
     critique: str = ""
     prose_unusable: bool = False
+
+
+class CharacterCritique(BaseModel):
+    character_id: str = ""
+    critique: str = ""
 
 
 class SceneSummary(BaseModel):
@@ -136,6 +194,7 @@ def build_scene_writer_graph(
     graph.add_node("revise_plan", _revise_plan_node(models))
     graph.add_node("gather_context", _gather_context_node(models))
     graph.add_node("draft_prose", _draft_prose_node(models))
+    graph.add_node("review_character", _review_character_node(models))
     graph.add_node("review_prose", _review_prose_node(models))
     graph.add_node("revise_prose", _revise_prose_node(models))
     graph.add_node("summarize", _summary_node(models))
@@ -150,12 +209,17 @@ def build_scene_writer_graph(
         {"review_plan": "review_plan", "gather_context": "gather_context"},
     )
     graph.add_edge("gather_context", "draft_prose")
-    graph.add_edge("draft_prose", "review_prose")
+    graph.add_conditional_edges(
+        "draft_prose",
+        _fanout_prose_reviews,
+        ["review_character", "review_prose"],
+    )
+    graph.add_edge("review_character", "revise_prose")
     graph.add_edge("review_prose", "revise_prose")
     graph.add_conditional_edges(
         "revise_prose",
         _route_after_prose_revise,
-        {"review_prose": "review_prose", "summarize": "summarize"},
+        ["review_character", "review_prose", "summarize"],
     )
     graph.add_edge("summarize", END)
 
@@ -178,14 +242,22 @@ def _structured_invoke(
     models: dict[str, BaseChatModel] | None,
     schema: type[BaseModel],
     prompt: str,
+    *,
+    system: str,
 ) -> BaseModel:
     model = _resolve_model(node_id, models, streaming=False).with_structured_output(schema)
-    return model.invoke([HumanMessage(content=prompt)])
+    return model.invoke(
+        [SystemMessage(content=system), HumanMessage(content=prompt)]
+    )
 
 
 def _author_stances_node(models: dict[str, BaseChatModel] | None) -> Any:
     def node(state: SceneWorkflowState) -> dict[str, Any]:
-        character_lines = _character_context(state["character_ids"])
+        character_lines = _character_context(
+            state["character_ids"],
+            start_event_id=state.get("scene_start_event_id", ""),
+            end_event_id=state.get("scene_end_event_id", ""),
+        )
         prompt = (
             "Author initial character stances for this scene.\n\n"
             f"Premise: {state.get('premise', '')}\n"
@@ -197,7 +269,9 @@ def _author_stances_node(models: dict[str, BaseChatModel] | None) -> Any:
             f"Notes: {state.get('notes', '') or '(none)'}"
         )
         prompt = _append_continuity_context(prompt, state)
-        result = _structured_invoke(SCENE_STANCES_NODE_ID, models, StanceList, prompt)
+        result = _structured_invoke(
+            SCENE_STANCES_NODE_ID, models, StanceList, prompt, system=_STANCES_SYSTEM_PROMPT
+        )
         bible = get_world().story_bible
         character_ids = state.get("character_ids", [])
         stances: list[SceneCharacterStance] = []
@@ -224,6 +298,11 @@ def _author_stances_node(models: dict[str, BaseChatModel] | None) -> Any:
 
 def _outline_node(models: dict[str, BaseChatModel] | None) -> Any:
     def node(state: SceneWorkflowState) -> dict[str, Any]:
+        character_lines = _character_context(
+            state.get("character_ids", []),
+            start_event_id=state.get("scene_start_event_id", ""),
+            end_event_id=state.get("scene_end_event_id", ""),
+        )
         prompt = (
             "Outline the scene as a short list of concise beat statements.\n"
             "The scene must enact the events listed below.\n\n"
@@ -231,13 +310,16 @@ def _outline_node(models: dict[str, BaseChatModel] | None) -> Any:
             f"Purpose: {state.get('purpose', '')}\n"
             f"POV: {state.get('pov', '')}\n"
             f"Arc beats:\n{_arc_text(state.get('arc', []))}\n"
+            f"Participating characters:\n{character_lines}\n"
             f"Events this scene enacts:\n{_event_context(state.get('event_ids', []))}\n"
             f"Related events (context only):\n{_event_context(state.get('related_event_ids', []))}\n"
             f"Stances:\n{_stances_text(state.get('stances', []))}\n"
             f"Notes: {state.get('notes', '') or '(none)'}"
         )
         prompt = _append_continuity_context(prompt, state)
-        result = _structured_invoke(SCENE_OUTLINE_NODE_ID, models, OutlineBeats, prompt)
+        result = _structured_invoke(
+            SCENE_OUTLINE_NODE_ID, models, OutlineBeats, prompt, system=_OUTLINE_SYSTEM_PROMPT
+        )
         beats = list(result.beats)
         update_scene_generated(state["scene_id"], outline=beats)
         return {"outline": beats}
@@ -257,7 +339,13 @@ def _review_plan_node(models: dict[str, BaseChatModel] | None) -> Any:
             f"Outline:\n{_outline_text(state.get('outline', []))}"
         )
         prompt = _append_continuity_context(prompt, state)
-        result = _structured_invoke(SCENE_OUTLINE_REVIEW_NODE_ID, models, PlanCritique, prompt)
+        result = _structured_invoke(
+            SCENE_OUTLINE_REVIEW_NODE_ID,
+            models,
+            PlanCritique,
+            prompt,
+            system=_PLAN_REVIEW_SYSTEM_PROMPT,
+        )
         return {"critique": result.critique}
 
     return node
@@ -346,12 +434,23 @@ def _gather_context_node(models: dict[str, BaseChatModel] | None) -> Any:
         selection = result.get("structured_response")
         if not isinstance(selection, ContextSelection):
             selection = ContextSelection()
-        return {"context_dossier": _render_dossier(selection)}
+        return {
+            "context_dossier": _render_dossier(
+                selection,
+                start_event_id=state.get("scene_start_event_id", ""),
+                end_event_id=state.get("scene_end_event_id", ""),
+            )
+        }
 
     return node
 
 
-def _render_dossier(selection: ContextSelection) -> str:
+def _render_dossier(
+    selection: ContextSelection,
+    *,
+    start_event_id: str = "",
+    end_event_id: str = "",
+) -> str:
     """Resolve selected ids and assemble a verbatim markdown dossier for drafting."""
 
     world = get_world()
@@ -365,7 +464,15 @@ def _render_dossier(selection: ContextSelection) -> str:
         if resolved is None:
             dropped.append(raw_id)
             continue
-        character_blocks.append(read_character.invoke({"character_id": resolved}))
+        character_blocks.append(
+            read_character.invoke(
+                {
+                    "character_id": resolved,
+                    "start_event_id": start_event_id,
+                    "end_event_id": end_event_id,
+                }
+            )
+        )
     if character_blocks:
         sections.append("## Characters\n\n" + "\n\n".join(character_blocks))
 
@@ -456,7 +563,7 @@ def _draft_prose_node(models: dict[str, BaseChatModel] | None) -> Any:
             "Draft step produced no prose",
         )
         set_scene_text(scene_id, prose)
-        return {"prose": prose}
+        return {"prose": prose, "character_critiques": CHARACTER_CRITIQUES_RESET}
 
     return node
 
@@ -478,12 +585,58 @@ def _review_prose_node(models: dict[str, BaseChatModel] | None) -> Any:
             f"Prose:\n{prose}"
         )
         prompt = _append_continuity_context(prompt, state)
-        result = _structured_invoke(SCENE_PROSE_REVIEW_NODE_ID, models, ProseCritique, prompt)
+        result = _structured_invoke(
+            SCENE_PROSE_REVIEW_NODE_ID,
+            models,
+            ProseCritique,
+            prompt,
+            system=_PROSE_REVIEW_SYSTEM_PROMPT,
+        )
         if result.prose_unusable:
             reason = result.critique.strip() or "no reason given"
             msg = f"Prose review marked the draft unusable: {reason}"
             raise SceneWorkflowError(msg)
         return {"prose_critique": result.critique}
+
+    return node
+
+
+def _review_character_node(models: dict[str, BaseChatModel] | None) -> Any:
+    def node(state: SceneWorkflowState) -> dict[str, Any]:
+        character_id = state.get("review_character_id", "")
+        identity_and_arc = _character_context(
+            [character_id] if character_id else [],
+            start_event_id=state.get("scene_start_event_id", ""),
+            end_event_id=state.get("scene_end_event_id", ""),
+        )
+        prompt = (
+            "Critique how this character is portrayed in the drafted prose.\n"
+            "When identity, intimacies, and stance conflict, prefer identity over "
+            "intimacies, and both over stance. Suggest concrete edits; say if no "
+            "changes are needed.\n\n"
+            f"Identity and scoped intimacies:\n{identity_and_arc}\n\n"
+            f"Stance:\n{_stance_text_for_character(state, character_id)}\n\n"
+            f"Prose:\n{state.get('prose', '')}"
+        )
+        result = _structured_invoke(
+            SCENE_CHARACTER_REVIEW_NODE_ID,
+            models,
+            CharacterCritique,
+            prompt,
+            system=_CHARACTER_REVIEW_SYSTEM_PROMPT,
+        )
+        resolved_id = character_id or result.character_id
+        if not resolved_id:
+            return {"character_critiques": []}
+        return {
+            "character_critiques": [
+                {
+                    "character_id": resolved_id,
+                    "critique": result.critique,
+                    "revision_round": state.get("prose_revision_count", 0),
+                }
+            ]
+        }
 
     return node
 
@@ -502,16 +655,7 @@ def _revise_prose_node(models: dict[str, BaseChatModel] | None) -> Any:
         prose = state.get("prose", "")
         if not isinstance(prose, str):
             prose = get_scene_text(scene_id)
-        prompt = (
-            "Revise the scene prose to address the critique.\n\n"
-            f"Premise: {state.get('premise', '')}\n"
-            f"Purpose: {state.get('purpose', '')}\n"
-            f"Critique: {state.get('prose_critique', '')}\n"
-            f"Stances:\n{_stances_text(state.get('stances', []))}\n"
-            f"Outline:\n{_outline_text(state.get('outline', []))}\n"
-            f"Current prose:\n{prose}"
-        )
-        prompt = _append_continuity_context(prompt, state)
+        prompt = _prose_revise_prompt(state, prose)
         result = agent.invoke(
             {
                 "messages": [HumanMessage(content=prompt)],
@@ -528,7 +672,11 @@ def _revise_prose_node(models: dict[str, BaseChatModel] | None) -> Any:
         )
         set_scene_text(scene_id, revised)
         prose_revision_count = state.get("prose_revision_count", 0) + 1
-        return {"prose": revised, "prose_revision_count": prose_revision_count}
+        return {
+            "prose": revised,
+            "prose_revision_count": prose_revision_count,
+            "character_critiques": CHARACTER_CRITIQUES_RESET,
+        }
 
     return node
 
@@ -571,6 +719,7 @@ def _summary_node(models: dict[str, BaseChatModel] | None) -> Any:
             models,
             SceneSummary,
             prompt,
+            system=_SUMMARY_SYSTEM_PROMPT,
         )
         set_scene_metadata(state["scene_id"], summary=result.summary)
         return {"summary": result.summary}
@@ -586,12 +735,81 @@ def _route_after_plan_revise(state: SceneWorkflowState) -> str:
     return "gather_context"
 
 
-def _route_after_prose_revise(state: SceneWorkflowState) -> str:
+def _route_after_prose_revise(state: SceneWorkflowState) -> list[Send] | str:
     revision_count = state.get("prose_revision_count", 0)
     max_revisions = state.get("max_revisions", 1)
     if revision_count < max_revisions:
-        return "review_prose"
+        return _fanout_prose_reviews(state)
     return "summarize"
+
+
+def _fanout_prose_reviews(state: SceneWorkflowState) -> list[Send]:
+    """Fan out one character review per stance character plus the general prose review."""
+
+    payload = dict(state)
+    sends = [
+        Send("review_character", {**payload, "review_character_id": character_id})
+        for character_id in _review_character_ids(state)
+    ]
+    sends.append(Send("review_prose", payload))
+    return sends
+
+
+def _review_character_ids(state: SceneWorkflowState) -> list[str]:
+    stance_ids = [
+        stance.character_id
+        for stance in _normalize_stances(state.get("stances", []))
+        if stance.character_id
+    ]
+    if stance_ids:
+        return list(dict.fromkeys(stance_ids))
+    return list(dict.fromkeys(state.get("character_ids") or []))
+
+
+def _prose_revise_prompt(state: SceneWorkflowState, prose: str) -> str:
+    prompt = (
+        "Revise the scene prose to address the critiques.\n\n"
+        f"Premise: {state.get('premise', '')}\n"
+        f"Purpose: {state.get('purpose', '')}\n"
+        f"General critique:\n{state.get('prose_critique', '') or '(none)'}\n\n"
+        f"Character critiques:\n{_character_critiques_text(state)}\n"
+        f"Stances:\n{_stances_text(state.get('stances', []))}\n"
+        f"Outline:\n{_outline_text(state.get('outline', []))}\n"
+        f"Current prose:\n{prose}"
+    )
+    return _append_continuity_context(prompt, state)
+
+
+def _character_critiques_text(state: SceneWorkflowState) -> str:
+    critiques = state.get("character_critiques") or []
+    revision_round = state.get("prose_revision_count", 0)
+    current = [
+        item
+        for item in critiques
+        if isinstance(item, dict) and item.get("revision_round", revision_round) == revision_round
+    ]
+    if not current:
+        return "(none)"
+    bible = get_world().story_bible
+    blocks: list[str] = []
+    for item in current:
+        character_id = str(item.get("character_id", ""))
+        character = bible.get_character(character_id)
+        name = character.identity.name if character else character_id
+        heading = f"### {name} [{character_id}]" if character_id else "### Character"
+        blocks.append(f"{heading}\n{item.get('critique', '')}")
+    return "\n\n".join(blocks)
+
+
+def _stance_text_for_character(state: SceneWorkflowState, character_id: str) -> str:
+    if not character_id:
+        return "(none)"
+    matched = [
+        stance
+        for stance in _normalize_stances(state.get("stances", []))
+        if stance.character_id == character_id
+    ]
+    return _stances_text(matched)
 
 
 def _arc_text(arc: list[str]) -> str:
@@ -607,19 +825,42 @@ def _append_continuity_context(prompt: str, state: SceneWorkflowState) -> str:
     return f"{prompt}\n\n{continuity_context}"
 
 
-def _character_context(character_ids: list[str]) -> str:
+def _character_context(
+    character_ids: list[str],
+    *,
+    start_event_id: str = "",
+    end_event_id: str = "",
+) -> str:
     bible = get_world().story_bible
     if not character_ids:
         return "(none specified)"
-    lines: list[str] = []
+    blocks: list[str] = []
     for character_id in character_ids:
         character = bible.get_character(character_id)
         if character is None:
-            lines.append(f"- unknown id: {character_id}")
-        else:
-            name = character.identity.name or "Unnamed"
-            lines.append(f"- {name} [id: {character_id}]")
-    return "\n".join(lines)
+            blocks.append(f"- unknown id: {character_id}")
+            continue
+        identity = character.identity
+        name = identity.name or "Unnamed"
+        lines = [
+            f"### {name} [id: {character_id}]",
+            f"Traits: {identity.traits or '-'}",
+            f"Voice: {identity.voice or '-'}",
+            "",
+        ]
+        try:
+            arc = derive_character_arc(
+                bible,
+                character_id,
+                start_event_id or None,
+                end_event_id or None,
+            )
+        except ValueError:
+            blocks.append("\n".join(lines).rstrip())
+            continue
+        lines.append(format_character_arc(arc))
+        blocks.append("\n".join(lines))
+    return "\n\n".join(blocks)
 
 
 def _event_context(event_ids: list[str]) -> str:
