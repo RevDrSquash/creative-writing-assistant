@@ -157,7 +157,9 @@ def _migrate_v7_to_v8(data: dict) -> dict:
             generated["outline"] = outline
 
         blueprint.setdefault("pov", "")
-        blueprint.setdefault("arc", [])
+        blueprint.setdefault("starting_state", "")
+        blueprint.setdefault("central_conflict", "")
+        blueprint.setdefault("required_resolution", "")
         blueprint.setdefault("character_ids", [])
         blueprint.setdefault("constraints", "")
         blueprint.setdefault("notes", "")

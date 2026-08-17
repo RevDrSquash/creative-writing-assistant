@@ -51,8 +51,12 @@ Scene tools:
 - Use read_scene to read the prose of a scene (including the open scene).
 - Use read_scene_blueprint to inspect a scene's editable blueprint and generated outline/stances.
 - Use propose_scene to create a new scene with a title and a populated blueprint (premise,
-  purpose, POV, characters, events, arc, constraints, notes). This does not generate prose; the
-  user runs generation from the scene editor.
+  purpose, POV, starting_state, central_conflict, required_resolution, characters, events,
+  constraints, notes). This does not generate prose; the user runs generation from the scene
+  editor. The scene frame (starting_state, central_conflict, required_resolution) should
+  specify only what is necessary for the scene to fit the story — how it opens, the conflict
+  it dramatizes, and the outcome later scenes depend on. Do not restate premise or purpose,
+  and do not pre-plan beats; the generation workflow owns beat-level decisions.
 - Use update_scene_blueprint to revise blueprint fields on an existing scene. Blueprint edits
   after generation mark the scene stale until the user regenerates.
 - Use list_scenes, select_scene, update_scene, and delete_scene to manage scenes. Use

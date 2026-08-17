@@ -235,11 +235,12 @@ def _blueprint_text(world: World, scene: Scene) -> str:
     if character_names:
         lines.append(f"Characters: {', '.join(character_names)}")
 
-    if blueprint.arc:
-        arc_text = "\n".join(
-            f"{index}. {beat}" for index, beat in enumerate(blueprint.arc, start=1)
-        )
-        lines.append(f"Arc:\n{arc_text}")
+    if blueprint.starting_state:
+        lines.append(f"Starting state: {blueprint.starting_state}")
+    if blueprint.central_conflict:
+        lines.append(f"Central conflict: {blueprint.central_conflict}")
+    if blueprint.required_resolution:
+        lines.append(f"Required resolution: {blueprint.required_resolution}")
 
     if blueprint.constraints:
         lines.append(f"Constraints: {blueprint.constraints}")

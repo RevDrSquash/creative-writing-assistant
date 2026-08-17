@@ -51,7 +51,7 @@ Scenes represent prose. Each scene contains:
 - a short summary
 - Markdown prose
 - optional notes
-- a scene blueprint: editable scene-card inputs (premise, purpose, POV, arc, characters, events, constraints, notes)
+- a scene blueprint: editable scene-card inputs (premise, purpose, POV, scene frame, characters, events, constraints, notes)
 - generated artifacts: stances, outline, and generation metadata (fingerprint, timestamp)
 
 Scenes are ordered because narrative sequence matters.
@@ -62,7 +62,9 @@ The scene blueprint holds **inputs only** — the scene card the writer and main
 
 - **Premise** and **Purpose**: what happens and why the scene exists.
 - **POV**: point-of-view character or narrator.
-- **Arc**: a list of arc-beat statements (typically three points) guiding generation.
+- **Scene frame**: `starting_state` (how the scene opens), `central_conflict` (the conflict it
+  dramatizes), and `required_resolution` (the outcome later scenes depend on). Beat-level
+  planning is left to the generation workflow.
 - **Character ids**: participating characters (`character_ids`).
 - **Event links**: `event_ids` (enacted events) and `related_event_ids` (context-only). Both are
   scene-local scratch; links may go stale if an event is later removed (see

@@ -377,7 +377,11 @@ class SceneCharacterStance(BaseModel):
 
 
 class SceneBlueprint(BaseModel):
-    """Editable scene card inputs: premise, purpose, POV, arc, links, and constraints.
+    """Editable scene card inputs: premise, purpose, POV, scene frame, links, and constraints.
+
+    ``starting_state``, ``central_conflict``, and ``required_resolution`` form the scene frame:
+    how the scene opens, the conflict it dramatizes, and the outcome later scenes depend on.
+    Beat-level planning is left to the generation workflow.
 
     ``event_ids`` are the timeline events this scene enacts; ``related_event_ids`` are
     context-only events relevant to the scene without being chronologically adjacent. Both are
@@ -388,7 +392,9 @@ class SceneBlueprint(BaseModel):
     premise: str = ""
     purpose: str = ""
     pov: str = ""
-    arc: list[str] = Field(default_factory=list)
+    starting_state: str = ""
+    central_conflict: str = ""
+    required_resolution: str = ""
     character_ids: list[str] = Field(default_factory=list)
     event_ids: list[str] = Field(default_factory=list)
     related_event_ids: list[str] = Field(default_factory=list)

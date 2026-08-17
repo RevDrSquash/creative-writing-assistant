@@ -1374,8 +1374,8 @@ def render_scene_blueprint_form(
             "w-full"
         ):
             ui.label(
-                "Editable scene card inputs: premise, purpose, POV, arc, characters, events, "
-                "constraints, and notes."
+                "Editable scene card inputs: premise, purpose, POV, scene frame, characters, "
+                "events, constraints, and notes."
             ).classes("text-grey-7 text-sm")
             _field_label("POV")
             _bound_input(blueprint, "pov", placeholder="Point-of-view character or narrator...")
@@ -1393,27 +1393,30 @@ def render_scene_blueprint_form(
                 placeholder="Why this scene exists in the story...",
                 rows=3,
             )
-            _field_label("Arc beats")
-            ui.label("Three-point (or more) arc guidance for generation.").classes(
-                "text-grey-7 text-sm"
+            _field_label("Starting state")
+            ui.label("How the scene opens given what came before.").classes("text-grey-7 text-sm")
+            _bound_textarea(
+                blueprint,
+                "starting_state",
+                placeholder="The initial state when the scene begins...",
+                rows=2,
             )
-
-            @ui.refreshable
-            def arc_section() -> None:
-                _render_string_list_editor(
-                    blueprint.arc,
-                    placeholder="Arc beat...",
-                    refresh=arc_section.refresh,
-                )
-
-            arc_section()
-
-            def add_arc_beat() -> None:
-                blueprint.arc.append("")
-                save_world_ui()
-                arc_section.refresh()
-
-            ui.button("Add arc beat", icon="add", on_click=add_arc_beat).props("flat")
+            _field_label("Central conflict")
+            ui.label("The conflict this scene exists to dramatize.").classes("text-grey-7 text-sm")
+            _bound_textarea(
+                blueprint,
+                "central_conflict",
+                placeholder="The primary conflict driving the scene...",
+                rows=2,
+            )
+            _field_label("Required resolution")
+            ui.label("The outcome later scenes depend on.").classes("text-grey-7 text-sm")
+            _bound_textarea(
+                blueprint,
+                "required_resolution",
+                placeholder="How the scene must resolve for the story to make sense...",
+                rows=2,
+            )
 
             _field_label("Participating characters")
             character_select = ui.select(

@@ -56,8 +56,8 @@ any prose exists.
 ### Inputs
 
 The workflow reads the scene's **blueprint** (the editable scene card): premise, purpose, POV,
-participating characters, arc beats, enacted and related events, constraints, and notes. The
-blueprint is authored by the main agent (`propose_scene`, `update_scene_blueprint`) or edited
+scene frame (starting state, central conflict, required resolution), participating characters,
+enacted and related events, constraints, and notes. The blueprint is authored by the main agent
 manually in the scene editor. The workflow never writes blueprint fields.
 
 `run_scene_generation(scene_id)` validates that the blueprint is generatable (non-empty premise,
@@ -81,7 +81,7 @@ Selection rules:
 
 Context depth: **full prose** for the previous scene (with a defensive character cap), **title and
 summary only** for next and related scenes. When a neighbor has no prose or summary yet, its
-**blueprint** (premise, purpose, POV, arc, characters, constraints, notes) is included instead,
+**blueprint** (premise, purpose, POV, scene frame, characters, constraints, notes) is included instead,
 clearly labeled as planned content rather than written prose. The **gather context** node may call
 `read_scene` for full prose of related scenes when summaries are not enough, then select those
 scenes by id for verbatim inclusion in the draft dossier.
@@ -119,8 +119,9 @@ will be discarded).
    includes each character's identity and scoped arc (state entering the scene and transitions
    during it). Writes to `Scene.generated.stances`.
 2. **Outline** — produce the scene's beats as a list of short, concise statements. The prompt
-   includes the same per-character identity and scoped-arc blocks. Writes to
-   `Scene.generated.outline`.
+   first works out the Five Commandments (Inciting Incident, Progressive Complication, Crisis,
+   Climax, Resolution) consistent with the scene frame, then expands them into beats. It includes
+   the same per-character identity and scoped-arc blocks. Writes to `Scene.generated.outline`.
 3. **Review plan** — critique the stances **and** outline against premise, purpose, and
    continuity with surrounding scenes. Structured critique only; nothing is mutated.
 4. **Revise plan** — a tool-enabled ReAct sub-loop that applies targeted edits via

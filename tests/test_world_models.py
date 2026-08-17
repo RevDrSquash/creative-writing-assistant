@@ -59,7 +59,9 @@ def test_scene_blueprint_defaults() -> None:
     assert blueprint.premise == ""
     assert blueprint.purpose == ""
     assert blueprint.pov == ""
-    assert blueprint.arc == []
+    assert blueprint.starting_state == ""
+    assert blueprint.central_conflict == ""
+    assert blueprint.required_resolution == ""
     assert blueprint.character_ids == []
     assert blueprint.event_ids == []
     assert blueprint.related_event_ids == []

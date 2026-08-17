@@ -221,15 +221,17 @@ def read_scene_blueprint(
         "### Purpose",
         blueprint.purpose.strip() or "(not set)",
         "",
-        "### Arc beats",
+        "### Starting state",
+        blueprint.starting_state.strip() or "(not set)",
+        "",
+        "### Central conflict",
+        blueprint.central_conflict.strip() or "(not set)",
+        "",
+        "### Required resolution",
+        blueprint.required_resolution.strip() or "(not set)",
+        "",
+        "### Participating characters",
     ]
-    if not blueprint.arc:
-        lines.append("(none)")
-    else:
-        for position, beat in enumerate(blueprint.arc, start=1):
-            lines.append(f"{position}. {beat.strip() or '(empty)'}")
-
-    lines.extend(["", "### Participating characters"])
     if not blueprint.character_ids:
         lines.append("(none)")
     else:
@@ -302,11 +304,13 @@ def propose_scene(
     premise: str,
     purpose: str,
     pov: str,
+    starting_state: str,
+    central_conflict: str,
+    required_resolution: str,
     character_ids: list[str],
     event_ids: list[str],
     state: Annotated[dict[str, Any], InjectedState],
     tool_call_id: Annotated[str, InjectedToolCallId],
-    arc: list[str] | None = None,
     related_event_ids: list[str] | None = None,
     constraints: str = "",
     notes: str = "",
@@ -317,10 +321,23 @@ def propose_scene(
     Does not run generation; the user triggers that from the scene editor.
     ``event_ids`` must include at least one enacted timeline event.
     ``character_ids`` and event ids are validated against the Story Bible.
+
+    Scene frame (``starting_state``, ``central_conflict``, ``required_resolution``):
+    one or two sentences each. Specify only what is necessary for the scene to fit the
+    story — how it opens given what came before, the conflict it exists to dramatize, and
+    the outcome later scenes depend on. Do not restate ``premise`` or ``purpose``, and do
+    not pre-plan beats; the generation workflow owns beat-level decisions.
     """
 
     if not title.strip():
         raise ToolException("Provide a non-empty scene title.")
+    for field_name, value in (
+        ("starting_state", starting_state),
+        ("central_conflict", central_conflict),
+        ("required_resolution", required_resolution),
+    ):
+        if not value.strip():
+            raise ToolException(f"Provide a non-empty {field_name}.")
     resolved_characters = _resolve_scene_character_ids(character_ids)
     enacted_ids, related_ids = _resolve_scene_event_ids(event_ids, related_event_ids or [])
 
@@ -335,7 +352,9 @@ def propose_scene(
                 premise=premise,
                 purpose=purpose,
                 pov=pov,
-                arc=list(arc or []),
+                starting_state=starting_state.strip(),
+                central_conflict=central_conflict.strip(),
+                required_resolution=required_resolution.strip(),
                 character_ids=resolved_characters,
                 event_ids=enacted_ids,
                 related_event_ids=related_ids,
@@ -370,7 +389,9 @@ def update_scene_blueprint(
     premise: str | None = None,
     purpose: str | None = None,
     pov: str | None = None,
-    arc: list[str] | None = None,
+    starting_state: str | None = None,
+    central_conflict: str | None = None,
+    required_resolution: str | None = None,
     character_ids: list[str] | None = None,
     event_ids: list[str] | None = None,
     related_event_ids: list[str] | None = None,
@@ -412,7 +433,9 @@ def update_scene_blueprint(
         premise is None
         and purpose is None
         and pov is None
-        and arc is None
+        and starting_state is None
+        and central_conflict is None
+        and required_resolution is None
         and character_ids is None
         and event_ids is None
         and related_event_ids is None
@@ -426,7 +449,9 @@ def update_scene_blueprint(
         premise=premise,
         purpose=purpose,
         pov=pov,
-        arc=arc,
+        starting_state=starting_state,
+        central_conflict=central_conflict,
+        required_resolution=required_resolution,
         character_ids=resolved_characters,
         event_ids=resolved_enacted,
         related_event_ids=resolved_related,
