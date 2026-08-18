@@ -71,17 +71,22 @@ def test_propose_scene_tool_creates_blueprint_and_opens(world_with_scene: World)
         "Hero arrives.",
         "Introduce the hero.",
         "Third person",
+        "Hero waits at the gate.",
+        "Hero must prove they belong.",
+        "Hero is admitted to the city.",
         [character_id],
         [event_id],
         state,
         "tool-call-1",
-        arc=["Setup", "Turn", "Payoff"],
         constraints="Keep it brief.",
     )
 
     new_scene = world_with_scene.scenes[-1]
     assert new_scene.title == "The Arrival"
     assert new_scene.blueprint.premise == "Hero arrives."
+    assert new_scene.blueprint.starting_state == "Hero waits at the gate."
+    assert new_scene.blueprint.central_conflict == "Hero must prove they belong."
+    assert new_scene.blueprint.required_resolution == "Hero is admitted to the city."
     assert new_scene.blueprint.event_ids == [event_id]
     assert command.update["current_scene_id"] == new_scene.id
     assert isinstance(command.update["messages"][0], ToolMessage)
@@ -102,7 +107,57 @@ def test_propose_scene_tool_rejects_blank_title(world_with_scene: World) -> None
             "Hero arrives.",
             "Introduce the hero.",
             "Third person",
+            "Hero waits at the gate.",
+            "Hero must prove they belong.",
+            "Hero is admitted to the city.",
             [],
+            [event_id],
+            state,
+            "tool-call-1",
+        )
+
+    assert len(world_with_scene.scenes) == scene_count
+
+
+@pytest.mark.parametrize(
+    ("field_name", "blank_value"),
+    [
+        ("starting_state", "   "),
+        ("central_conflict", ""),
+        ("required_resolution", "\t"),
+    ],
+)
+def test_propose_scene_tool_rejects_blank_scene_frame_fields(
+    world_with_scene: World,
+    field_name: str,
+    blank_value: str,
+) -> None:
+    from app.tools.story_bible import add_event, upsert_character
+
+    upsert_character.invoke({"name": "Hero"})
+    character_id = world_with_scene.story_bible.characters[-1].id
+    add_event.invoke({"title": "Arrival"})
+    event_id = world_with_scene.story_bible.timeline[-1].id
+    first = world_with_scene.scenes[0]
+    state = {"current_scene_id": first.id, "current_scene": first.markdown}
+    scene_count = len(world_with_scene.scenes)
+    frame = {
+        "starting_state": "Hero waits at the gate.",
+        "central_conflict": "Hero must prove they belong.",
+        "required_resolution": "Hero is admitted to the city.",
+    }
+    frame[field_name] = blank_value
+
+    with pytest.raises(ToolException, match=f"non-empty {field_name}"):
+        propose_scene.func(
+            "The Arrival",
+            "Hero arrives.",
+            "Introduce the hero.",
+            "Third person",
+            frame["starting_state"],
+            frame["central_conflict"],
+            frame["required_resolution"],
+            [character_id],
             [event_id],
             state,
             "tool-call-1",
@@ -216,6 +271,45 @@ def test_update_scene_tool_targets_explicit_scene_id(world_with_scene: World) ->
 def test_update_scene_tool_raises_on_unknown_id(world_with_scene: World) -> None:
     with pytest.raises(ToolException, match="No scene with id"):
         update_scene.func({"current_scene_id": world_with_scene.scenes[0].id}, scene_id="missing")
+
+
+def test_update_scene_blueprint_updates_scene_frame(world_with_scene: World) -> None:
+    scene = world_with_scene.scenes[0]
+    scene.blueprint.event_ids = ["event_1"]
+    state = {"current_scene_id": scene.id}
+
+    message = update_scene_blueprint.func(
+        state,
+        starting_state="Opens in the rain.",
+        central_conflict="They argue over the map.",
+        required_resolution="They agree to split up.",
+    )
+
+    assert scene.blueprint.starting_state == "Opens in the rain."
+    assert scene.blueprint.central_conflict == "They argue over the map."
+    assert scene.blueprint.required_resolution == "They agree to split up."
+    assert "Updated blueprint" in message
+
+
+def test_read_scene_blueprint_renders_scene_frame(world_with_scene: World) -> None:
+    scene = world_with_scene.scenes[0]
+    scene.blueprint = SceneBlueprint(
+        premise="Test",
+        event_ids=["event_1"],
+        starting_state="Hero waits.",
+        central_conflict="Guard blocks the gate.",
+        required_resolution="Hero is turned away.",
+    )
+    state = {"current_scene_id": scene.id}
+
+    detail = read_scene_blueprint.func(state)
+
+    assert "### Starting state" in detail
+    assert "Hero waits." in detail
+    assert "### Central conflict" in detail
+    assert "Guard blocks the gate." in detail
+    assert "### Required resolution" in detail
+    assert "Hero is turned away." in detail
 
 
 def test_read_scene_blueprint_reports_generation_status(world_with_scene: World) -> None:

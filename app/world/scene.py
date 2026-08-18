@@ -94,7 +94,9 @@ def update_scene_blueprint(
     premise: str | None = None,
     purpose: str | None = None,
     pov: str | None = None,
-    arc: list[str] | None = None,
+    starting_state: str | None = None,
+    central_conflict: str | None = None,
+    required_resolution: str | None = None,
     character_ids: list[str] | None = None,
     event_ids: list[str] | None = None,
     related_event_ids: list[str] | None = None,
@@ -115,8 +117,12 @@ def update_scene_blueprint(
             blueprint.purpose = purpose
         if pov is not None:
             blueprint.pov = pov
-        if arc is not None:
-            blueprint.arc = arc
+        if starting_state is not None:
+            blueprint.starting_state = starting_state
+        if central_conflict is not None:
+            blueprint.central_conflict = central_conflict
+        if required_resolution is not None:
+            blueprint.required_resolution = required_resolution
         if character_ids is not None:
             blueprint.character_ids = character_ids
         if event_ids is not None:

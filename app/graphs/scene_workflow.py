@@ -59,8 +59,11 @@ _STANCES_SYSTEM_PROMPT = compose_story_bible_system_prompt(
 )
 
 _OUTLINE_SYSTEM_PROMPT = compose_story_bible_system_prompt(
-    "Let intimacies drive decisions and reactions in the beats. A character should act from "
-    "their beliefs and attachments, with stronger intimacies weighing more than weaker ones."
+    "First work out the scene's Five Commandments (Inciting Incident, Progressive Complication, "
+    "Crisis, Climax, Resolution) consistent with the scene frame. The crisis decision must "
+    "follow from character identity and intimacies. Then expand those five parts into a beat "
+    "list. Let intimacies drive decisions and reactions in the beats. A character should act "
+    "from their beliefs and attachments, with stronger intimacies weighing more than weaker ones."
 )
 
 _PLAN_REVIEW_SYSTEM_PROMPT = compose_story_bible_system_prompt(
@@ -263,7 +266,7 @@ def _author_stances_node(models: dict[str, BaseChatModel] | None) -> Any:
             f"Premise: {state.get('premise', '')}\n"
             f"Purpose: {state.get('purpose', '')}\n"
             f"POV: {state.get('pov', '')}\n"
-            f"Arc beats:\n{_arc_text(state.get('arc', []))}\n"
+            f"Scene frame:\n{_scene_frame_text(state)}\n"
             f"Participating characters:\n{character_lines}\n"
             f"Constraints: {state.get('constraints', '') or '(none)'}\n"
             f"Notes: {state.get('notes', '') or '(none)'}"
@@ -305,11 +308,13 @@ def _outline_node(models: dict[str, BaseChatModel] | None) -> Any:
         )
         prompt = (
             "Outline the scene as a short list of concise beat statements.\n"
-            "The scene must enact the events listed below.\n\n"
+            "First work out the Five Commandments (Inciting Incident, Progressive Complication, "
+            "Crisis, Climax, Resolution) consistent with the scene frame below, then expand "
+            "them into the beat list. The scene must enact the events listed below.\n\n"
             f"Premise: {state.get('premise', '')}\n"
             f"Purpose: {state.get('purpose', '')}\n"
             f"POV: {state.get('pov', '')}\n"
-            f"Arc beats:\n{_arc_text(state.get('arc', []))}\n"
+            f"Scene frame:\n{_scene_frame_text(state)}\n"
             f"Participating characters:\n{character_lines}\n"
             f"Events this scene enacts:\n{_event_context(state.get('event_ids', []))}\n"
             f"Related events (context only):\n{_event_context(state.get('related_event_ids', []))}\n"
@@ -415,7 +420,7 @@ def _gather_context_node(models: dict[str, BaseChatModel] | None) -> Any:
             f"Premise: {state.get('premise', '')}\n"
             f"Purpose: {state.get('purpose', '')}\n"
             f"POV: {state.get('pov', '')}\n"
-            f"Arc beats:\n{_arc_text(state.get('arc', []))}\n"
+            f"Scene frame:\n{_scene_frame_text(state)}\n"
             f"Events this scene enacts:\n{_event_context(state.get('event_ids', []))}\n"
             f"Related events (context only):\n{_event_context(state.get('related_event_ids', []))}\n"
             f"Stances:\n{_stances_text(state.get('stances', []))}\n"
@@ -538,7 +543,7 @@ def _draft_prose_node(models: dict[str, BaseChatModel] | None) -> Any:
             f"Premise: {state.get('premise', '')}\n"
             f"Purpose: {state.get('purpose', '')}\n"
             f"POV: {state.get('pov', '')}\n"
-            f"Arc beats:\n{_arc_text(state.get('arc', []))}\n"
+            f"Scene frame:\n{_scene_frame_text(state)}\n"
             f"Events this scene enacts:\n{_event_context(state.get('event_ids', []))}\n"
             f"Related events (context only):\n{_event_context(state.get('related_event_ids', []))}\n"
             f"Stances:\n{_stances_text(state.get('stances', []))}\n"
@@ -812,10 +817,19 @@ def _stance_text_for_character(state: SceneWorkflowState, character_id: str) -> 
     return _stances_text(matched)
 
 
-def _arc_text(arc: list[str]) -> str:
-    if not arc:
+def _scene_frame_text(state: SceneWorkflowState) -> str:
+    starting_state = state.get("starting_state", "").strip()
+    central_conflict = state.get("central_conflict", "").strip()
+    required_resolution = state.get("required_resolution", "").strip()
+    if not starting_state and not central_conflict and not required_resolution:
         return "(none)"
-    return "\n".join(f"{index}. {beat}" for index, beat in enumerate(arc, start=1))
+    return "\n".join(
+        [
+            f"Starting state: {starting_state or '(not set)'}",
+            f"Central conflict: {central_conflict or '(not set)'}",
+            f"Required resolution: {required_resolution or '(not set)'}",
+        ]
+    )
 
 
 def _append_continuity_context(prompt: str, state: SceneWorkflowState) -> str:

@@ -36,7 +36,9 @@ def _scene_with_blueprint(
     premise: str = "Premise",
     purpose: str = "Purpose",
     pov: str = "",
-    arc: list[str] | None = None,
+    starting_state: str = "",
+    central_conflict: str = "",
+    required_resolution: str = "",
     character_ids: list[str] | None = None,
     constraints: str = "",
     notes: str = "",
@@ -46,7 +48,9 @@ def _scene_with_blueprint(
         premise=premise,
         purpose=purpose,
         pov=pov,
-        arc=arc or [],
+        starting_state=starting_state,
+        central_conflict=central_conflict,
+        required_resolution=required_resolution,
         character_ids=character_ids or [],
         event_ids=event_ids or [],
         related_event_ids=related_event_ids or [],
@@ -252,7 +256,9 @@ def test_format_previous_scene_uses_blueprint_when_no_prose(isolated_world: Worl
         "Earlier",
         premise="She waits in the hall.",
         purpose="Build tension before the meeting.",
-        arc=["She paces.", "Footsteps approach."],
+        starting_state="She paces in the hall.",
+        central_conflict="She hears footsteps approaching.",
+        required_resolution="She steels herself for the meeting.",
         character_ids=[character_id],
     )
     target = _scene_with_blueprint("Target")
@@ -267,7 +273,8 @@ def test_format_previous_scene_uses_blueprint_when_no_prose(isolated_world: Worl
     assert "Premise: She waits in the hall." in formatted
     assert "Purpose: Build tension before the meeting." in formatted
     assert "Characters: Mira" in formatted
-    assert "1. She paces." in formatted
+    assert "Starting state: She paces in the hall." in formatted
+    assert "Central conflict: She hears footsteps approaching." in formatted
     assert "(no prose yet)" not in formatted
 
 

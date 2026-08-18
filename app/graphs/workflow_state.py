@@ -21,7 +21,9 @@ class SceneWorkflowState(TypedDict, total=False):
     scene_end_event_id: str
     constraints: str
     scene_id: str
-    arc: list[str]
+    starting_state: str
+    central_conflict: str
+    required_resolution: str
     notes: str
     continuity_context: str
     context_dossier: str
