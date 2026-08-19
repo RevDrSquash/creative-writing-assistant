@@ -383,10 +383,10 @@ class SceneBlueprint(BaseModel):
     how the scene opens, the conflict it dramatizes, and the outcome later scenes depend on.
     Beat-level planning is left to the generation workflow.
 
-    ``event_ids`` are the timeline events this scene enacts; ``related_event_ids`` are
-    context-only events relevant to the scene without being chronologically adjacent. Both are
-    scene-local scratch (not event-sourced, excluded from replay) and may go stale if a linked
-    event is later deleted or changed; readers tolerate unresolved ids.
+    ``event_ids`` are the timeline events this scene enacts on-page (one or more; each event may
+    be enacted by at most one scene); ``related_event_ids`` are context-only events relevant to
+    the scene without being enacted. Both are scene-local scratch (not event-sourced, excluded
+    from replay). Deleting an event prunes its id from every blueprint.
     """
 
     premise: str = ""

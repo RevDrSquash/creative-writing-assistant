@@ -14,6 +14,7 @@ from app.world.scene import (
     delete_scene as world_delete_scene,
 )
 from app.world.scene import (
+    enacting_scenes,
     scene_generation_status,
     set_scene_metadata,
     set_scene_text,
@@ -319,7 +320,9 @@ def propose_scene(
 
     ``title`` identifies the proposed scene in the UI before any prose exists.
     Does not run generation; the user triggers that from the scene editor.
-    ``event_ids`` must include at least one enacted timeline event.
+    ``event_ids`` must include at least one enacted timeline event — every event
+    dramatized on-page in this scene. Each event may be enacted by only one scene;
+    use ``related_event_ids`` for context from events enacted elsewhere.
     ``character_ids`` and event ids are validated against the Story Bible.
 
     Scene frame (``starting_state``, ``central_conflict``, ``required_resolution``):
@@ -402,6 +405,8 @@ def update_scene_blueprint(
 
     Without ``scene_id``, updates the scene currently open in the workspace.
     Changing the blueprint after generation marks the scene stale until regenerated.
+    When updating ``event_ids``, enact every event dramatized on-page; each event may be
+    enacted by only one scene.
     """
 
     target_id = scene_id or state.get("current_scene_id", "")
@@ -421,7 +426,11 @@ def update_scene_blueprint(
     resolved_related: list[str] | None = None
     if event_ids is not None:
         related = related_event_ids if related_event_ids is not None else []
-        resolved_enacted, resolved_related = _resolve_scene_event_ids(event_ids, related)
+        resolved_enacted, resolved_related = _resolve_scene_event_ids(
+            event_ids,
+            related,
+            exclude_scene_id=target_id,
+        )
     elif related_event_ids is not None:
         resolved_related = _validate_event_ids(related_event_ids)
         enacted_set = set(get_world().get_scene(target_id).blueprint.event_ids)
@@ -500,14 +509,26 @@ def _unknown_character_detail(unknown_ids: list[str]) -> str:
 def _resolve_scene_event_ids(
     event_ids: list[str],
     related_event_ids: list[str],
+    *,
+    exclude_scene_id: str | None = None,
 ) -> tuple[list[str], list[str]]:
-    """Validate enacted and related event ids, rejecting unknown ones."""
+    """Validate enacted and related event ids, rejecting unknown or duplicate enactments."""
 
     enacted = _validate_event_ids(event_ids)
     if not enacted:
         raise ToolException(
             "A scene must enact at least one event; pass event_ids from read_timeline."
         )
+    world = get_world()
+    for event_id in enacted:
+        for scene in enacting_scenes(world, event_id):
+            if exclude_scene_id and scene.id == exclude_scene_id:
+                continue
+            raise ToolException(
+                f"Event '{event_id}' is already enacted by scene "
+                f"'{scene.title}' (id: {scene.id}). Each event may be enacted by only one "
+                "scene; use related_event_ids for context from events enacted elsewhere."
+            )
     enacted_set = set(enacted)
     related = [
         event_id

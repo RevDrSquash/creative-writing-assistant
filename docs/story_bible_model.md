@@ -95,12 +95,18 @@ single strings. Generated stances are workflow output (see
 [architecture_agent_workflows.md](architecture_agent_workflows.md)); they are freely editable in the
 UI but regenerate overwrites them. Stance is not event-sourced and is excluded from replay.
 
-A scene links to the events it depicts through its blueprint: `event_ids` (the events the scene
-enacts; a scene represents one or more plot events) and `related_event_ids` (context-only events
-that are relevant without being enacted). These links are scene-local scratch on the blueprint,
-not authoritative structural edges on the timeline, so they are validated when drafting but may go
-stale if a linked event is later removed (see [known_issues.md](known_issues.md)). See the Scene
-model in [forms_and_data_models.md](forms_and_data_models.md).
+A scene is a unit of prose in which something changes — continuous dramatized action. Since
+change is represented by events, a scene enacts one or more events through its blueprint:
+`event_ids` (the events the scene dramatizes on-page) and `related_event_ids` (context-only
+events relevant to the scene without being enacted — for example, an off-page event or one
+enacted in another scene). Each event may be enacted by **at most one** scene; tools reject a
+second scene claiming the same enacted event. An unenacted event is either not yet placed or
+deliberately off-page — it still affects derived state via replay.
+
+These links are scene-local scratch on the blueprint, not authoritative structural edges on the
+timeline. They are validated when drafting; deleting an event prunes its ids from every blueprint
+(see [forms_and_data_models.md](forms_and_data_models.md)). See the Scene model in
+[forms_and_data_models.md](forms_and_data_models.md).
 
 ### Intimacy
 
@@ -111,12 +117,23 @@ and are modified over time by Signal effects.
 
 ### Event
 
-An objective story beat on the timeline. Fields: `id`, `title`, `description`, a list of
-world-state effects, and a list of Signals. Events are stored in `timeline` (append-only
-storage; creation order breaks ties among unrelated events). Canonical chronology is
-derived from directed relationships (see below). Events do not store timestamps.
-Relationships between events are stored on the Story Bible as `event_relations`, not on the
-Event itself.
+An atomic story fact — a specific thing that happens at a particular point in story time, at
+any scale (from "Brad is murdered" to "Alice wears her new dress for the first time"). Events
+are the only carriers of change: world-state effects and character signals attach to events, and
+replay derives state from them. Big plot developments decompose into multiple events.
+
+**Timeline leanness:** the test for eventhood is plot necessity, not size. If nothing in the
+story depends on a detail happening at a specific time, it should *not* be an event — incidental
+detail belongs to the prose. Over-populating the timeline with trivia constrains scene generation
+and makes scenes worse. Plot-necessary details that are omitted from the timeline cannot be seen
+by replay or continuity tools.
+
+Fields: `id`, `title`, `description`, a list of world-state effects, and a list of Signals.
+Events are stored in `timeline` (append-only storage; creation order breaks ties among unrelated
+events). Canonical chronology is derived from directed relationships (see below). Events do not
+store timestamps. Relationships between events are stored on the Story Bible as
+`event_relations`, not on the Event itself. Events do not store a back-reference to scenes;
+`read_timeline` and `read_event` show which scene (if any) enacts each event.
 
 When creating events via agent tools, the first event needs no relations; every subsequent
 event must include at least one inline relation linking it to an existing event.
