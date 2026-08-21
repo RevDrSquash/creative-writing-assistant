@@ -63,12 +63,17 @@ _OUTLINE_SYSTEM_PROMPT = compose_story_bible_system_prompt(
     "Crisis, Climax, Resolution) consistent with the scene frame. The crisis decision must "
     "follow from character identity and intimacies. Then expand those five parts into a beat "
     "list. Let intimacies drive decisions and reactions in the beats. A character should act "
-    "from their beliefs and attachments, with stronger intimacies weighing more than weaker ones."
+    "from their beliefs and attachments, with stronger intimacies weighing more than weaker ones.",
+    "Beats structure the scene; they are not the scene itself. Each beat is one short, concise "
+    "statement (roughly a sentence) naming what happens or changes. Do not write prose, "
+    "dialogue, imagery, or staging detail in beats — leave all of that to the prose drafter.",
 )
 
 _PLAN_REVIEW_SYSTEM_PROMPT = compose_story_bible_system_prompt(
     "When judging stances and outline, check that characters act from identity and intimacies "
-    "(strength-weighted) and that world state at this point in the story is respected."
+    "(strength-weighted) and that world state at this point in the story is respected. "
+    "Outline beats must be short, concise structural statements, not written-out prose; flag "
+    "beats that drift into dialogue, imagery, or staging detail."
 )
 
 _PLAN_REVISE_SYSTEM_PROMPT = compose_story_bible_system_prompt(
@@ -80,7 +85,8 @@ If the critique needs no changes, make no tool calls and say so briefly.
 Read-only tools are available when you need story bible or scene context.""",
     "When editing stances or beats, keep identity and intimacies (strength-weighted) as the "
     "drivers of behavior. Do not invent world-state or intimacy changes the critique did not "
-    "call for.",
+    "call for. Keep beats short, concise structural statements — they set up the scene, they "
+    "do not write it. Do not expand beats into prose, dialogue, or staging detail.",
 )
 
 _GATHER_SYSTEM_PROMPT = compose_story_bible_system_prompt(
@@ -149,7 +155,13 @@ class StanceList(BaseModel):
 
 
 class OutlineBeats(BaseModel):
-    beats: list[str] = Field(default_factory=list)
+    beats: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Short, concise beat statements (one sentence each) that structure the scene. "
+            "Not prose: no dialogue, imagery, or staging detail."
+        ),
+    )
 
 
 class PlanCritique(BaseModel):
@@ -308,6 +320,8 @@ def _outline_node(models: dict[str, BaseChatModel] | None) -> Any:
         )
         prompt = (
             "Outline the scene as a short list of concise beat statements.\n"
+            "Each beat is one short sentence naming what happens or changes — structure the "
+            "scene, do not write it. No prose, dialogue, or staging detail.\n"
             "First work out the Five Commandments (Inciting Incident, Progressive Complication, "
             "Crisis, Climax, Resolution) consistent with the scene frame below, then expand "
             "them into the beat list. The scene must enact the events listed below.\n\n"
