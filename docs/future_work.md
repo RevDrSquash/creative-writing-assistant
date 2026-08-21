@@ -45,64 +45,34 @@ worth preserving. These are not committed to a specific phase yet.
   fields when prose or summary is missing. Longer term, improve the workflow so blueprints alone
   can reliably serve as continuity context even after scenes are written.
 
-## Intimacy review workflow
+## Intimacy review workflow (superseded)
 
-Originally Phase 6c of the phased plan. Build the intimacy reviewer as an enforced LangGraph
-workflow exposed to the main agent as a single tool, following the cross-cutting workflow pattern
-in [architecture_agent_workflows.md](architecture_agent_workflows.md). This section is the
-authoritative design for the workflow until it is built; until then, agents author intimacy effects
-through the direct structured operations described in
-[story_bible_model.md](story_bible_model.md).
+The description-based intimacy review workflow formerly designed in this section (originally
+Phase 6c of the phased plan) has been **superseded** by the evidence-based intimacy system
+decided in the 2026-08-21 project review. The authoritative design now lives in
+[story_bible_model.md](story_bible_model.md) ("Evidence-Based Intimacy State" — evidence data
+model, derived rank, replay semantics) and
+[architecture_agent_workflows.md](architecture_agent_workflows.md) ("Planned: Intimacy
+Interpretation Workflow"); implementation is tracked in the "Evidence-Based Intimacy System"
+Linear project. Until the pipeline lands, agents author intimacy effects through the direct
+structured operations described in [story_bible_model.md](story_bible_model.md).
 
-Gates every agent-driven intimacy change behind a retrieval-and-review pipeline so new intimacies
-stay well-formed and continuity-safe. This is the highest-leverage continuity guard: intimacy
-edits are where a careless change silently corrupts a character.
+A separate maintenance/consolidation workflow (merge, split, archive intimacies using the
+stored evidence history) remains future work, out of scope for the interpretation pipeline.
 
-### Why a workflow, not a subagent
+## Plot editor agent
 
-The Story Bible is small, so retrieval is a direct lookup (the character's current intimacies at
-the relevant timeline position plus relevant world facts) rather than a vector store, and review
-is a single deterministic LLM step. A focused workflow graph is cheaper and more predictable than
-a full subagent, and it composes with the existing per-call transaction.
-
-### Description-based tool surface
-
-The agent does not author intimacy effects directly. It describes the intended change in natural
-language; the workflow produces the concrete structured effects. This flips the failure mode from
-"I asked for X but the agent emitted effects Y" to "I asked for X, and here is the diff (Y) that
-implements it."
-
-- **Event signals** (mid-story changes): the agent supplies an interpretation plus a change
-  description for the signal; the workflow fills in that signal's effects.
-- **Baseline intimacies**: the agent describes the desired baseline; the workflow authors/edits
-  the baseline intimacy list.
-- The structured effect operations (`add_intimacy`, `set_intimacy_strength`, `update_intimacy`,
-  `remove_intimacy`) remain the underlying data model and stay directly editable in the Story
-  Bible forms. Only the agent's authoring path changes. World-state effects keep their direct CRUD
-  authoring.
-
-### Nodes (enforced order)
-
-1. **Retrieve** — gather the character's current intimacies at the relevant timeline position plus
-   relevant world facts, to ground the proposal and review.
-2. **Propose** — convert the natural-language change description into specific structured effects.
-3. **Review** — enforce simple first-person statements, merge duplicates, prefer strengthening an
-   existing intimacy over adding a near-duplicate, and prefer small cumulative changes. Review may
-   rewrite a proposed effect (for example, turn a duplicate `add_intimacy` into a
-   `set_intimacy_strength` or drop it), so the applied effects can differ from the literal
-   proposal.
-4. **Apply** — write the reviewed effects to their target (a signal's effects or the baseline
-   list) and return a human-readable diff.
-
-### Approval
-
-The workflow auto-applies reviewed changes and returns the diff. Human approval of the diff depends
-on the tool-confirmations item under "Chat & tool UX polish" below, which layers a
-confirmation/diff step on top without changing this workflow.
-
-### Testing
-
-Unit tests for the workflow nodes and the description-based intimacy tool(s).
+A planned agent that closes the feedback loop between plot planning and the evidence-based
+intimacy system. Today the intimacy pipeline is purely interpretive (events in, evidence and
+derived rank out); there is no mechanism that answers "what events would produce the character
+arc I want?". The plot editor agent would iterate: author or adjust an event, run the
+interpretation workflow, inspect the resulting evidence and distance-to-threshold, and tweak
+until the arc plays out as intended. This is deliberately a separate project *after* the
+evidence-based intimacy system stabilizes; the intimacy work accommodates it cheaply by making
+the accumulator a pure what-if oracle that exposes distance-to-threshold, and by keeping the
+interpretation run's entry point UI-independent (see
+[story_bible_model.md](story_bible_model.md) and
+[architecture_agent_workflows.md](architecture_agent_workflows.md)).
 
 ## User context notes
 

@@ -2,8 +2,8 @@
 
 Multi-step agent workflows are built on LangGraph. This doc is the authoritative description of the
 workflow pattern and of the built workflows; currently that is the scene-writing workflow
-(`generate_scene`). Planned-but-unbuilt workflows (such as the intimacy review workflow) are designed
-in [future_work.md](future_work.md). For the surrounding system see
+(`generate_scene`). The planned intimacy interpretation workflow is described below ("Planned:
+Intimacy Interpretation Workflow"). For the surrounding system see
 [architecture.md](architecture.md); for the data these workflows read and write see
 [story_bible_model.md](story_bible_model.md) and [forms_and_data_models.md](forms_and_data_models.md).
 
@@ -234,11 +234,48 @@ dialog, and enqueues them with prerequisite gating so later scenes wait for earl
 [architecture_async_jobs.md](architecture_async_jobs.md) for claims, enforcement, the queue, and
 notifications.
 
-## Planned Workflows
+## Planned: Intimacy Interpretation Workflow
 
-The intimacy review workflow is designed but not yet built. Its full design lives in
-[future_work.md](future_work.md). Until it exists, agents author intimacy effects through the direct
-structured operations described in [story_bible_model.md](story_bible_model.md).
+The evidence-based intimacy interpretation workflow is designed but not yet built.
+Implementation is tracked in the "Evidence-Based Intimacy System" Linear project; the
+data-model decisions live in [story_bible_model.md](story_bible_model.md) ("Evidence-Based
+Intimacy State"). It supersedes the earlier description-based intimacy review workflow that
+was designed in [future_work.md](future_work.md). Until it exists, agents author intimacy
+effects through the direct structured operations described in
+[story_bible_model.md](story_bible_model.md).
+
+Key decisions (2026-08-21 project review):
+
+- **Trigger: automatic on event creation/edit.** Whenever an event is added or edited, the
+  pipeline runs per relevant character via `JobManager`, plus a manual re-run action. Derived
+  accumulation makes recompute after timeline insertion safe. Relation edits (reordering) do
+  **not** trigger automatic re-analysis — `effect_diagnostics()` warnings plus the manual
+  re-run action cover reorder staleness.
+- **Per-character parallel fan-out.** The workflow runs independently, in parallel, for each
+  character relevant to the event, following the same `Send` fan-out pattern the scene
+  workflow uses for per-character review.
+- **Deterministic context assembly; no conditional routing in v1.** Context (the event, the
+  character's identity, current intimacies with ranks, recent relevant signals) is assembled
+  deterministically — no tool-enabled retrieval sub-loop and no request-deeper-context loop —
+  and the reviewer runs on every character-event analysis.
+- **Analysis, review, deterministic apply.** An analysis stage produces the character's
+  signal, scored evidence entries (`supports` | `contradicts`, ordinal strength, rationale),
+  and any new-intimacy or rewording proposals; a reviewer approves or revises; the apply stage
+  writes approved signals with evidence entries and creation/rewording records through
+  ordinary application code (no LLM executor). Rank changes are never written: the
+  deterministic accumulator derives rank during replay.
+- **Programmatic invocation.** The interpretation run is exposed as a plain entry point
+  (function + `JobManager` job) that UI triggers and the automatic event-authoring trigger
+  both call — invocation is not coupled to UI event handlers. A planned plot-editor agent (see
+  [future_work.md](future_work.md)) will invoke interpretation runs inline from its own loop.
+- **Model routing stays on the existing four requirement-profile roles**
+  (`orchestration` / `writing` / `judgment` / `structure`); a fifth role is added only if a
+  new node clearly mismatches all four.
+- **Evaluation and observability are deferred** until the project builds eval infrastructure.
+
+A separate maintenance/consolidation workflow (merge, split, archive intimacies using the
+stored evidence history) is future work and deliberately out of scope for the interpretation
+pipeline.
 
 ## Related Docs
 

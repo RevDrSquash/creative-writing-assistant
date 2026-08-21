@@ -106,4 +106,4 @@ See [future_work.md](future_work.md):
 
 - [architecture.md](architecture.md) — system overview
 - [architecture_agent_workflows.md](architecture_agent_workflows.md) — scene generation workflow
-- [known_issues.md](known_issues.md) — UI save transaction gap (#3)
+- [known_issues.md](known_issues.md) — "UI form edits are not transactional against save failures"

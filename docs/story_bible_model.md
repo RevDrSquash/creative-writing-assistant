@@ -112,8 +112,14 @@ timeline. They are validated when drafting; deleting an event prunes its ids fro
 
 A character-subjective belief, attachment, value, fear, desire, or relationship assumption.
 Fields: `id`, `text`, and `strength` (`minor`, `major`, or `defining`). Strength defines the
-intimacy's impact on the character's behavior. Intimacies live in character baseline state
-and are modified over time by Signal effects.
+intimacy's impact on the character's behavior. Intimacies live in character baseline state.
+
+Under the decided evidence-based model (see "Evidence-Based Intimacy State" below), an
+intimacy's rank at any timeline position is **derived** during replay from accumulated signal
+evidence rather than mutated by effects. Contradicting evidence erodes rank; erosion below
+`minor` derives to a **dormant** (no-strength) state while the intimacy and its evidence
+history remain stored and can re-strengthen. In the current implementation, strength is still
+modified over time by Signal effects.
 
 ### Event
 
@@ -192,6 +198,12 @@ Event that produced them, which keeps the link between event and interpretation 
 Fields: `id`, `character_id`, `interpretation` (free text), and a list of character-state
 effects.
 
+Under the decided evidence-based model, a signal's payload shifts from mutation effects to
+**evidence entries**: scored relationships between this signal and particular intimacies
+(intimacy id, `direction`, ordinal strength, brief rationale). Structural records for intimacy
+creation and rewording remain effect-shaped (see Character-State Effects below); review
+metadata from the interpretation workflow lives on the signal, not on those records.
+
 ## Effects
 
 Effects are the structured deltas that replay folds over the baselines. They are small,
@@ -205,11 +217,67 @@ explicit operations rather than free text.
 
 ### Character-State Effects (on Signals)
 
-- `add_intimacy`: add an intimacy (carries the new intimacy).
+- `add_intimacy`: add an intimacy (carries the new intimacy). Survives in the evidence-based
+  model as the event-sourced **creation record**: new intimacies are always created at `minor`,
+  and the creating signal also carries an evidence entry so the history explains why the
+  intimacy exists.
 - `set_intimacy_strength`: change an existing intimacy's strength by `intimacy_id`
-  (strengthen or weaken).
-- `update_intimacy`: replace the text of an existing intimacy by `intimacy_id`.
-- `remove_intimacy`: remove an intimacy by `intimacy_id`.
+  (strengthen or weaken). **Legacy under the evidence-based model:** rank becomes derived, so
+  no new `set_intimacy_strength` effects are authored; the v8→v9 migration converts existing
+  ones into equivalent evidence entries.
+- `update_intimacy`: replace the text of an existing intimacy by `intimacy_id`. Survives as
+  the event-sourced **rewording record** (wording evolution is separate from rank change).
+- `remove_intimacy`: remove an intimacy by `intimacy_id`. **Legacy under the evidence-based
+  model:** intimacies are never removed by the pipeline — they erode. Existing effects are
+  honored by replay as erode-to-dormant markers; no new ones are authored.
+
+## Evidence-Based Intimacy State
+
+Decided in the 2026-08-21 project review; implementation is tracked in the "Evidence-Based
+Intimacy System" Linear project. Until the pipeline lands, signals carry mutation effects and
+the agent authors them directly (the pre-existing behavior described elsewhere in this doc).
+When it lands, the agent's direct intimacy-effect authoring is removed — there is no dual-path
+rollout period.
+
+- **Representation: derived accumulation.** Evidence lives on signals as stored source data;
+  intimacy rank is computed during replay by a deterministic accumulator. The pipeline writes
+  no materialized rank-change effects, and there is no explicit rank-override channel in v1 —
+  the user's manual levers are editing baseline intimacies and editing signal evidence entries
+  (both UI-editable), with replay recomputing rank.
+- **Evidence entries.** Each entry records the affected intimacy id, a `direction`
+  (`supports` | `contradicts` — mixed evidence is represented as multiple separate entries,
+  and prompts must state this explicitly), an ordinal strength, and a brief rationale.
+- **Distinct events and recency.** Chains of `directly_follows` relations count as one
+  scenario when weighing evidence breadth: repeated evidence from one scenario is worth less
+  than the same evidence across distinct scenarios. "Recent" is defined by the stable total
+  order from `chronological_order()`.
+- **Accumulator shape.** The accumulation/threshold function lives in `app/world/` alongside
+  replay and is a pure, side-effect-free function (evidence in → rank state out). Replay is
+  one caller, but the function is directly callable on hypothetical evidence sets — a cheap
+  what-if oracle for a planned plot-editor agent (see [future_work.md](future_work.md)). Its
+  explanation output lists which approved signals contributed to a rank decision and exposes
+  distance-to-threshold alongside rank.
+- **Creation and erosion are symmetric.** Intimacies are never removed by the pipeline:
+  contradicting evidence erodes rank, and erosion below `minor` derives to a dormant
+  (no-strength) state while the intimacy and its evidence history remain stored and can
+  re-strengthen. Creation is strengthening from nothing: the `add_intimacy` record mints the
+  id and wording at the conservative floor (`minor`), and the creating signal carries an
+  evidence entry explaining why the intimacy exists. Full removal/archival belongs to a
+  separate maintenance/consolidation workflow (future work, not part of v1).
+- **No candidate/incubating intimacies in v1.** Approved new-intimacy proposals create
+  canonically at `minor`.
+- **Migration.** The v8→v9 migration converts existing `set_intimacy_strength` effects into
+  equivalent evidence entries; `add_intimacy` / `update_intimacy` effects are kept as the
+  creation/rewording records; legacy `remove_intimacy` effects are honored by replay as
+  erode-to-dormant markers and no new ones are authored.
+- **Reordering posture.** Replay recomputes rewordings and evidence deterministically under
+  any relation edit; records that land before their intimacy's establishing record are skipped
+  and surfaced as `effect_diagnostics()` warnings (extending the existing dangling-effect
+  behavior to evidence entries). Semantic re-analysis after a reorder is manual (the re-run
+  action), never automatic.
+
+The workflow that produces signals and evidence (per-character interpretation, review, apply)
+is described in [architecture_agent_workflows.md](architecture_agent_workflows.md).
 
 ## Replay Semantics
 
@@ -227,7 +295,13 @@ Replay is tolerant of dangling references: an effect that targets a missing entr
 (for example, strengthening an intimacy a later edit removed) is skipped silently.
 `effect_diagnostics()` surfaces these as warnings in tools and the UI; replay does not error.
 Preventing or auto-repairing dangling effects on edit is tracked in
-[known_issues.md](known_issues.md).
+[known_issues.md](known_issues.md) ("Dangling effect references are warned but not prevented").
+
+Under the evidence-based model, replay additionally folds each signal's evidence entries
+through the deterministic accumulator: an intimacy's rank at a position is computed from its
+baseline plus the accumulated evidence up to that position, never stored. Evidence that lands
+before its intimacy's establishing record is skipped and surfaced via `effect_diagnostics()`,
+the same posture as dangling mutation effects today.
 
 ## Character Arc Derivation
 
@@ -261,12 +335,12 @@ renderer so scoped character context cannot leak late-story state into an earlie
   edits); improving that workflow is deferred.
 - Deleting a character does not delete events or their signals referencing that character;
   replay skips signals whose `character_id` no longer resolves.
-- Intimacy review behavior (merging duplicates, strengthening instead of duplicating, pruning
-  stale intimacies, preferring small cumulative changes) is a planned agent workflow that would
-  layer on top of these primitives (tracked in [future_work.md](future_work.md)). The data model
-  only provides the primitive operations; the intimacy review workflow would propose and review
-  effects before they are applied (see
-  [architecture_agent_workflows.md](architecture_agent_workflows.md)).
+- Intimacy changes are the domain of the planned evidence-based interpretation workflow (see
+  "Evidence-Based Intimacy State" above and
+  [architecture_agent_workflows.md](architecture_agent_workflows.md)): signals carry evidence,
+  rank is derived, and a separate maintenance workflow (future work) handles global
+  consolidation (merging duplicates, pruning stale intimacies). The data model only provides
+  the primitive records; the workflow proposes and reviews them before they are applied.
 
 ## Agent Access
 
@@ -285,9 +359,10 @@ state cannot leak into an earlier scene's context. Unknown character or event id
 start that is chronologically after the end, raise `ToolException` listing valid ids.
 
 Intimacy effects are a planned exception: today the agent authors intimacy effects directly, but
-the intended design is that it should not. Under the planned intimacy review workflow the agent
-would describe the intended change in natural language and the workflow would propose, review, and
-apply the concrete effects, returning a diff. The structured effect operations below remain the
-underlying data model and stay directly editable in the UI; only the agent's authoring path would
-change. This workflow is tracked in [future_work.md](future_work.md) (see
-[architecture_agent_workflows.md](architecture_agent_workflows.md)).
+under the decided evidence-based model it will not. The intimacy interpretation workflow runs
+automatically when an event is created or edited, interprets the event per character, and writes
+approved signals with evidence entries (plus creation/rewording records); rank is derived by
+replay. When the pipeline lands, the agent's direct intimacy-effect authoring is removed — there
+is no dual-path period. Evidence entries and baseline intimacies stay directly editable in the
+UI. See "Evidence-Based Intimacy State" above and
+[architecture_agent_workflows.md](architecture_agent_workflows.md).

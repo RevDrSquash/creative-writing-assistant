@@ -81,17 +81,18 @@ fix so the context is not lost between phases.
 - **Possible fix:** Re-slug on first non-blank save of the primary text field, or prompt for a
   name before creating the entity.
 
-## 6. World schema version 1 is rejected; no automatic migration
+## 6. World schema versions 1–2 are rejected; no migration below v3
 
 - **Severity:** Low (documented breaking change)
-- **Location:** `app/persistence/world.py` — `validate_world_payload`; `app/world/models.py`
-  — `SCHEMA_VERSION = 2`
+- **Location:** `app/persistence/world.py` — `migrate_world_payload`; `app/world/models.py`
+  — `SCHEMA_VERSION` (currently 8; the code is authoritative, this number drifts)
 - **Introduced:** Schema version 2 (readable slug ids)
-- **Symptom:** Loading a `world.json` (or ZIP import) with `schema_version: 1` fails with a
-  clear unsupported-version error. Existing v1 worlds must be hand-converted (re-slug entity
-  ids and repair signal `character_id` references) before the app will load them.
-- **Why it is acceptable:** Automatic migration would need to rewrite every cross-reference;
-  the project has a single dev world and migration tooling is deferred.
+- **Symptom:** `migrate_world_payload` upgrades stored worlds from v3 through the current
+  version, but loading a `world.json` (or ZIP import) with `schema_version` 1 or 2 fails with
+  a clear unsupported-version error. Those worlds must be hand-converted (re-slug entity ids
+  and repair signal `character_id` references) before the app will load them.
+- **Why it is acceptable:** Migrating v1/v2 would need to rewrite every cross-reference; the
+  project has a single dev world that is already past those versions.
 - **Possible fix:** Add a one-shot migration script or import-time rewriter that maps old hex
   ids to new slugs and updates all references.
 

@@ -63,12 +63,13 @@ The app is a local-first Python writing workspace built around one in-memory `Wo
   - The default workflow is a single ReAct loop for free-form chat.
   - Named multi-step workflows compose several nodes for tasks like outlining, critiquing,
     revising, and drafting. Each is an enforced LangGraph workflow graph (graph edges fix the
-    step order), individual nodes may themselves be tool-enabled ReAct sub-loops, and the
-    compiled graph is exposed to the main agent as a single tool. A workflow registry in
+    step order), and individual nodes may themselves be tool-enabled ReAct sub-loops. Workflows
+    are user- or system-triggered entry points, not main-agent tools (see
+    [architecture_agent_workflows.md](architecture_agent_workflows.md)). A workflow registry in
     `app/graphs/` builds and looks up these named workflows.
-  - Phase 6 adds two such workflows: the scene-writing workflow (`draft_scene`) and the intimacy
-    review workflow. Both are described in
-    [architecture_agent_workflows.md](architecture_agent_workflows.md).
+  - One such workflow is built: the scene-writing workflow (`generate_scene`). A second, the
+    evidence-based intimacy interpretation workflow, is designed and planned. Both are described
+    in [architecture_agent_workflows.md](architecture_agent_workflows.md).
   - Workflow nodes resolve their model the same way the chat node does — through the per-node
     model-config override system — so cheaper roles can drive cheap steps while drafting uses a
     larger model.
@@ -78,12 +79,15 @@ The app is a local-first Python writing workspace built around one in-memory `Wo
   - Write tools mutate world state before returning.
   - Tools raise `ToolException` for expected domain errors (e.g. an unknown entity id). The agent is built with a `ToolRetryMiddleware(max_retries=0, on_failure="continue")` so a failing tool call produces an error `ToolMessage` for the model to recover from instead of aborting the run. Tools are local and deterministic, so retries are disabled.
   - Workflows or subagents can also be exposed as tools.
-  - Intimacy edits are authored directly by the agent today, but the planned design routes them
-    through an intimacy review workflow: the agent would describe the intended change in natural
-    language and the workflow would propose, review, and apply the concrete effects, returning a
-    diff. The structured effect operations remain the data model and stay directly editable in the
-    UI; only the agent's authoring path would change, and world-state effects keep their direct CRUD
-    authoring. This workflow is tracked in [future_work.md](future_work.md).
+  - Intimacy edits are authored directly by the agent today, but the decided evidence-based
+    design removes that path: the intimacy interpretation workflow runs automatically when an
+    event is created or edited, interprets the event per character, and writes approved signals
+    with evidence entries; intimacy rank is derived by replay rather than mutated. When the
+    pipeline lands the agent's direct intimacy-effect authoring is removed (no dual-path
+    period). Evidence entries and baseline intimacies stay directly editable in the UI, and
+    world-state effects keep their direct CRUD authoring. See
+    [story_bible_model.md](story_bible_model.md) ("Evidence-Based Intimacy State") and
+    [architecture_agent_workflows.md](architecture_agent_workflows.md).
 
 - **Context Assembly**
   - Builds each model call from the system prompt, chat history, current UI context, and workflow-specific context.
@@ -104,7 +108,7 @@ The app is a local-first Python writing workspace built around one in-memory `Wo
 
 ## Related Docs
 
-- Multi-step agent workflows (scene writing, plus the planned intimacy review): see [architecture_agent_workflows.md](architecture_agent_workflows.md).
+- Multi-step agent workflows (scene writing, plus the planned intimacy interpretation workflow): see [architecture_agent_workflows.md](architecture_agent_workflows.md).
 - Async jobs, resource claims, and background execution: see [architecture_async_jobs.md](architecture_async_jobs.md).
 - LLM call logging and the Debug page: see [architecture_llm_debug_logging.md](architecture_llm_debug_logging.md).
 - Model configuration and per-node model selection: see [model_configuration.md](model_configuration.md).
