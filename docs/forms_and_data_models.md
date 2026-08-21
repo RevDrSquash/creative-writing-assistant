@@ -66,9 +66,10 @@ The scene blueprint holds **inputs only** — the scene card the writer and main
   dramatizes), and `required_resolution` (the outcome later scenes depend on). Beat-level
   planning is left to the generation workflow.
 - **Character ids**: participating characters (`character_ids`).
-- **Event links**: `event_ids` (enacted events) and `related_event_ids` (context-only). Both are
-  scene-local scratch; links may go stale if an event is later removed (see
-  [known_issues.md](known_issues.md)).
+- **Event links**: `event_ids` (enacted events — every event dramatized on-page in this scene;
+  a scene enacts one or more events; each event may be enacted by at most one scene) and
+  `related_event_ids` (context-only — off-page events or events enacted elsewhere). Both are
+  scene-local scratch. Deleting an event prunes its id from every blueprint automatically.
 - **Constraints** and **Notes**: hard limits and free-form planning notes.
 
 ### Scene Generated

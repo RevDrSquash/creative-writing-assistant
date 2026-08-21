@@ -43,6 +43,7 @@ from app.world.replay import (
     effect_diagnostics,
     format_effect_diagnostics,
 )
+from app.world.scene import enacting_scenes, prune_event_links
 from app.world.store import get_world, world_transaction
 
 
@@ -54,7 +55,8 @@ def read_story_bible() -> str:
     Use the ids with the more specific read/update tools.
     """
 
-    bible = get_world().story_bible
+    world = get_world()
+    bible = world.story_bible
     lines = ["# Story Bible Overview", ""]
 
     lines.append("## Narrative Style")
@@ -102,7 +104,7 @@ def read_story_bible() -> str:
         summary_suffix += ")"
         lines.append(f"{position}. {event.title or 'Untitled'} [id: {event.id}]{summary_suffix}")
 
-    _append_timeline_warnings(lines, bible)
+    _append_timeline_warnings(lines, bible, world)
 
     return "\n".join(lines)
 
@@ -394,9 +396,10 @@ def delete_character(character_id: str) -> str:
 
 @tool
 def read_timeline() -> str:
-    """Return the ordered event timeline with ids and signal counts."""
+    """Return the ordered event timeline with ids, placement, and signal counts."""
 
-    bible = get_world().story_bible
+    world = get_world()
+    bible = world.story_bible
     ordered = chronological_order(bible)
     if not ordered:
         return "The timeline has no events yet."
@@ -405,21 +408,23 @@ def read_timeline() -> str:
         description = f" - {event.description}" if event.description else ""
         relation_summary = _event_relation_summary(bible, event.id)
         relation_part = f", {relation_summary}" if relation_summary else ""
+        placement = _format_event_placement(world, event.id)
         lines.append(
             f"{position}. {event.title or 'Untitled'} [id: {event.id}] "
-            f"({len(event.signals)} signals{relation_part}){description}"
+            f"({placement}; {len(event.signals)} signals{relation_part}){description}"
         )
 
-    _append_timeline_warnings(lines, bible)
+    _append_timeline_warnings(lines, bible, world)
 
     return "\n".join(lines)
 
 
 @tool
 def read_event(event_id: str) -> str:
-    """Return an event's description, world-state effects, and signals."""
+    """Return an event's description, placement, world-state effects, and signals."""
 
-    bible = get_world().story_bible
+    world = get_world()
+    bible = world.story_bible
     event = bible.get_event(event_id)
     if event is None:
         raise ToolException(f"No event with id {event_id}.")
@@ -430,8 +435,17 @@ def read_event(event_id: str) -> str:
         "",
         event.description or "(no description)",
         "",
-        "## World State Effects",
+        "## Scene Placement",
+        _format_event_placement(world, event.id),
     ]
+    related_scenes = _scenes_related_to_event(world, event.id)
+    if related_scenes:
+        lines.append("")
+        lines.append("Related by scene blueprints (context only):")
+        for scene in related_scenes:
+            lines.append(f"- '{scene.title}' [scene id: {scene.id}]")
+
+    lines.extend(["", "## World State Effects"])
     if not event.world_state_effects:
         lines.append("(none)")
     for effect in event.world_state_effects:
@@ -502,6 +516,10 @@ def add_event(
     signals: list[Signal] | None = None,
 ) -> str:
     """Add an event to the timeline (appended in creation order).
+
+    Events are atomic story facts at any scale — only plot-necessary facts belong on the
+    timeline. If nothing in the story depends on a detail happening at a specific time, leave
+    it to the prose. Do not create one event per scene or events for incidental detail.
 
     When other events already exist, ``relations`` is required: each entry links
     the new event to an existing one. For directed kinds (``follows``,
@@ -666,20 +684,30 @@ def remove_event_relation(relation_id: str) -> str:
 
 @tool
 def delete_event(event_id: str) -> str:
-    """Delete an event and its signals permanently."""
+    """Delete an event and its signals permanently.
+
+    Also removes the event id from every scene blueprint that referenced it.
+    """
 
     with world_transaction() as world:
         bible = world.story_bible
         event = bible.get_event(event_id)
         if event is None:
             raise ToolException(f"No event with id {event_id}.")
+        affected_scene_ids = prune_event_links(world, event_id)
         bible.timeline = [item for item in bible.timeline if item.id != event_id]
         bible.event_relations = [
             item
             for item in bible.event_relations
             if item.source_id != event_id and item.target_id != event_id
         ]
-    return f"Deleted event '{event.title or 'Untitled'}' (id: {event_id})."
+    note = ""
+    if affected_scene_ids:
+        note = (
+            f" Removed the event from {len(affected_scene_ids)} scene blueprint(s): "
+            f"{', '.join(affected_scene_ids)}."
+        )
+    return f"Deleted event '{event.title or 'Untitled'}' (id: {event_id}).{note}"
 
 
 @tool
@@ -783,7 +811,7 @@ def _chronological_event_index(bible: StoryBible, event_id: str) -> int:
     return 0
 
 
-def _append_timeline_warnings(lines: list[str], bible: StoryBible) -> None:
+def _append_timeline_warnings(lines: list[str], bible: StoryBible, world) -> None:
     relation_warnings = format_diagnostics(relation_diagnostics(bible))
     if relation_warnings:
         lines.append("")
@@ -792,6 +820,44 @@ def _append_timeline_warnings(lines: list[str], bible: StoryBible) -> None:
     if effect_warnings:
         lines.append("")
         lines.append(effect_warnings)
+    duplicate_warnings = _duplicate_enactment_warnings(world)
+    if duplicate_warnings:
+        lines.append("")
+        lines.append(duplicate_warnings)
+
+
+def _format_event_placement(world, event_id: str) -> str:
+    scenes = enacting_scenes(world, event_id)
+    if not scenes:
+        return "unplaced"
+    if len(scenes) == 1:
+        scene = scenes[0]
+        return f"enacted by '{scene.title}' [scene id: {scene.id}]"
+    titles = ", ".join(f"'{scene.title}' [scene id: {scene.id}]" for scene in scenes)
+    return f"WARNING: enacted by multiple scenes ({titles})"
+
+
+def _scenes_related_to_event(world, event_id: str) -> list:
+    return [
+        scene
+        for scene in world.scenes
+        if event_id in scene.blueprint.related_event_ids
+    ]
+
+
+def _duplicate_enactment_warnings(world) -> str:
+    warnings: list[str] = []
+    for event in world.story_bible.timeline:
+        scenes = enacting_scenes(world, event.id)
+        if len(scenes) > 1:
+            titles = ", ".join(f"'{scene.title}' [scene id: {scene.id}]" for scene in scenes)
+            warnings.append(
+                f"- Event '{event.title or 'Untitled'}' [id: {event.id}] is enacted by "
+                f"multiple scenes ({titles})"
+            )
+    if not warnings:
+        return ""
+    return "Duplicate enactment warnings:\n" + "\n".join(warnings)
 
 
 def _event_relation_summary(bible: StoryBible, event_id: str) -> str:

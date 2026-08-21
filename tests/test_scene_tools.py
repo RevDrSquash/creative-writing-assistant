@@ -321,3 +321,53 @@ def test_read_scene_blueprint_reports_generation_status(world_with_scene: World)
 
     assert "never generated" in detail
     assert "Test" in detail
+
+
+def test_propose_scene_rejects_event_already_enacted_by_another_scene(
+    world_with_scene: World,
+) -> None:
+    from app.tools.story_bible import add_event, upsert_character
+
+    upsert_character.invoke({"name": "Hero"})
+    character_id = world_with_scene.story_bible.characters[-1].id
+    add_event.invoke({"title": "Arrival"})
+    event_id = world_with_scene.story_bible.timeline[-1].id
+    existing = world_with_scene.scenes[0]
+    existing.blueprint.event_ids = [event_id]
+    state = {"current_scene_id": existing.id, "current_scene": existing.markdown}
+
+    with pytest.raises(ToolException, match="already enacted by scene"):
+        propose_scene.func(
+            "Duplicate",
+            "Hero arrives again.",
+            "Repeat the arrival.",
+            "Third person",
+            "Hero waits at the gate.",
+            "Hero must prove they belong.",
+            "Hero is admitted to the city.",
+            [character_id],
+            [event_id],
+            state,
+            "tool-call-dup",
+        )
+
+
+def test_update_scene_blueprint_allows_existing_enacted_events_on_same_scene(
+    world_with_scene: World,
+) -> None:
+    from app.tools.story_bible import add_event
+
+    add_event.invoke({"title": "Opening"})
+    event_id = world_with_scene.story_bible.timeline[-1].id
+    scene = world_with_scene.scenes[0]
+    scene.blueprint.event_ids = [event_id]
+    state = {"current_scene_id": scene.id}
+
+    message = update_scene_blueprint.func(
+        state,
+        event_ids=[event_id],
+        premise="Updated premise.",
+    )
+
+    assert scene.blueprint.event_ids == [event_id]
+    assert "Updated blueprint" in message

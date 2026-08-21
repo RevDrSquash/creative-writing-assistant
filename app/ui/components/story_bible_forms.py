@@ -41,6 +41,7 @@ from app.world.relations import (
     relation_diagnostics,
 )
 from app.world.replay import derive_state_at, effect_diagnostics
+from app.world.scene import enacting_scenes, prune_event_links
 from app.world.store import get_world
 
 _STRENGTH_OPTIONS = {"minor": "Minor", "major": "Major", "defining": "Defining"}
@@ -1261,7 +1262,9 @@ async def _confirm_delete_event(
     if not await dialog:
         return
 
-    bible = get_world().story_bible
+    world = get_world()
+    prune_event_links(world, event.id)
+    bible = world.story_bible
     bible.timeline = [item for item in bible.timeline if item.id != event.id]
     bible.event_relations = [
         item
@@ -1319,6 +1322,22 @@ def _render_linked_events(label: str, event_ids: list[str], bible: StoryBible) -
 
 def _event_select_options(bible: StoryBible) -> dict[str, str]:
     return {event.id: f"{event.title or 'Untitled'} [{event.id}]" for event in bible.timeline}
+
+
+def _enacted_event_select_options(bible: StoryBible, scene: Scene) -> dict[str, str]:
+    """Return timeline events available to enact in ``scene`` (exclude elsewhere-enacted)."""
+
+    world = get_world()
+    current_enacted = set(scene.blueprint.event_ids)
+    options: dict[str, str] = {}
+    for event in bible.timeline:
+        if event.id in current_enacted:
+            options[event.id] = f"{event.title or 'Untitled'} [{event.id}]"
+            continue
+        if enacting_scenes(world, event.id):
+            continue
+        options[event.id] = f"{event.title or 'Untitled'} [{event.id}]"
+    return options
 
 
 def _character_select_options(bible: StoryBible) -> dict[str, str]:
@@ -1434,7 +1453,7 @@ def render_scene_blueprint_form(
 
             _field_label("Enacted events")
             enacted_select = ui.select(
-                _event_select_options(bible),
+                _enacted_event_select_options(bible, scene),
                 value=list(blueprint.event_ids),
                 multiple=True,
             ).classes("w-full")

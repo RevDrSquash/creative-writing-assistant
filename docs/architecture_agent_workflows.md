@@ -118,10 +118,13 @@ will be discarded).
    (`mood` as a list of statements; `intent`, `tactics`, `stakes` as single fields). The prompt
    includes each character's identity and scoped arc (state entering the scene and transitions
    during it). Writes to `Scene.generated.stances`.
-2. **Outline** — produce the scene's beats as a list of short, concise statements. The prompt
-   first works out the Five Commandments (Inciting Incident, Progressive Complication, Crisis,
-   Climax, Resolution) consistent with the scene frame, then expands them into beats. It includes
-   the same per-character identity and scoped-arc blocks. Writes to `Scene.generated.outline`.
+2. **Outline** — produce the scene's beats as a list of short, concise statements. Beats
+   structure the scene rather than write it: one sentence per beat, no prose, dialogue, or
+   staging detail (the prompts, the structured-output schema, and the plan review/revise steps
+   all enforce this so beats stay terse through revision). The prompt first works out the Five
+   Commandments (Inciting Incident, Progressive Complication, Crisis, Climax, Resolution)
+   consistent with the scene frame, then expands them into beats. It includes the same
+   per-character identity and scoped-arc blocks. Writes to `Scene.generated.outline`.
 3. **Review plan** — critique the stances **and** outline against premise, purpose, and
    continuity with surrounding scenes. Structured critique only; nothing is mutated.
 4. **Revise plan** — a tool-enabled ReAct sub-loop that applies targeted edits via

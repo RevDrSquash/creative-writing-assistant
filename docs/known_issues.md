@@ -141,25 +141,21 @@ fix so the context is not lost between phases.
 - **Possible fix:** Offload saves to a worker thread, or make the retry async-aware at the UI
   boundary so the event loop is not blocked while waiting.
 
-## 10. Scene blueprint event links can go stale
+## 10. Scene blueprint event links (partially resolved)
 
 - **Severity:** Low (advisory scaffolding, not source-of-truth data)
 - **Location:** `app/world/models.py` (`SceneBlueprint.event_ids`,
-  `SceneBlueprint.related_event_ids`); `app/tools/scene.py` — `draft_scene`
-- **Introduced:** Scene-to-event linking on `draft_scene`
-- **Symptom:** A scene blueprint stores the ids of the events it enacts (`event_ids`) and
-  related context events (`related_event_ids`). These ids are validated when the scene is
-  drafted, but nothing keeps them in sync afterward: deleting an event leaves a dangling id in
-  any blueprint that referenced it.
-- **Why it is acceptable for now:** The links are scene-local blueprint scratch (not
-  event-sourced, excluded from replay), so a stale link is advisory scaffolding rather than a
-  correctness bug in the timeline. Readers tolerate unresolved ids — the blueprint form and
-  workflow render an "unknown event" placeholder instead of erroring. This matches the
-  warning-first posture used for dangling effect references (issue #8). We are choosing to live
-  with this for now.
-- **Possible fix:** Deferred. The intended handling for stale/changed links is still open;
-  options include surfacing a warning when an event a blueprint references is deleted, or
-  pruning the link at that point.
+  `SceneBlueprint.related_event_ids`); `app/tools/scene.py` — `propose_scene`,
+  `update_scene_blueprint`; `app/tools/story_bible.py` — `delete_event`
+- **Introduced:** Scene-to-event linking on scene proposal
+- **Symptom (resolved):** Deleting an event used to leave dangling ids in scene blueprints.
+  `delete_event` (tool and UI) now calls `prune_event_links` to remove the id from every
+  blueprint's `event_ids` and `related_event_ids`.
+- **Remaining:** Legacy worlds may still contain duplicate enactment (the same event listed in
+  two scenes' `event_ids`). New writes enforce at-most-one enacting scene per event; duplicate
+  enactment in existing data is surfaced as a warning in `read_event` / `read_timeline` but not
+  auto-repaired.
+- **Possible fix:** A one-time migration or repair tool to split or reassign duplicate enactments.
 
 ## 11. UI test teardown intermittently fails with a Windows file lock
 

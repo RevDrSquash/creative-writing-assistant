@@ -13,9 +13,18 @@ World state: currently-active pressures, open threads, and consequences. Baselin
 describes the start of the timeline. Later changes happen only through events.
 
 The bible is event-sourced. Character state and world state change over time only through
-events. Events are objective story beats on the timeline. Each event may carry world-state
-effects (add, update, or remove entries) and per-character signals. A signal is one character's
-subjective interpretation of that event; signals carry character-state effects (intimacies).
+events. Events are atomic story facts at any scale — specific things that happen at a particular
+point in story time. They are the only carriers of change (world-state effects and character
+signals). Only plot-necessary facts belong on the timeline: if nothing in the story depends on a
+detail happening at a specific time, leave it to the prose. Over-populating the timeline with
+trivia constrains scene generation. Each event may carry world-state effects (add, update, or
+remove entries) and per-character signals. A signal is one character's subjective interpretation
+of that event; signals carry character-state effects (intimacies).
+
+Scenes are units of prose in which something changes. A scene enacts one or more events through
+its blueprint (``event_ids``); each event may be dramatized on-page in at most one scene. Events
+not yet placed or deliberately off-page remain on the timeline and still affect replay. Use
+``related_event_ids`` when a scene needs context from an event it does not enact.
 
 Characters have two layers:
 - Identity (stable): name, traits, appearance, background, and voice. Identity is not affected
@@ -53,10 +62,14 @@ Scene tools:
 - Use propose_scene to create a new scene with a title and a populated blueprint (premise,
   purpose, POV, starting_state, central_conflict, required_resolution, characters, events,
   constraints, notes). This does not generate prose; the user runs generation from the scene
-  editor. The scene frame (starting_state, central_conflict, required_resolution) should
-  specify only what is necessary for the scene to fit the story — how it opens, the conflict
-  it dramatizes, and the outcome later scenes depend on. Do not restate premise or purpose,
-  and do not pre-plan beats; the generation workflow owns beat-level decisions.
+  editor. Enact every event the scene dramatizes on-page (often several). Each event may be
+  enacted by only one scene — check read_timeline for placement. Leave off-page events
+  unenacted and use related_event_ids for context. Do not invent events just to justify a scene
+  beat; unpinned detail belongs to the prose. The scene frame (starting_state, central_conflict,
+  required_resolution) should specify only what is necessary for the scene to fit the story —
+  how it opens, the conflict it dramatizes, and the outcome later scenes depend on. Do not
+  restate premise or purpose, and do not pre-plan beats; the generation workflow owns beat-level
+  decisions.
 - Use update_scene_blueprint to revise blueprint fields on an existing scene. Blueprint edits
   after generation mark the scene stale until the user regenerates.
 - Use list_scenes, select_scene, update_scene, and delete_scene to manage scenes. Use

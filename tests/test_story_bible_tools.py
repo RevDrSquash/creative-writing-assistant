@@ -34,6 +34,8 @@ from app.world.models import (
     AddWorldStateEntry,
     EventRelationSpec,
     Intimacy,
+    Scene,
+    SceneBlueprint,
     SceneCharacterStance,
     Signal,
     World,
@@ -470,7 +472,7 @@ def test_read_timeline_and_event_omit_kind(isolated_world: World) -> None:
     event = isolated_world.story_bible.timeline[0]
 
     timeline = read_timeline.func()
-    assert "(1 signals)" in timeline
+    assert "1 signals" in timeline
     assert "scene" not in timeline
     assert "time_passage" not in timeline
 
@@ -730,3 +732,100 @@ def test_write_tools_persist_to_disk(isolated_world: World, isolated_data_dir) -
 
     raw = json.loads((isolated_data_dir / "world.json").read_text(encoding="utf-8"))
     assert raw["story_bible"]["characters"][0]["identity"]["name"] == "Mira"
+
+
+def test_delete_event_prunes_blueprint_links(isolated_world: World) -> None:
+    add_event.func("Arrival")
+    event = isolated_world.story_bible.timeline[0]
+    isolated_world.scenes.append(
+        Scene(
+            id="scene_arrival",
+            title="The Arrival",
+            blueprint=SceneBlueprint(
+                premise="Hero arrives.",
+                event_ids=[event.id],
+                related_event_ids=[event.id],
+            ),
+        )
+    )
+
+    result = delete_event.func(event.id)
+
+    assert event.id not in isolated_world.story_bible.timeline
+    assert isolated_world.scenes[0].blueprint.event_ids == []
+    assert isolated_world.scenes[0].blueprint.related_event_ids == []
+    assert "Removed the event from 1 scene blueprint" in result
+
+
+def test_read_timeline_shows_event_placement(isolated_world: World) -> None:
+    add_event.func("Arrival")
+    event = isolated_world.story_bible.timeline[0]
+
+    unplaced = read_timeline.func()
+    assert "unplaced" in unplaced
+
+    isolated_world.scenes.append(
+        Scene(
+            id="scene_arrival",
+            title="The Arrival",
+            blueprint=SceneBlueprint(premise="Hero arrives.", event_ids=[event.id]),
+        )
+    )
+
+    placed = read_timeline.func()
+    assert "enacted by 'The Arrival' [scene id: scene_arrival]" in placed
+
+
+def test_read_event_shows_placement_and_related_scenes(isolated_world: World) -> None:
+    add_event.func("Background")
+    background = isolated_world.story_bible.timeline[0]
+    add_event.func(
+        "Main beat",
+        relations=[EventRelationSpec(kind="follows", event_id=background.id)],
+    )
+    main = isolated_world.story_bible.timeline[1]
+    isolated_world.scenes.append(
+        Scene(
+            id="scene_main",
+            title="Main Scene",
+            blueprint=SceneBlueprint(
+                premise="The main action.",
+                event_ids=[main.id],
+                related_event_ids=[background.id],
+            ),
+        )
+    )
+
+    background_detail = read_event.func(background.id)
+    assert "## Scene Placement" in background_detail
+    assert "unplaced" in background_detail
+    assert "Related by scene blueprints" in background_detail
+    assert "Main Scene" in background_detail
+
+    main_detail = read_event.func(main.id)
+    assert "enacted by 'Main Scene' [scene id: scene_main]" in main_detail
+
+
+def test_read_timeline_warns_on_duplicate_enactment(isolated_world: World) -> None:
+    add_event.func("Shared beat")
+    event = isolated_world.story_bible.timeline[0]
+    isolated_world.scenes.extend(
+        [
+            Scene(
+                id="scene_a",
+                title="Scene A",
+                blueprint=SceneBlueprint(premise="A", event_ids=[event.id]),
+            ),
+            Scene(
+                id="scene_b",
+                title="Scene B",
+                blueprint=SceneBlueprint(premise="B", event_ids=[event.id]),
+            ),
+        ]
+    )
+
+    timeline = read_timeline.func()
+
+    assert "Duplicate enactment warnings" in timeline
+    assert "Scene A" in timeline
+    assert "Scene B" in timeline

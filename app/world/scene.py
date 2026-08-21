@@ -6,6 +6,7 @@ from app.world.models import (
     Scene,
     SceneCharacterStance,
     SceneGenerated,
+    World,
     blueprint_fingerprint,
     unique_slug,
     utc_now,
@@ -21,7 +22,9 @@ __all__ = [
     "blueprint_fingerprint",
     "create_scene",
     "delete_scene",
+    "enacting_scenes",
     "get_scene_text",
+    "prune_event_links",
     "resolve_scene",
     "scene_generation_status",
     "scene_is_generatable",
@@ -45,6 +48,32 @@ def scene_is_generatable(scene: Scene) -> bool:
     """Return True when the blueprint has enough input to run generation."""
 
     return bool(scene.blueprint.premise.strip()) and bool(scene.blueprint.event_ids)
+
+
+def enacting_scenes(world: World, event_id: str) -> list[Scene]:
+    """Return scenes whose blueprint enacts ``event_id`` (normally zero or one)."""
+
+    return [scene for scene in world.scenes if event_id in scene.blueprint.event_ids]
+
+
+def prune_event_links(world: World, event_id: str) -> list[str]:
+    """Remove ``event_id`` from every scene blueprint; return affected scene ids."""
+
+    affected: list[str] = []
+    for scene in world.scenes:
+        blueprint = scene.blueprint
+        had_enacted = event_id in blueprint.event_ids
+        had_related = event_id in blueprint.related_event_ids
+        if not had_enacted and not had_related:
+            continue
+        if had_enacted:
+            blueprint.event_ids = [item for item in blueprint.event_ids if item != event_id]
+        if had_related:
+            blueprint.related_event_ids = [
+                item for item in blueprint.related_event_ids if item != event_id
+            ]
+        affected.append(scene.id)
+    return affected
 
 
 def scene_generation_status(scene: Scene) -> str:
