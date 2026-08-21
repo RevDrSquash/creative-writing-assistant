@@ -14,6 +14,7 @@ from app.world.models import (
     Event,
     EventRelation,
     Intimacy,
+    IntimacyEvidence,
     RemoveIntimacy,
     SetIntimacyStrength,
     Signal,
@@ -94,8 +95,10 @@ def test_full_timeline_starts_at_baseline_and_ends_after_last_event() -> None:
 
     assert [item.id for item in arc.start_state.intimacies] == [baseline.id]
     assert arc.start_state.intimacies[0].strength == "minor"
-    assert [item.text for item in arc.end_state.intimacies] == ["Wary of outsiders"]
-    assert arc.end_state.intimacies[0].strength == "defining"
+    end_by_id = {item.id: item for item in arc.end_state.intimacies}
+    assert end_by_id[baseline.id].text == "Wary of outsiders"
+    assert end_by_id[baseline.id].strength == "defining"
+    assert end_by_id["intim_debt"].strength == "dormant"
     assert [item.event_id for item in arc.transitions] == [
         events[0].id,
         events[2].id,
@@ -181,7 +184,7 @@ def test_transitions_include_event_metadata_and_effect_descriptions() -> None:
         f"Strengthened {baseline.text} to defining",
         "Updated intimacy Owes Kael a debt to Kael will pay for this",
     )
-    assert exile.changes == ("Removed intimacy Kael will pay for this",)
+    assert exile.changes == ("Eroded intimacy Kael will pay for this to dormant",)
 
 
 def test_strengthen_and_weaken_use_relative_verbs() -> None:
@@ -221,6 +224,43 @@ def test_strengthen_and_weaken_use_relative_verbs() -> None:
 
     assert arc.transitions[0].changes == ("Strengthened Trusts the council to defining",)
     assert arc.transitions[1].changes == ("Weakened Trusts the council to minor",)
+
+
+def test_transitions_include_evidence_descriptions() -> None:
+    intimacy = Intimacy(id="intim_trust", text="Trusts the council", strength="minor")
+    character = Character(
+        id="char_mira",
+        identity=CharacterIdentity(name="Mira"),
+        baseline_state=CharacterBaselineState(intimacies=[intimacy]),
+    )
+    bible = StoryBible(
+        characters=[character],
+        timeline=[
+            Event(
+                id="event_oath",
+                title="Oath",
+                signals=[
+                    Signal(
+                        character_id=character.id,
+                        interpretation="They meant the vow.",
+                        evidence=[
+                            IntimacyEvidence(
+                                intimacy_id=intimacy.id,
+                                direction="supports",
+                                strength=4,
+                                rationale="A public oath.",
+                            )
+                        ],
+                    )
+                ],
+            )
+        ],
+    )
+
+    arc = derive_character_arc(bible, character.id)
+
+    assert arc.transitions[0].changes == ("Evidence supports Trusts the council (strength 4)",)
+    assert arc.end_state.intimacies[0].strength == "major"
 
 
 def test_unknown_event_id_raises() -> None:

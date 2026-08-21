@@ -1,10 +1,11 @@
 """Replay engine: derive world and character state at any timeline position.
 
 Replay is a pure function over the Story Bible. It folds each event's
-world-state effects and each signal's character-state effects over the
-editable baselines, in chronological order (graph-derived with list tie-break).
-Effects that reference missing entries or intimacies are skipped silently;
-``effect_diagnostics`` surfaces those dangling references as warnings.
+world-state effects and each signal's character-state effects and evidence
+over the editable baselines, in chronological order (graph-derived with list
+tie-break). Effects or evidence that reference missing entries or intimacies
+are skipped silently; ``effect_diagnostics`` surfaces those dangling
+references as warnings.
 """
 
 from __future__ import annotations
@@ -14,11 +15,13 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
+from app.world.evidence import apply_evidence_entry
 from app.world.models import (
     AddIntimacy,
     AddWorldStateEntry,
     CharacterStateEffect,
     Intimacy,
+    IntimacyEvidence,
     RemoveIntimacy,
     RemoveWorldStateEntry,
     SetIntimacyStrength,
@@ -107,7 +110,7 @@ def derive_state_at(bible: StoryBible, event_count: int) -> DerivedState:
             character = characters.get(signal.character_id)
             if character is None:
                 continue
-            _apply_signal(character, signal)
+            apply_signal(character, signal)
 
     return DerivedState(
         events_applied=event_count,
@@ -174,6 +177,17 @@ def effect_diagnostics(bible: StoryBible) -> list[EffectDiagnostic]:
                 if diagnostic is not None:
                     diagnostics.append(diagnostic)
                 _track_character_effect(effect, intimacy_ids)
+            for entry in signal.evidence:
+                diagnostic = _evidence_diagnostic(
+                    event.id,
+                    event_label,
+                    signal.character_id,
+                    entry,
+                    intimacy_ids,
+                    first_intimacy_add,
+                )
+                if diagnostic is not None:
+                    diagnostics.append(diagnostic)
 
     return diagnostics
 
@@ -260,6 +274,41 @@ def _character_effect_diagnostic(
     )
 
 
+def _evidence_diagnostic(
+    event_id: str,
+    event_label: str,
+    character_id: str,
+    entry: IntimacyEvidence,
+    present_ids: set[str],
+    first_add: dict[str, tuple[str, str]],
+) -> EffectDiagnostic | None:
+    intimacy_id = entry.intimacy_id
+    if not intimacy_id or intimacy_id in present_ids:
+        return None
+
+    first = first_add.get(intimacy_id)
+    if first is not None:
+        first_character_id, first_event_id = first
+        if first_character_id == character_id:
+            detail = f"first added at event '{first_event_id}' (later in chronological order)"
+        else:
+            detail = (
+                f"first added for character '{first_character_id}' at event "
+                f"'{first_event_id}' (different character)"
+            )
+    else:
+        detail = "never added on the timeline"
+
+    return EffectDiagnostic(
+        kind="dangling_effect",
+        event_id=event_id,
+        message=(
+            f"Event '{event_label}' [{event_id}]: evidence on character '{character_id}' "
+            f"targets intimacy '{intimacy_id}' which is not present ({detail})."
+        ),
+    )
+
+
 def _track_world_effect(effect: WorldStateEffect, present_ids: set[str]) -> None:
     if isinstance(effect, AddWorldStateEntry):
         present_ids.add(effect.entry.id)
@@ -270,8 +319,6 @@ def _track_world_effect(effect: WorldStateEffect, present_ids: set[str]) -> None
 def _track_character_effect(effect: CharacterStateEffect, present_ids: set[str]) -> None:
     if isinstance(effect, AddIntimacy):
         present_ids.add(effect.intimacy.id)
-    elif isinstance(effect, RemoveIntimacy):
-        present_ids.discard(effect.intimacy_id)
 
 
 def _apply_world_state_effect(
@@ -296,22 +343,40 @@ def _apply_world_state_effect(
         world_state[:] = [entry for entry in world_state if entry.id != effect.entry_id]
 
 
-def _apply_signal(character: DerivedCharacterState, signal: Signal) -> None:
+def apply_signal(character: DerivedCharacterState, signal: Signal) -> None:
+    """Apply one signal's structural records, evidence, and legacy mutations."""
+
+    apply_signal_to_intimacies(character.intimacies, signal)
+
+
+def apply_signal_to_intimacies(intimacies: list[Intimacy], signal: Signal) -> None:
+    """Fold one signal into an intimacy list in place."""
+
     for effect in signal.effects:
         if isinstance(effect, AddIntimacy):
-            character.intimacies.append(effect.intimacy.model_copy(deep=True))
-        elif isinstance(effect, SetIntimacyStrength):
-            intimacy = _find_intimacy(character.intimacies, effect.intimacy_id)
-            if intimacy is not None:
-                intimacy.strength = effect.strength
-        elif isinstance(effect, UpdateIntimacy):
-            intimacy = _find_intimacy(character.intimacies, effect.intimacy_id)
+            intimacies.append(effect.intimacy.model_copy(deep=True))
+
+    for effect in signal.effects:
+        if isinstance(effect, UpdateIntimacy):
+            intimacy = _find_intimacy(intimacies, effect.intimacy_id)
             if intimacy is not None:
                 intimacy.text = effect.text
-        elif isinstance(effect, RemoveIntimacy):
-            character.intimacies[:] = [
-                intimacy for intimacy in character.intimacies if intimacy.id != effect.intimacy_id
-            ]
+        elif isinstance(effect, SetIntimacyStrength):
+            intimacy = _find_intimacy(intimacies, effect.intimacy_id)
+            if intimacy is not None:
+                intimacy.strength = effect.strength
+
+    for entry in signal.evidence:
+        intimacy = _find_intimacy(intimacies, entry.intimacy_id)
+        if intimacy is None:
+            continue
+        apply_evidence_entry(intimacy, entry)
+
+    for effect in signal.effects:
+        if isinstance(effect, RemoveIntimacy):
+            intimacy = _find_intimacy(intimacies, effect.intimacy_id)
+            if intimacy is not None:
+                intimacy.strength = "dormant"
 
 
 def _find_entry(entries: list[WorldStateEntry], entry_id: str) -> WorldStateEntry | None:

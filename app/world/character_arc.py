@@ -15,16 +15,16 @@ from app.world.models import (
     CharacterStateEffect,
     Event,
     Intimacy,
-    RemoveIntimacy,
+    IntimacyEvidence,
     SetIntimacyStrength,
     Signal,
     StoryBible,
     UpdateIntimacy,
 )
 from app.world.relations import chronological_order
-from app.world.replay import DerivedCharacterState, derive_state_at
+from app.world.replay import DerivedCharacterState, apply_signal_to_intimacies, derive_state_at
 
-_STRENGTH_ORDER = {"minor": 0, "major": 1, "defining": 2}
+_STRENGTH_ORDER = {"dormant": -1, "minor": 0, "major": 1, "defining": 2}
 
 
 @dataclass(frozen=True)
@@ -176,7 +176,8 @@ def _transition_for_event(
 
 def _describe_and_apply_signal(signal: Signal, intimacies: list[Intimacy]) -> list[str]:
     descriptions = [_describe_effect(effect, intimacies) for effect in signal.effects]
-    _apply_effects(signal.effects, intimacies)
+    apply_signal_to_intimacies(intimacies, signal)
+    descriptions.extend(_describe_evidence(entry, intimacies) for entry in signal.evidence)
     return descriptions
 
 
@@ -197,7 +198,13 @@ def _describe_effect(effect: CharacterStateEffect, intimacies: list[Intimacy]) -
     if isinstance(effect, UpdateIntimacy):
         return f"Updated intimacy {label} to {effect.text}"
 
-    return f"Removed intimacy {label}"
+    return f"Eroded intimacy {label} to dormant"
+
+
+def _describe_evidence(entry: IntimacyEvidence, intimacies: list[Intimacy]) -> str:
+    current = _find_intimacy(intimacies, entry.intimacy_id)
+    label = current.text if current is not None and current.text else entry.intimacy_id
+    return f"Evidence {entry.direction} {label} (strength {entry.strength})"
 
 
 def _strength_verb(previous: str | None, new: str) -> str:
@@ -210,24 +217,6 @@ def _strength_verb(previous: str | None, new: str) -> str:
     if new_rank < previous_rank:
         return "Weakened"
     return "Set"
-
-
-def _apply_effects(effects: list[CharacterStateEffect], intimacies: list[Intimacy]) -> None:
-    for effect in effects:
-        if isinstance(effect, AddIntimacy):
-            intimacies.append(effect.intimacy.model_copy(deep=True))
-        elif isinstance(effect, SetIntimacyStrength):
-            intimacy = _find_intimacy(intimacies, effect.intimacy_id)
-            if intimacy is not None:
-                intimacy.strength = effect.strength
-        elif isinstance(effect, UpdateIntimacy):
-            intimacy = _find_intimacy(intimacies, effect.intimacy_id)
-            if intimacy is not None:
-                intimacy.text = effect.text
-        elif isinstance(effect, RemoveIntimacy):
-            intimacies[:] = [
-                intimacy for intimacy in intimacies if intimacy.id != effect.intimacy_id
-            ]
 
 
 def _find_intimacy(intimacies: list[Intimacy], intimacy_id: str) -> Intimacy | None:

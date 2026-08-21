@@ -20,6 +20,7 @@ from app.world.models import (
     EventRelation,
     EventRelationKind,
     Intimacy,
+    IntimacyEvidence,
     RemoveIntimacy,
     RemoveWorldStateEntry,
     Scene,
@@ -44,7 +45,24 @@ from app.world.replay import derive_state_at, effect_diagnostics
 from app.world.scene import enacting_scenes, prune_event_links
 from app.world.store import get_world
 
-_STRENGTH_OPTIONS = {"minor": "Minor", "major": "Major", "defining": "Defining"}
+_STRENGTH_OPTIONS = {
+    "dormant": "Dormant",
+    "minor": "Minor",
+    "major": "Major",
+    "defining": "Defining",
+}
+_BASELINE_STRENGTH_OPTIONS = {"minor": "Minor", "major": "Major", "defining": "Defining"}
+_EVIDENCE_DIRECTION_OPTIONS = {
+    "supports": "Supports",
+    "contradicts": "Contradicts",
+}
+_EVIDENCE_STRENGTH_OPTIONS = {
+    1: "1 · Incidental",
+    2: "2 · Noticeable",
+    3: "3 · Meaningful",
+    4: "4 · Pivotal",
+    5: "5 · Identity-shaking",
+}
 _WORLD_STATE_KIND_OPTIONS = {
     "pressure": "Pressure",
     "thread": "Thread",
@@ -121,6 +139,25 @@ def _bound_select(target: object, field: str, options: dict) -> ui.select:
     element = ui.select(options).props("dense outlined")
     element.bind_value(target, field)
     _save_on_change(element)
+    return element
+
+
+def _bound_int_select(target: object, field: str, options: dict[int, str]) -> ui.select:
+    """Bind a select whose option keys are ints (NiceGUI may emit them as strings)."""
+
+    element = ui.select(options).props("dense outlined")
+    element.bind_value(target, field)
+
+    def on_change(event) -> None:
+        raw = event.value
+        if raw is not None and not isinstance(raw, int):
+            try:
+                setattr(target, field, int(raw))
+            except (TypeError, ValueError):
+                pass
+        save_world_ui()
+
+    element.on_value_change(on_change)
     return element
 
 
@@ -446,7 +483,7 @@ def _render_intimacy_row(
         text.props("dense outlined")
         text.bind_value(intimacy, "text")
         _save_on_change(text)
-        _bound_select(intimacy, "strength", _STRENGTH_OPTIONS)
+        _bound_select(intimacy, "strength", _BASELINE_STRENGTH_OPTIONS)
 
         def delete_intimacy(intimacy: Intimacy = intimacy) -> None:
             intimacies[:] = [item for item in intimacies if item.id != intimacy.id]
@@ -1172,7 +1209,26 @@ def _render_signal_card(
             signal, "interpretation", placeholder="How the character reads this event..."
         )
 
-        intimacy_options = _intimacy_options_before(bible, chron_index, signal.character_id)
+        intimacy_options = _intimacy_options_for_signal(bible, chron_index, signal)
+
+        _field_label("Evidence")
+
+        @ui.refreshable
+        def evidence_section() -> None:
+            if not signal.evidence:
+                ui.label("No evidence entries.").classes("text-grey-7")
+            for entry in signal.evidence:
+                _render_evidence_row(signal, entry, intimacy_options, evidence_section.refresh)
+
+        evidence_section()
+
+        def add_evidence() -> None:
+            default_id = next(iter(intimacy_options), "")
+            signal.evidence.append(IntimacyEvidence(intimacy_id=default_id))
+            save_world_ui()
+            evidence_section.refresh()
+
+        ui.button("Add evidence", icon="add", on_click=add_evidence).props("flat")
 
         _field_label("State Effects")
 
@@ -1188,6 +1244,13 @@ def _render_signal_card(
         effects_section()
 
         def add_effect(effect) -> None:
+            if isinstance(effect, AddIntimacy):
+                effect.intimacy.strength = "minor"
+                effect.intimacy.id = unique_slug(
+                    "intim_",
+                    effect.intimacy.text,
+                    set(bible.intimacy_ids()),
+                )
             signal.effects.append(effect)
             save_world_ui()
             effects_section.refresh()
@@ -1195,10 +1258,6 @@ def _render_signal_card(
         with ui.button("Add state effect", icon="add").props("flat"):
             with ui.menu():
                 ui.menu_item("Add intimacy", on_click=lambda: add_effect(AddIntimacy()))
-                ui.menu_item(
-                    "Set intimacy strength",
-                    on_click=lambda: add_effect(SetIntimacyStrength()),
-                )
                 ui.menu_item("Update intimacy", on_click=lambda: add_effect(UpdateIntimacy()))
                 ui.menu_item("Remove intimacy", on_click=lambda: add_effect(RemoveIntimacy()))
 
@@ -1216,7 +1275,7 @@ def _render_character_effect_row(
             text.props("dense outlined")
             text.bind_value(effect.intimacy, "text")
             _save_on_change(text)
-            _bound_select(effect.intimacy, "strength", _STRENGTH_OPTIONS)
+            ui.badge("minor").props("outline")
         elif isinstance(effect, SetIntimacyStrength):
             ui.badge("Set strength").props("outline color=warning")
             select = _bound_select(
@@ -1245,6 +1304,32 @@ def _render_character_effect_row(
             refresh()
 
         _delete_button(delete_effect, "Remove effect")
+
+
+def _render_evidence_row(
+    signal: Signal,
+    entry: IntimacyEvidence,
+    intimacy_options: dict[str, str],
+    refresh: Callable[[], None],
+) -> None:
+    with ui.row().classes("w-full items-center no-wrap gap-2"):
+        _bound_select(entry, "direction", _EVIDENCE_DIRECTION_OPTIONS)
+        select = _bound_select(
+            entry, "intimacy_id", _with_current(intimacy_options, entry.intimacy_id)
+        )
+        select.classes("grow")
+        _bound_int_select(entry, "strength", _EVIDENCE_STRENGTH_OPTIONS)
+        rationale = ui.input(placeholder="Why this signal bears on the intimacy...").classes("grow")
+        rationale.props("dense outlined")
+        rationale.bind_value(entry, "rationale")
+        _save_on_change(rationale)
+
+        def delete_entry(entry: IntimacyEvidence = entry) -> None:
+            signal.evidence = [item for item in signal.evidence if item is not entry]
+            save_world_ui()
+            refresh()
+
+        _delete_button(delete_entry, "Remove evidence")
 
 
 async def _confirm_delete_event(
@@ -1292,6 +1377,18 @@ def _intimacy_options_before(
     if derived is None:
         return {}
     return {intimacy.id: intimacy.text or intimacy.id for intimacy in derived.intimacies}
+
+
+def _intimacy_options_for_signal(
+    bible: StoryBible,
+    chron_index: int,
+    signal: Signal,
+) -> dict[str, str]:
+    options = _intimacy_options_before(bible, chron_index, signal.character_id)
+    for effect in signal.effects:
+        if isinstance(effect, AddIntimacy) and effect.intimacy.id:
+            options[effect.intimacy.id] = effect.intimacy.text or effect.intimacy.id
+    return options
 
 
 def _with_current(options: dict[str, str], current: str) -> dict[str, str]:

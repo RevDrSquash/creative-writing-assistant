@@ -34,6 +34,7 @@ from app.world.models import (
     AddWorldStateEntry,
     EventRelationSpec,
     Intimacy,
+    IntimacyEvidence,
     Scene,
     SceneBlueprint,
     SceneCharacterStance,
@@ -117,6 +118,91 @@ def test_update_event_rejects_unknown_signal_character_id(isolated_world: World)
         )
 
     assert event.signals == []
+
+
+def test_add_event_rejects_unknown_evidence_intimacy_id(isolated_world: World) -> None:
+    upsert_character.func(name="Mira")
+    character = isolated_world.story_bible.characters[0]
+    character.baseline_state.intimacies.append(
+        Intimacy(id="intim_wary", text="Wary of outsiders", strength="minor")
+    )
+
+    with pytest.raises(ToolException, match="Unknown intimacy_id 'intim_missing'"):
+        add_event.func(
+            "Betrayal",
+            signals=[
+                Signal(
+                    character_id=character.id,
+                    evidence=[
+                        IntimacyEvidence(
+                            intimacy_id="intim_missing",
+                            direction="supports",
+                            strength=3,
+                            rationale="Hallucinated id.",
+                        )
+                    ],
+                )
+            ],
+        )
+
+    assert isolated_world.story_bible.timeline == []
+
+
+def test_add_event_resolves_drifted_evidence_intimacy_id(isolated_world: World) -> None:
+    upsert_character.func(name="Mira")
+    character = isolated_world.story_bible.characters[0]
+    character.baseline_state.intimacies.append(
+        Intimacy(id="intim_the_guild", text="I can't trust the Guild", strength="minor")
+    )
+
+    add_event.func(
+        "A warning",
+        signals=[
+            Signal(
+                character_id=character.id,
+                evidence=[
+                    IntimacyEvidence(
+                        intimacy_id="intim_guild",
+                        direction="supports",
+                        strength=3,
+                        rationale="The warning named the Guild.",
+                    )
+                ],
+            )
+        ],
+    )
+
+    entry = isolated_world.story_bible.timeline[0].signals[0].evidence[0]
+    assert entry.intimacy_id == "intim_the_guild"
+
+
+def test_add_event_accepts_evidence_for_same_signal_add_intimacy(
+    isolated_world: World,
+) -> None:
+    upsert_character.func(name="Mira")
+    character = isolated_world.story_bible.characters[0]
+    created = Intimacy(id="intim_new_debt", text="Owes Kael a debt", strength="minor")
+
+    add_event.func(
+        "A favor",
+        signals=[
+            Signal(
+                character_id=character.id,
+                effects=[AddIntimacy(intimacy=created)],
+                evidence=[
+                    IntimacyEvidence(
+                        intimacy_id=created.id,
+                        direction="supports",
+                        strength=3,
+                        rationale="The debt begins here.",
+                    )
+                ],
+            )
+        ],
+    )
+
+    signal = isolated_world.story_bible.timeline[0].signals[0]
+    assert signal.evidence[0].intimacy_id == created.id
 
 
 def test_read_story_bible_overview_lists_entities(isolated_world: World) -> None:

@@ -123,7 +123,9 @@ Secrets such as API keys are always local-only and must not appear in exported p
 
 Story Bible forms render one field per canonical data-model field.
 
-- Structured list fields such as intimacies, effects, and signals render as add/remove lists.
+- Structured list fields such as intimacies, effects, signals, and signal evidence entries
+  render as add/remove lists. Evidence entries (direction, intimacy, 1–5 strength, rationale)
+  are the user's manual lever over derived intimacy rank.
 - Tag lists render as a single comma-separated input.
 - Multi-line text fields render as textareas sized to the field's purpose.
 - Short fields such as names and titles render as single-line inputs.

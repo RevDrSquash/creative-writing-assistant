@@ -14,6 +14,7 @@ from app.world.models import (
     Event,
     EventRelation,
     Intimacy,
+    IntimacyEvidence,
     RemoveIntimacy,
     RemoveWorldStateEntry,
     Scene,
@@ -50,8 +51,8 @@ def _bible_with_character() -> tuple[StoryBible, Character, Intimacy]:
     return bible, character, intimacy
 
 
-def test_schema_version_is_eight() -> None:
-    assert SCHEMA_VERSION == 8
+def test_schema_version_is_nine() -> None:
+    assert SCHEMA_VERSION == 9
 
 
 def test_scene_blueprint_defaults() -> None:
@@ -210,7 +211,9 @@ def test_derive_state_applies_signal_effects_to_character() -> None:
         intimacy.id: "defining",
         "int-2": "major",
     }
-    assert [item.text for item in final.intimacies] == ["Trusts Mira completely"]
+    by_id = {item.id: item for item in final.intimacies}
+    assert by_id["int-2"].text == "Trusts Mira completely"
+    assert by_id[intimacy.id].strength == "dormant"
 
 
 def test_derive_state_follows_graph_order_over_list_order() -> None:
@@ -517,3 +520,210 @@ def test_resolve_scene_id_returns_none_when_ambiguous() -> None:
     )
 
     assert world.resolve_scene_id("scene_guard") is None
+
+
+def test_signal_evidence_round_trips() -> None:
+    bible, character, intimacy = _bible_with_character()
+    bible.timeline.append(
+        Event(
+            title="A look",
+            signals=[
+                Signal(
+                    character_id=character.id,
+                    interpretation="They meant it.",
+                    evidence=[
+                        IntimacyEvidence(
+                            intimacy_id=intimacy.id,
+                            direction="supports",
+                            strength=3,
+                            rationale="The warning was personal.",
+                            confidence=0.8,
+                        )
+                    ],
+                )
+            ],
+        )
+    )
+
+    restored = World.model_validate(World(story_bible=bible).model_dump(mode="json"))
+    entry = restored.story_bible.timeline[0].signals[0].evidence[0]
+    assert entry.intimacy_id == intimacy.id
+    assert entry.direction == "supports"
+    assert entry.strength == 3
+    assert entry.confidence == 0.8
+
+
+def test_derive_state_applies_evidence_rank_and_keeps_dormant_intimacies() -> None:
+    bible, character, intimacy = _bible_with_character()
+    bible.timeline = [
+        Event(
+            title="Proof",
+            signals=[
+                Signal(
+                    character_id=character.id,
+                    evidence=[
+                        IntimacyEvidence(
+                            intimacy_id=intimacy.id,
+                            direction="supports",
+                            strength=5,
+                            rationale="Identity-shaking betrayal.",
+                        )
+                    ],
+                )
+            ],
+        ),
+        Event(
+            title="Erosion",
+            signals=[
+                Signal(
+                    character_id=character.id,
+                    evidence=[
+                        IntimacyEvidence(
+                            intimacy_id=intimacy.id,
+                            direction="contradicts",
+                            strength=5,
+                            rationale="The fear no longer holds.",
+                        )
+                    ],
+                )
+            ],
+        ),
+    ]
+
+    after_proof = derive_state_at(bible, 1).characters[character.id]
+    after_erosion = derive_state(bible).characters[character.id]
+
+    assert after_proof.intimacies[0].strength == "defining"
+    assert after_erosion.intimacies[0].strength == "minor"
+    assert after_erosion.intimacies[0].id == intimacy.id
+
+
+def test_derive_state_recomputes_evidence_rank_at_inserted_event() -> None:
+    bible, character, intimacy = _bible_with_character()
+    late = Event(
+        id="event_late",
+        title="Late proof",
+        signals=[
+            Signal(
+                character_id=character.id,
+                evidence=[
+                    IntimacyEvidence(
+                        intimacy_id=intimacy.id,
+                        direction="supports",
+                        strength=5,
+                        rationale="The later confirmation.",
+                    )
+                ],
+            )
+        ],
+    )
+    inserted = Event(
+        id="event_inserted",
+        title="Inserted challenge",
+        signals=[
+            Signal(
+                character_id=character.id,
+                evidence=[
+                    IntimacyEvidence(
+                        intimacy_id=intimacy.id,
+                        direction="contradicts",
+                        strength=3,
+                        rationale="A mid-timeline crack.",
+                    )
+                ],
+            )
+        ],
+    )
+    bible.timeline = [late, inserted]
+    bible.event_relations.append(
+        EventRelation(kind="follows", source_id=late.id, target_id=inserted.id)
+    )
+
+    after_insert = derive_state(bible, up_to_event_id=inserted.id).characters[character.id]
+    after_late = derive_state(bible).characters[character.id]
+
+    assert after_insert.intimacies[0].strength == "dormant"
+    assert after_late.intimacies[0].strength == "defining"
+
+
+def test_derive_state_same_signal_add_and_evidence() -> None:
+    bible, character, _intimacy = _bible_with_character()
+    created = Intimacy(id="intim_new_debt", text="Owes Kael a debt", strength="minor")
+    bible.timeline = [
+        Event(
+            title="A favor",
+            signals=[
+                Signal(
+                    character_id=character.id,
+                    effects=[AddIntimacy(intimacy=created)],
+                    evidence=[
+                        IntimacyEvidence(
+                            intimacy_id=created.id,
+                            direction="supports",
+                            strength=3,
+                            rationale="The debt is real.",
+                        )
+                    ],
+                )
+            ],
+        )
+    ]
+
+    derived = derive_state(bible).characters[character.id]
+    by_id = {item.id: item for item in derived.intimacies}
+    assert by_id[created.id].strength == "major"
+    assert by_id[created.id].text == "Owes Kael a debt"
+
+
+def test_effect_diagnostics_warns_on_dangling_evidence() -> None:
+    bible, character, _intimacy = _bible_with_character()
+    bible.timeline = [
+        Event(
+            id="event_early",
+            title="Early",
+            signals=[
+                Signal(
+                    character_id=character.id,
+                    evidence=[
+                        IntimacyEvidence(
+                            intimacy_id="intim_later",
+                            direction="supports",
+                            strength=3,
+                            rationale="Too soon.",
+                        )
+                    ],
+                )
+            ],
+        ),
+        Event(
+            id="event_late",
+            title="Late",
+            signals=[
+                Signal(
+                    character_id=character.id,
+                    effects=[AddIntimacy(intimacy=Intimacy(id="intim_later", text="Later"))],
+                )
+            ],
+        ),
+    ]
+
+    diagnostics = effect_diagnostics(bible)
+
+    assert len(diagnostics) == 1
+    assert diagnostics[0].event_id == "event_early"
+    assert "intim_later" in diagnostics[0].message
+    assert "evidence" in diagnostics[0].message
+
+
+def test_resolve_intimacy_id_exact_and_drift() -> None:
+    intimacy = Intimacy(id="intim_the_guild", text="I can't trust the Guild")
+    character = Character(
+        identity=CharacterIdentity(name="Mira"),
+        baseline_state=CharacterBaselineState(intimacies=[intimacy]),
+    )
+    bible = StoryBible(characters=[character])
+
+    assert bible.resolve_intimacy_id("intim_the_guild") == "intim_the_guild"
+    assert bible.resolve_intimacy_id("intim_guild") == "intim_the_guild"
+    assert bible.resolve_intimacy_id("intim_missing") is None
+    assert bible.resolve_intimacy_id("intim_guild", character_id=character.id) == "intim_the_guild"

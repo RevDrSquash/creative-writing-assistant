@@ -308,6 +308,60 @@ async def test_timeline_add_event_opens_event_form(
     assert len(stored["story_bible"]["timeline"]) == 1
 
 
+async def test_event_signal_evidence_is_editable(
+    user: User,
+    isolated_data_dir: Path,
+) -> None:
+    from app.persistence.world import JsonFileWorldStore, default_world
+    from app.world.models import (
+        Character,
+        CharacterBaselineState,
+        CharacterIdentity,
+        Event,
+        Intimacy,
+        Signal,
+    )
+
+    world = default_world()
+    intimacy = Intimacy(id="intim_wary", text="Wary of outsiders", strength="minor")
+    world.story_bible.characters.append(
+        Character(
+            id="char_mira",
+            identity=CharacterIdentity(name="Mira"),
+            baseline_state=CharacterBaselineState(intimacies=[intimacy]),
+        )
+    )
+    world.story_bible.timeline.append(
+        Event(
+            id="evt_look",
+            title="A look",
+            signals=[
+                Signal(
+                    id="sig_mira",
+                    character_id="char_mira",
+                    interpretation="They meant it.",
+                )
+            ],
+        )
+    )
+    JsonFileWorldStore(isolated_data_dir / "world.json").save(world)
+
+    await user.open("/workspace/timeline")
+    user.find(marker="timeline-graph").trigger("node_click", "c1_mermaid-flowchart-evt_look-0")
+    await user.should_see("Evidence")
+    await user.should_see("No evidence entries.")
+    user.find("Add evidence").click()
+    await user.should_see("Supports")
+    await user.should_see("3 · Meaningful")
+
+    stored = json.loads((isolated_data_dir / "world.json").read_text(encoding="utf-8"))
+    evidence = stored["story_bible"]["timeline"][0]["signals"][0]["evidence"]
+    assert len(evidence) == 1
+    assert evidence[0]["intimacy_id"] == "intim_wary"
+    assert evidence[0]["direction"] == "supports"
+    assert evidence[0]["strength"] == 3
+
+
 async def test_timeline_graph_and_event_relationships(
     user: User,
     isolated_data_dir: Path,

@@ -19,7 +19,8 @@ signals). Only plot-necessary facts belong on the timeline: if nothing in the st
 detail happening at a specific time, leave it to the prose. Over-populating the timeline with
 trivia constrains scene generation. Each event may carry world-state effects (add, update, or
 remove entries) and per-character signals. A signal is one character's subjective interpretation
-of that event; signals carry character-state effects (intimacies).
+of that event; signals carry evidence (scored relationships to intimacies) and
+structural creation/rewording records. Intimacy rank is derived during replay.
 
 Scenes are units of prose in which something changes. A scene enacts one or more events through
 its blueprint (``event_ids``); each event may be dramatized on-page in at most one scene. Events

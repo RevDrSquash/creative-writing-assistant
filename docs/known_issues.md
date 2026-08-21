@@ -85,7 +85,7 @@ fix so the context is not lost between phases.
 
 - **Severity:** Low (documented breaking change)
 - **Location:** `app/persistence/world.py` — `migrate_world_payload`; `app/world/models.py`
-  — `SCHEMA_VERSION` (currently 8; the code is authoritative, this number drifts)
+  — `SCHEMA_VERSION` (currently 9; the code is authoritative, this number drifts)
 - **Introduced:** Schema version 2 (readable slug ids)
 - **Symptom:** `migrate_world_payload` upgrades stored worlds from v3 through the current
   version, but loading a `world.json` (or ZIP import) with `schema_version` 1 or 2 fails with
@@ -103,9 +103,10 @@ fix so the context is not lost between phases.
   warnings card; `read_timeline` / `read_event` / `read_world_state` tools
 - **Introduced:** Graph-derived timeline order (chronology changes when relations are edited,
   making prior effect references invalid at replay time)
-- **Symptom:** An event's `set_intimacy_strength`, `update_intimacy`, `remove_intimacy`, or
-  world-state `update_entry` / `remove_entry` may target an id that is not present when that
-  event is replayed (for example, strengthening an intimacy before the event that adds it).
+- **Symptom:** An event's `set_intimacy_strength`, `update_intimacy`, `remove_intimacy`,
+  signal evidence entry, or world-state `update_entry` / `remove_entry` may target an id that
+  is not present when that event is replayed (for example, evidence for an intimacy before
+  the event that adds it).
   Replay skips the effect silently; `effect_diagnostics()` and the Timeline warnings card
   surface the problem but edits are still allowed.
 - **Why it is acceptable for now:** Warning-first keeps authoring flexible while surfacing
@@ -174,3 +175,21 @@ fix so the context is not lost between phases.
 - **Possible fix:** Wrap the storage cleanup in a retry (as `JsonFileWorldStore.save()` does for
   `os.replace`), point NiceGUI storage at a `tmp_path` excluded from indexing, or upstream a
   `missing_ok`/retry to NiceGUI's `Storage.clear()`.
+
+## 12. Interim intimacy-rank fold pending the threshold engine
+
+- **Severity:** Low (documented stand-in, not a correctness hole for migrated data)
+- **Location:** `app/world/evidence.py` — `apply_evidence_entry`; invoked from
+  `app/world/replay.py`
+- **Introduced:** Schema version 9 (evidence entries on signals)
+- **Symptom:** Replay derives intimacy rank from evidence with a simple last-write
+  (`supports` maps 1–5 onto minor/major/defining) and step-down (`contradicts` demotes 0–2
+  ranks). This reconstructs v8 `set_intimacy_strength` ranks after migration but does not
+  implement recency, scenario breadth, diminishing duplicates, or inspectable
+  distance-to-threshold.
+- **Why it is acceptable for now:** The real accumulation/threshold engine is a follow-on
+  task (see [story_bible_model.md](story_bible_model.md) "Accumulator shape"). The interim
+  fold keeps derived state defined and editable so the data-model change can ship first.
+- **Possible fix:** Replace `apply_evidence_entry` with the planned accumulator; keep the
+  function a pure (evidence in → rank out) call so replay and a future plot-editor agent
+  share one implementation.

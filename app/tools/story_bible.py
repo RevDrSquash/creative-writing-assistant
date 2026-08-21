@@ -15,6 +15,7 @@ from langchain_core.tools import ToolException, tool
 
 from app.world.character_arc import CharacterArc, derive_character_arc, format_character_arc
 from app.world.models import (
+    AddIntimacy,
     Character,
     Event,
     EventRelation,
@@ -459,6 +460,8 @@ def read_event(event_id: str) -> str:
         character = bible.get_character(signal.character_id)
         name = character.identity.name if character else f"unknown ({signal.character_id})"
         lines.append(f"- {name} [signal id: {signal.id}]: {signal.interpretation or '-'}")
+        for entry in signal.evidence:
+            lines.append(f"  - evidence {json.dumps(entry.model_dump(mode='json'))}")
         for effect in signal.effects:
             lines.append(f"  - {json.dumps(effect.model_dump(mode='json'))}")
 
@@ -532,7 +535,8 @@ def add_event(
 
     ``world_state_effects`` are structured deltas to the active world state.
     ``signals`` describe how specific characters interpret the event and carry
-    character-state effects (intimacies).
+    evidence entries (scored intimacy relationships) plus structural
+    creation/rewording records.
     """
 
     with world_transaction() as world:
@@ -555,6 +559,7 @@ def add_event(
             signals=signals or [],
         )
         _validate_signal_character_ids(bible, event.signals)
+        _validate_signal_evidence_ids(bible, event.signals)
         event.id = unique_slug(
             "event_",
             title,
@@ -617,6 +622,7 @@ def update_event(
             event.world_state_effects = world_state_effects
         if signals is not None:
             _validate_signal_character_ids(bible, signals)
+            _validate_signal_evidence_ids(bible, signals)
             event.signals = signals
 
     return f"Updated event '{event.title}' (id: {event.id})."
@@ -775,8 +781,7 @@ def _character_listing(bible: StoryBible) -> str:
     if not bible.characters:
         return "No characters exist yet; create one first."
     listing = ", ".join(
-        f"{character.identity.name or 'Unnamed'} [{character.id}]"
-        for character in bible.characters
+        f"{character.identity.name or 'Unnamed'} [{character.id}]" for character in bible.characters
     )
     return f"Valid characters: {listing}"
 
@@ -802,6 +807,46 @@ def _validate_signal_character_ids(bible: StoryBible, signals: list[Signal]) -> 
             else:
                 detail = "No characters exist yet; create one first."
             raise ToolException(f"Unknown character_id '{signal.character_id}' in signal. {detail}")
+
+
+def _validate_signal_evidence_ids(bible: StoryBible, signals: list[Signal]) -> None:
+    """Resolve or reject evidence intimacy ids; never persist a dangling reference."""
+
+    for signal in signals:
+        extra_ids = [
+            effect.intimacy.id
+            for effect in signal.effects
+            if isinstance(effect, AddIntimacy) and effect.intimacy.id
+        ]
+        catalog = dict(bible.intimacy_catalog(signal.character_id or None))
+        for extra_id in extra_ids:
+            if extra_id not in catalog:
+                catalog[extra_id] = extra_id
+        for entry in signal.evidence:
+            if not entry.intimacy_id:
+                raise ToolException(
+                    f"Signal evidence is missing intimacy_id. {_intimacy_listing(catalog)}"
+                )
+            match = bible.resolve_intimacy_id(
+                entry.intimacy_id,
+                character_id=signal.character_id or None,
+                extra_ids=extra_ids,
+            )
+            if match is None:
+                raise ToolException(
+                    f"Unknown intimacy_id '{entry.intimacy_id}' in signal evidence. "
+                    f"{_intimacy_listing(catalog)}"
+                )
+            entry.intimacy_id = match
+
+
+def _intimacy_listing(catalog: dict[str, str]) -> str:
+    if not catalog:
+        return "No intimacies exist yet for this character; add one first."
+    listing = ", ".join(
+        f"{text or intimacy_id} [{intimacy_id}]" for intimacy_id, text in catalog.items()
+    )
+    return f"Valid intimacies: {listing}"
 
 
 def _chronological_event_index(bible: StoryBible, event_id: str) -> int:
@@ -838,11 +883,7 @@ def _format_event_placement(world, event_id: str) -> str:
 
 
 def _scenes_related_to_event(world, event_id: str) -> list:
-    return [
-        scene
-        for scene in world.scenes
-        if event_id in scene.blueprint.related_event_ids
-    ]
+    return [scene for scene in world.scenes if event_id in scene.blueprint.related_event_ids]
 
 
 def _duplicate_enactment_warnings(world) -> str:
