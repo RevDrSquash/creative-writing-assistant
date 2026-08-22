@@ -1,9 +1,10 @@
 # Async Jobs
 
-Background work in the writing workspace (scene generation and chat turns) runs as tracked **jobs**
-with **resource claims**. A dependency-aware **scene generation queue** schedules bulk generation
-so later scenes wait for earlier ones. The UI and agent tools enforce claims at their boundaries so
-concurrent edits do not collide with in-flight generation or chat.
+Background work in the writing workspace (scene generation, intimacy interpretation, and chat
+turns) runs as tracked **jobs** with **resource claims**. A dependency-aware **scene generation
+queue** schedules bulk generation so later scenes wait for earlier ones. Intimacy interpretation
+fans out per character without that queue. The UI and agent tools enforce claims at their
+boundaries so concurrent edits do not collide with in-flight generation or chat.
 
 ## JobManager
 
@@ -15,7 +16,7 @@ Each **Job** record includes:
 | Field | Purpose |
 | --- | --- |
 | `id` | UUID |
-| `kind` | `"scene_generation"` or `"chat_turn"` |
+| `kind` | `"scene_generation"`, `"chat_turn"`, or `"intimacy_interpretation"` |
 | `label` | Human-readable name for toasts and debugging |
 | `claims` | Resource keys this job owns while running |
 | `status` | `running`, `finished`, or `failed` |
@@ -30,6 +31,9 @@ Claims are plain string keys:
 
 - `scene:{scene_id}` — scene generation holds the scene being generated.
 - `chat` — an in-flight chat agent turn.
+- `intimacy:{event_id}:{character_id}` — one character-event interpretation. Analyses are
+  read-only so different characters on the same event run in parallel. Apply serializes
+  through `world_transaction()`.
 
 `JobManager.claim_for(resource)` returns the running job that holds a claim, or `None`.
 
@@ -66,6 +70,12 @@ B's enacted events, or when A enacts an event listed in B's `related_event_ids`.
 
 - **Scene generation** — a daemon thread runs `run_scene_generation()` synchronously via
   `workflow.invoke`.
+- **Intimacy interpretation** — `start_event_interpretation(event_id)` resolves relevant
+  characters (event signal ids ∪ enacting-scene cast) and starts one daemon thread per
+  character running `run_and_apply_intimacy_interpretation`. An empty relevant set is a
+  no-op with a visible status. `add_event` / `update_event` call this after the
+  transaction commits; the event editor's Interpret / Re-run button calls the same
+  entry point. Relation edits do not start jobs.
 - **Chat turns** — `start_chat_turn()` creates an `asyncio.create_task` owned by the manager. The
   task streams from `get_chat_agent().astream()`, accumulates assistant text in the job's
   `ChatLive` buffer, applies scene text side effects, and persists the assistant message on
@@ -90,7 +100,8 @@ Updates use the established poll-based pattern (`ui.timer` + `@ui.refreshable`),
 | Generate All Scenes | Header overflow menu | Checklist dialog → `queue_scene_generations` → navigate to `/queue` |
 | Completion toasts | `app/ui/layout.py` | Per-client `ui.timer` polls finished jobs; each toast fires once per browser tab via `app.storage.user["notified_job_ids"]` |
 
-Toast copy: `"{label} generated"`, `"Scene generation failed: …"`, `"Agent reply ready"`.
+Toast copy: `"{label} generated"`, `"Scene generation failed: …"`, `"Agent reply ready"`,
+`"{label} interpreted"`, `"Intimacy interpretation failed: …"`.
 
 ## Persistence hardening
 

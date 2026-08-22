@@ -2,8 +2,8 @@
 
 Multi-step agent workflows are built on LangGraph. This doc is the authoritative description of the
 workflow pattern and of the built workflows: the scene-writing workflow (`generate_scene`) and
-the per-character intimacy interpretation workflow (`interpret_intimacy`). Triggering, fan-out,
-and apply for intimacy interpretation are still planned (see below). For the surrounding system see
+the per-character intimacy interpretation workflow (`interpret_intimacy`). Triggering, parallel
+fan-out, and deterministic apply are wired through `JobManager`. For the surrounding system see
 [architecture.md](architecture.md); for the data these workflows read and write see
 [story_bible_model.md](story_bible_model.md) and [forms_and_data_models.md](forms_and_data_models.md).
 
@@ -242,11 +242,13 @@ registered as `interpret_intimacy`. Data-model decisions live in
 the earlier description-based intimacy review workflow that was designed in
 [future_work.md](future_work.md).
 
-`run_intimacy_interpretation(event_id, character_id)` is the programmatic entry point. It
-returns an `InterpretationResult` and **does not mutate the world**. Triggering on event
-create/edit, parallel per-character fan-out, persistence, and applying the result are still
-tracked as follow-on work. Until that apply stage lands, agents may still author structural
-intimacy records directly.
+`run_intimacy_interpretation(event_id, character_id)` is the analyze-only entry point. It
+returns an `InterpretationResult` and **does not mutate the world**. Persistence is
+`apply_interpretation` / `run_and_apply_intimacy_interpretation` in
+`app/graphs/intimacy_interpretation.py`. `JobManager.start_event_interpretation(event_id)`
+(and `start_intimacy_interpretation` for one pair) is the public trigger used by agent
+event tools, the event-editor re-run button, and any future plot-editor loop — invocation
+is not coupled to NiceGUI handlers.
 
 The graph is an enforced sequence with no conditional routing:
 
@@ -269,14 +271,21 @@ The graph is an enforced sequence with no conditional routing:
 
 Key decisions (2026-08-21 project review):
 
-- **Trigger: automatic on event creation/edit.** Whenever an event is added or edited, the
-  pipeline runs per relevant character via `JobManager`, plus a manual re-run action. Derived
-  accumulation makes recompute after timeline insertion safe. Relation edits (reordering) do
-  **not** trigger automatic re-analysis — `effect_diagnostics()` warnings plus the manual
-  re-run action cover reorder staleness.
-- **Per-character parallel fan-out.** The workflow runs independently, in parallel, for each
-  character relevant to the event, following the same `Send` fan-out pattern the scene
-  workflow uses for per-character review.
+- **Trigger: automatic on event creation/edit.** `add_event` / `update_event` start
+  interpretation after the world transaction commits. The event editor's Interpret /
+  Re-run button calls the same `JobManager` entry point. Relevant characters are the
+  union of character ids on the event's signals and character ids on any scene that
+  enacts the event. If that set is empty the run is a no-op and the status reads
+  "No relevant characters — add a signal or scene cast, then re-run." UI form
+  keystroke saves do not auto-trigger (they are not transactional and fire
+  continuously). Relation edits (reordering) do **not** trigger automatic
+  re-analysis — `effect_diagnostics()` warnings plus the manual re-run action cover
+  reorder staleness.
+- **Per-character parallel fan-out.** `JobManager` starts one
+  `intimacy_interpretation` job per relevant character with claim
+  `intimacy:{event_id}:{character_id}`. Analyses are read-only and run in
+  parallel; a second start for the same pair is rejected. Apply serializes
+  through `world_transaction()`.
 - **Deterministic context assembly; no conditional routing in v1.** Context (the event, the
   character's identity, current intimacies with ranks, recent relevant signals) is assembled
   deterministically — no tool-enabled retrieval sub-loop and no request-deeper-context loop —

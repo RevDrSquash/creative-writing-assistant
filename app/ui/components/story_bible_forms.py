@@ -11,7 +11,9 @@ from collections.abc import Callable
 
 from nicegui import ui
 
+from app.graphs.jobs import get_job_manager
 from app.ui.save_helpers import save_world_ui
+from app.world.evidence import format_threshold_distance
 from app.world.models import (
     AddIntimacy,
     AddWorldStateEntry,
@@ -41,7 +43,7 @@ from app.world.relations import (
     normalize_relation,
     relation_diagnostics,
 )
-from app.world.replay import derive_state_at, effect_diagnostics
+from app.world.replay import derive_state_at, effect_diagnostics, explain_intimacies_at
 from app.world.scene import enacting_scenes, prune_event_links
 from app.world.store import get_world
 
@@ -515,12 +517,19 @@ def _render_derived_character_state(character: Character) -> None:
             if derived is None:
                 ui.label("Character not present in derived state.").classes("text-grey-7")
                 return
+            ranks = explain_intimacies_at(bible, character.id, position["value"])
             if not derived.intimacies:
                 ui.label("No intimacies.").classes("text-grey-7")
             for intimacy in derived.intimacies:
                 with ui.row().classes("w-full items-center no-wrap gap-2"):
                     ui.badge(_STRENGTH_OPTIONS[intimacy.strength]).props("outline color=primary")
                     ui.label(intimacy.text)
+                    explanation = ranks.get(intimacy.id)
+                    if explanation is not None:
+                        ui.label(format_threshold_distance(explanation)).classes(
+                            "text-grey-7 text-sm"
+                        )
+            _render_signal_history(bible, character.id, position["value"])
 
         def on_position_change(event) -> None:
             if isinstance(event.value, int):
@@ -848,6 +857,9 @@ def _render_event_editor(
         ui.label("Signals").classes("text-lg font-semibold")
         ui.label("How specific characters interpret this event.").classes("text-grey-7 text-sm")
 
+        manager = get_job_manager()
+        was_running = {"value": manager.is_interpreting(event.id)}
+
         @ui.refreshable
         def signals_section() -> None:
             if not event.signals:
@@ -855,6 +867,63 @@ def _render_event_editor(
             for signal in event.signals:
                 _render_signal_card(event, signal, chron_index, signals_section.refresh)
 
+        def start_interpretation() -> None:
+            try:
+                manager.start_event_interpretation(event.id)
+            except (RuntimeError, ValueError) as exc:
+                ui.notify(str(exc), type="warning")
+                return
+            interpretation_controls.refresh()
+
+        @ui.refreshable
+        def interpretation_controls() -> None:
+            status = manager.event_interpretation_status(event.id)
+            running = bool(status.running_character_ids)
+            if running:
+                button = ui.button("Interpreting...", icon="hourglass_empty")
+                button.props("flat disable")
+                button.mark("interpret-intimacies-button")
+                ui.spinner(size="sm").mark("interpret-intimacies-spinner")
+                names = _character_names(bible, status.running_character_ids)
+                ui.label(f"Interpreting intimacies for {names}.").classes(
+                    "text-grey-7 text-sm"
+                ).mark("intimacy-interpretation-status")
+            else:
+                label = (
+                    "Re-run interpretation"
+                    if _event_has_reviewed_signal(event)
+                    else "Interpret intimacies"
+                )
+                button = ui.button(label, icon="psychology", on_click=start_interpretation)
+                button.props("flat")
+                button.mark("interpret-intimacies-button")
+                if status.empty_reason:
+                    ui.label(status.empty_reason).classes("text-grey-7 text-sm").mark(
+                        "intimacy-interpretation-status"
+                    )
+                elif status.last_errors:
+                    details = "; ".join(
+                        f"{_character_name(bible, character_id)}: {error}"
+                        for character_id, error in status.last_errors.items()
+                    )
+                    ui.label(f"Interpretation failed: {details}").classes(
+                        "text-negative text-sm"
+                    ).mark("intimacy-interpretation-status")
+                elif status.finished_character_ids:
+                    names = _character_names(bible, status.finished_character_ids)
+                    ui.label(f"Last interpretation finished for {names}.").classes(
+                        "text-grey-7 text-sm"
+                    ).mark("intimacy-interpretation-status")
+
+        def poll_interpretation() -> None:
+            running = manager.is_interpreting(event.id)
+            if was_running["value"] and not running:
+                signals_section.refresh()
+            was_running["value"] = running
+            interpretation_controls.refresh()
+
+        interpretation_controls()
+        ui.timer(1.0, poll_interpretation)
         signals_section()
 
         def add_signal() -> None:
@@ -1208,6 +1277,11 @@ def _render_signal_card(
         _bound_textarea(
             signal, "interpretation", placeholder="How the character reads this event..."
         )
+        if signal.review is not None and signal.review.decision:
+            with ui.row().classes("w-full items-center gap-2"):
+                ui.badge(signal.review.decision.capitalize()).props("outline")
+                if signal.review.notes:
+                    ui.label(signal.review.notes).classes("text-grey-7 text-sm")
 
         intimacy_options = _intimacy_options_for_signal(bible, chron_index, signal)
 
@@ -1361,6 +1435,38 @@ async def _confirm_delete_event(
         on_deleted()
     else:
         ui.navigate.to("/workspace/timeline")
+
+
+def _event_has_reviewed_signal(event: Event) -> bool:
+    return any(signal.review is not None and signal.review.decision for signal in event.signals)
+
+
+def _character_name(bible: StoryBible, character_id: str) -> str:
+    character = bible.get_character(character_id)
+    if character is None:
+        return character_id
+    return character.identity.name or "Unnamed"
+
+
+def _character_names(bible: StoryBible, character_ids: list[str]) -> str:
+    return ", ".join(_character_name(bible, character_id) for character_id in character_ids)
+
+
+def _render_signal_history(bible: StoryBible, character_id: str, position: int) -> None:
+    ui.label("Signal history").classes("text-sm font-semibold")
+    shown = False
+    for event in chronological_order(bible)[:position]:
+        for signal in event.signals:
+            if signal.character_id != character_id:
+                continue
+            shown = True
+            with ui.row().classes("w-full items-start no-wrap gap-2"):
+                ui.label(event.title or "Untitled").classes("text-sm font-medium")
+                if signal.review is not None and signal.review.decision:
+                    ui.badge(signal.review.decision.capitalize()).props("outline")
+                ui.label(signal.interpretation or "—").classes("text-sm text-grey-7")
+    if not shown:
+        ui.label("No signals yet.").classes("text-grey-7 text-sm")
 
 
 def _entry_options_before(bible: StoryBible, chron_index: int) -> dict[str, str]:

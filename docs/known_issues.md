@@ -175,3 +175,21 @@ fix so the context is not lost between phases.
 - **Possible fix:** Wrap the storage cleanup in a retry (as `JsonFileWorldStore.save()` does for
   `os.replace`), point NiceGUI storage at a `tmp_path` excluded from indexing, or upstream a
   `missing_ok`/retry to NiceGUI's `Storage.clear()`.
+
+## 12. Intimacy interpretation does not re-run on UI keystrokes or relation edits
+
+- **Severity:** Low (accepted trigger posture, not a defect)
+- **Location:** `app/tools/story_bible.py` (`add_event` / `update_event`);
+  `app/ui/components/story_bible_forms.py` event editor; `app/graphs/jobs.py`
+- **Introduced:** DEF-11 (intimacy pipeline wiring)
+- **Symptom:** Changing an event title or signal in the form, or adding/removing an
+  event relation, does not start interpretation. Only agent `add_event` /
+  `update_event` and the event editor's Interpret / Re-run button do. After a
+  reorder, `effect_diagnostics()` may warn about stale evidence until the user
+  re-runs.
+- **Why it is acceptable:** Form binds save on every keystroke and are not
+  transactional (see #3); firing an LLM run on each save would be costly and racy.
+  Relation-triggered re-analysis was explicitly declined (replay recomputes rank;
+  semantic re-read is manual).
+- **Possible fix:** Optional debounce after the user leaves an event, or a
+  "signals look stale" badge after relation edits that deep-links to Re-run.

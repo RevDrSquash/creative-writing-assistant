@@ -467,6 +467,9 @@ def read_event(event_id: str) -> str:
         character = bible.get_character(signal.character_id)
         name = character.identity.name if character else f"unknown ({signal.character_id})"
         lines.append(f"- {name} [signal id: {signal.id}]: {signal.interpretation or '-'}")
+        if signal.review is not None and signal.review.decision:
+            notes = f" — {signal.review.notes}" if signal.review.notes else ""
+            lines.append(f"  - review: {signal.review.decision}{notes}")
         for entry in signal.evidence:
             lines.append(f"  - evidence {json.dumps(entry.model_dump(mode='json'))}")
         for effect in signal.effects:
@@ -541,9 +544,9 @@ def add_event(
     ties among unrelated events.
 
     ``world_state_effects`` are structured deltas to the active world state.
-    ``signals`` describe how specific characters interpret the event and carry
-    evidence entries (scored intimacy relationships) plus structural
-    creation/rewording records.
+    ``signals`` are hints for the intimacy interpretation workflow: pass
+    ``character_id`` and ``interpretation`` only. Effects and evidence on
+    incoming signals are ignored; the workflow authors those after review.
     """
 
     with world_transaction() as world:
@@ -559,14 +562,15 @@ def add_event(
                 f"{_event_listing(bible)}"
             )
 
+        hint_signals = _signals_as_hints(signals or [])
+        _validate_signal_character_ids(bible, hint_signals)
+        _validate_signal_evidence_ids(bible, hint_signals)
         event = Event(
             title=title,
             description=description,
             world_state_effects=world_state_effects or [],
-            signals=signals or [],
+            signals=hint_signals,
         )
-        _validate_signal_character_ids(bible, event.signals)
-        _validate_signal_evidence_ids(bible, event.signals)
         event.id = unique_slug(
             "event_",
             title,
@@ -596,7 +600,10 @@ def add_event(
     relation_note = ""
     if added_relations:
         relation_note = f" Added {len(added_relations)} relation(s)."
-    return f"Added event '{event.title}' (id: {event.id}).{relation_note}"
+    return (
+        f"Added event '{event.title}' (id: {event.id}).{relation_note}"
+        f"{_start_event_interpretation_note(event.id)}"
+    )
 
 
 @tool
@@ -610,9 +617,13 @@ def update_event(
     """Partially update an event; only provided fields change.
 
     `world_state_effects` and `signals` replace the whole respective list, so
-    read the event first and resend the full list when editing them. To change
+    read the event first and resend the full list when editing them. Incoming
+    signals are hints (character_id + interpretation); effects and evidence
+    supplied by the agent are ignored. Existing evidence and structural
+    records for the same character stay until interpretation applies. To change
     chronology, use add_event_relation / remove_event_relation rather than
-    moving the event in the timeline list.
+    moving the event in the timeline list. Relation edits do not re-run
+    interpretation.
     """
 
     with world_transaction() as world:
@@ -628,11 +639,15 @@ def update_event(
         if world_state_effects is not None:
             event.world_state_effects = world_state_effects
         if signals is not None:
-            _validate_signal_character_ids(bible, signals)
-            _validate_signal_evidence_ids(bible, signals)
-            event.signals = signals
+            hint_signals = _signals_as_hints(signals, existing=event.signals)
+            _validate_signal_character_ids(bible, hint_signals)
+            _validate_signal_evidence_ids(bible, hint_signals)
+            event.signals = hint_signals
 
-    return f"Updated event '{event.title}' (id: {event.id})."
+    return (
+        f"Updated event '{event.title}' (id: {event.id})."
+        f"{_start_event_interpretation_note(event.id)}"
+    )
 
 
 @tool
@@ -803,6 +818,64 @@ def _event_listing(bible: StoryBible) -> str:
         return "No events exist yet."
     listing = ", ".join(f"{event.title or 'Untitled'} [{event.id}]" for event in bible.timeline)
     return f"Valid events: {listing}"
+
+
+def _signals_as_hints(
+    incoming: list[Signal],
+    existing: list[Signal] | None = None,
+) -> list[Signal]:
+    """Keep character + interpretation from the agent; drop authored mutations.
+
+    When ``existing`` signals are provided (update), prior evidence, effects,
+    and review for the same character or signal id are preserved until apply
+    overwrites them. Agent-supplied effects and evidence are never persisted.
+    """
+
+    existing_by_char = {
+        signal.character_id: signal for signal in existing or [] if signal.character_id
+    }
+    existing_by_id = {signal.id: signal for signal in existing or [] if signal.id}
+    hints: list[Signal] = []
+    for raw in incoming:
+        prior = None
+        if raw.id and raw.id in existing_by_id:
+            prior = existing_by_id[raw.id]
+        elif raw.character_id and raw.character_id in existing_by_char:
+            prior = existing_by_char[raw.character_id]
+        hints.append(
+            Signal(
+                id=prior.id if prior is not None else raw.id,
+                character_id=raw.character_id,
+                interpretation=raw.interpretation,
+                evidence=list(prior.evidence) if prior is not None else [],
+                effects=list(prior.effects) if prior is not None else [],
+                review=prior.review if prior is not None else None,
+                evidence_schema_version=(
+                    prior.evidence_schema_version
+                    if prior is not None
+                    else raw.evidence_schema_version
+                ),
+            )
+        )
+    return hints
+
+
+def _start_event_interpretation_note(event_id: str) -> str:
+    """Trigger interpretation after a committed event write; never from relation edits."""
+
+    from app.graphs.jobs import get_job_manager
+
+    try:
+        jobs = get_job_manager().start_event_interpretation(event_id)
+    except ValueError as exc:
+        return f" {exc}"
+    if not jobs:
+        from app.graphs.intimacy_interpretation import NO_RELEVANT_CHARACTERS_MESSAGE
+
+        return f" {NO_RELEVANT_CHARACTERS_MESSAGE}"
+    count = len(jobs)
+    noun = "character" if count == 1 else "characters"
+    return f" Started intimacy interpretation for {count} {noun}."
 
 
 def _validate_signal_character_ids(bible: StoryBible, signals: list[Signal]) -> None:

@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import time
+
 import pytest
 from langchain_core.tools import ToolException
 
+from app.graphs.jobs import get_job_manager
 from app.tools import READ_ONLY_WRITING_TOOLS
 from app.tools.scene import read_scene_blueprint
 from app.tools.story_bible import (
@@ -58,6 +61,10 @@ def _add_during_event(title: str, other_id: str, **kwargs) -> str:
         relations=[EventRelationSpec(kind="during", event_id=other_id)],
         **kwargs,
     )
+
+
+def _attach_add_intimacy(event, intimacy: Intimacy) -> None:
+    event.signals[0].effects.append(AddIntimacy(intimacy=intimacy))
 
 
 def test_upsert_world_fact_creates_slug_id(isolated_world: World) -> None:
@@ -120,65 +127,7 @@ def test_update_event_rejects_unknown_signal_character_id(isolated_world: World)
     assert event.signals == []
 
 
-def test_add_event_rejects_unknown_evidence_intimacy_id(isolated_world: World) -> None:
-    upsert_character.func(name="Mira")
-    character = isolated_world.story_bible.characters[0]
-    character.baseline_state.intimacies.append(
-        Intimacy(id="intim_wary", text="Wary of outsiders", strength="minor")
-    )
-
-    with pytest.raises(ToolException, match="Unknown intimacy_id 'intim_missing'"):
-        add_event.func(
-            "Betrayal",
-            signals=[
-                Signal(
-                    character_id=character.id,
-                    evidence=[
-                        IntimacyEvidence(
-                            intimacy_id="intim_missing",
-                            direction="supports",
-                            strength=3,
-                            rationale="Hallucinated id.",
-                        )
-                    ],
-                )
-            ],
-        )
-
-    assert isolated_world.story_bible.timeline == []
-
-
-def test_add_event_resolves_drifted_evidence_intimacy_id(isolated_world: World) -> None:
-    upsert_character.func(name="Mira")
-    character = isolated_world.story_bible.characters[0]
-    character.baseline_state.intimacies.append(
-        Intimacy(id="intim_the_guild", text="I can't trust the Guild", strength="minor")
-    )
-
-    add_event.func(
-        "A warning",
-        signals=[
-            Signal(
-                character_id=character.id,
-                evidence=[
-                    IntimacyEvidence(
-                        intimacy_id="intim_guild",
-                        direction="supports",
-                        strength=3,
-                        rationale="The warning named the Guild.",
-                    )
-                ],
-            )
-        ],
-    )
-
-    entry = isolated_world.story_bible.timeline[0].signals[0].evidence[0]
-    assert entry.intimacy_id == "intim_the_guild"
-
-
-def test_add_event_accepts_evidence_for_same_signal_add_intimacy(
-    isolated_world: World,
-) -> None:
+def test_add_event_strips_agent_evidence_and_intimacy_effects(isolated_world: World) -> None:
     upsert_character.func(name="Mira")
     character = isolated_world.story_bible.characters[0]
     created = Intimacy(id="intim_new_debt", text="Owes Kael a debt", strength="minor")
@@ -188,13 +137,14 @@ def test_add_event_accepts_evidence_for_same_signal_add_intimacy(
         signals=[
             Signal(
                 character_id=character.id,
+                interpretation="I owe him now.",
                 effects=[AddIntimacy(intimacy=created)],
                 evidence=[
                     IntimacyEvidence(
-                        intimacy_id=created.id,
+                        intimacy_id="intim_missing",
                         direction="supports",
                         strength=3,
-                        rationale="The debt begins here.",
+                        rationale="Hallucinated id is ignored.",
                     )
                 ],
             )
@@ -202,7 +152,10 @@ def test_add_event_accepts_evidence_for_same_signal_add_intimacy(
     )
 
     signal = isolated_world.story_bible.timeline[0].signals[0]
-    assert signal.evidence[0].intimacy_id == created.id
+    assert signal.character_id == character.id
+    assert signal.interpretation == "I owe him now."
+    assert signal.evidence == []
+    assert signal.effects == []
 
 
 def test_read_story_bible_overview_lists_entities(isolated_world: World) -> None:
@@ -325,12 +278,11 @@ def test_read_character_includes_identity_baseline_and_derived_state(
     character = isolated_world.story_bible.characters[0]
     add_event.func(
         "Betrayal",
-        signals=[
-            Signal(
-                character_id=character.id,
-                effects=[AddIntimacy(intimacy=Intimacy(text="Shaken", strength="minor"))],
-            )
-        ],
+        signals=[Signal(character_id=character.id, interpretation="Shaken")],
+    )
+    _attach_add_intimacy(
+        isolated_world.story_bible.timeline[0],
+        Intimacy(text="Shaken", strength="minor"),
     )
 
     detail = read_character.func(character.id)
@@ -351,23 +303,18 @@ def test_read_character_scoped_replaces_full_timeline_state(isolated_world: Worl
     character = isolated_world.story_bible.characters[0]
     add_event.func(
         "Meeting",
-        signals=[
-            Signal(
-                character_id=character.id,
-                effects=[AddIntimacy(intimacy=Intimacy(text="Owes Kael a debt", strength="major"))],
-            )
-        ],
+        signals=[Signal(character_id=character.id, interpretation="A debt begins.")],
     )
     meeting = isolated_world.story_bible.timeline[0]
+    _attach_add_intimacy(meeting, Intimacy(text="Owes Kael a debt", strength="major"))
     _add_follows_event(
         "Betrayal",
         meeting.id,
-        signals=[
-            Signal(
-                character_id=character.id,
-                effects=[AddIntimacy(intimacy=Intimacy(text="Shaken", strength="minor"))],
-            )
-        ],
+        signals=[Signal(character_id=character.id, interpretation="Shaken")],
+    )
+    _attach_add_intimacy(
+        isolated_world.story_bible.timeline[1],
+        Intimacy(text="Shaken", strength="minor"),
     )
 
     scoped = read_character.func(character.id, end_event_id=meeting.id)
@@ -395,11 +342,11 @@ def test_read_character_arc_happy_path(isolated_world: World) -> None:
             Signal(
                 character_id=character.id,
                 interpretation="This stranger may be useful.",
-                effects=[AddIntimacy(intimacy=Intimacy(text="Owes Kael a debt", strength="major"))],
             )
         ],
     )
     meeting = isolated_world.story_bible.timeline[0]
+    _attach_add_intimacy(meeting, Intimacy(text="Owes Kael a debt", strength="major"))
 
     rendered = read_character_arc.func(character.id, end_event_id=meeting.id)
 
@@ -477,12 +424,7 @@ def test_delete_character_keeps_events(isolated_world: World) -> None:
     character = isolated_world.story_bible.characters[0]
     add_event.func(
         "Betrayal",
-        signals=[
-            Signal(
-                character_id=character.id,
-                effects=[AddIntimacy(intimacy=Intimacy(text="Shaken", strength="minor"))],
-            )
-        ],
+        signals=[Signal(character_id=character.id, interpretation="Shaken")],
     )
 
     delete_character.func(character.id)
@@ -625,6 +567,7 @@ def test_read_event_shows_effects_and_signals(isolated_world: World) -> None:
         ],
     )
     event = isolated_world.story_bible.timeline[0]
+    _attach_add_intimacy(event, Intimacy(text="Wary of outsiders"))
 
     detail = read_event.func(event.id)
 
@@ -632,6 +575,7 @@ def test_read_event_shows_effects_and_signals(isolated_world: World) -> None:
     assert "An ally turns on the party." in detail
     assert "add_entry" in detail
     assert "Mira" in detail
+    assert "Outsiders cannot be trusted" in detail
     assert "Wary of outsiders" in detail
 
 
@@ -808,7 +752,8 @@ def test_add_event_invoked_with_json_payload_coerces_effects(isolated_world: Wor
 
     event = isolated_world.story_bible.timeline[0]
     assert isinstance(event.world_state_effects[0], AddWorldStateEntry)
-    assert isinstance(event.signals[0].effects[0], AddIntimacy)
+    assert event.signals[0].effects == []
+    assert event.signals[0].interpretation == "Outsiders cannot be trusted"
 
 
 def test_write_tools_persist_to_disk(isolated_world: World, isolated_data_dir) -> None:
@@ -915,3 +860,120 @@ def test_read_timeline_warns_on_duplicate_enactment(isolated_world: World) -> No
     assert "Duplicate enactment warnings" in timeline
     assert "Scene A" in timeline
     assert "Scene B" in timeline
+
+
+def test_add_event_starts_interpretation_for_signal_characters(isolated_world: World) -> None:
+    upsert_character.func(name="Mira")
+    character = isolated_world.story_bible.characters[0]
+
+    message = add_event.func(
+        "A look",
+        signals=[Signal(character_id=character.id, interpretation="They meant it.")],
+    )
+
+    event = isolated_world.story_bible.timeline[0]
+    assert "Started intimacy interpretation for 1 character" in message
+    manager = get_job_manager()
+    deadline = time.time() + 2
+    while manager.is_interpreting(event.id) and time.time() < deadline:
+        time.sleep(0.01)
+    assert any(job.kind == "intimacy_interpretation" for job in manager.finished_jobs())
+
+
+def test_add_event_without_relevant_characters_is_noop(isolated_world: World) -> None:
+    message = add_event.func("A look")
+
+    assert "No relevant characters" in message
+    assert not any(
+        job.kind == "intimacy_interpretation" for job in get_job_manager().finished_jobs()
+    )
+
+
+def test_update_event_retriggers_interpretation(isolated_world: World) -> None:
+    upsert_character.func(name="Mira")
+    character = isolated_world.story_bible.characters[0]
+    add_event.func(
+        "A look",
+        signals=[Signal(character_id=character.id, interpretation="Hint")],
+    )
+    event = isolated_world.story_bible.timeline[0]
+    deadline = time.time() + 2
+    manager = get_job_manager()
+    while manager.is_interpreting(event.id) and time.time() < deadline:
+        time.sleep(0.01)
+
+    message = update_event.func(event.id, title="A longer look")
+    assert "Started intimacy interpretation for 1 character" in message
+
+
+def test_update_event_keeps_existing_evidence_when_hints_replace_signals(
+    isolated_world: World,
+) -> None:
+    upsert_character.func(name="Mira")
+    character = isolated_world.story_bible.characters[0]
+    character.baseline_state.intimacies.append(
+        Intimacy(id="intim_wary", text="Wary of outsiders", strength="minor")
+    )
+    add_event.func(
+        "A look",
+        signals=[Signal(character_id=character.id, interpretation="Hint")],
+    )
+    event = isolated_world.story_bible.timeline[0]
+    entry = IntimacyEvidence(
+        intimacy_id="intim_wary",
+        direction="supports",
+        strength=3,
+        rationale="Kept until apply.",
+    )
+    event.signals[0].evidence.append(entry)
+
+    update_event.func(
+        event.id,
+        signals=[
+            Signal(
+                character_id=character.id,
+                interpretation="Revised hint",
+                effects=[AddIntimacy(intimacy=Intimacy(text="Should not persist"))],
+                evidence=[
+                    IntimacyEvidence(
+                        intimacy_id="intim_missing",
+                        direction="contradicts",
+                        strength=5,
+                    )
+                ],
+            )
+        ],
+    )
+
+    signal = isolated_world.story_bible.timeline[0].signals[0]
+    assert signal.interpretation == "Revised hint"
+    assert signal.evidence == [entry]
+    assert signal.effects == []
+
+
+def test_relation_tools_do_not_start_interpretation(
+    isolated_world: World,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    started: list[str] = []
+
+    def spy(self, event_id: str, **kwargs):
+        started.append(event_id)
+        return []
+
+    monkeypatch.setattr(
+        "app.graphs.jobs.JobManager.start_event_interpretation",
+        spy,
+    )
+    add_event.func("First")
+    first = isolated_world.story_bible.timeline[0]
+    add_event.func(
+        "Second",
+        relations=[EventRelationSpec(kind="follows", event_id=first.id)],
+    )
+    started.clear()
+    second = isolated_world.story_bible.timeline[1]
+    relation_id = isolated_world.story_bible.event_relations[0].id
+    remove_event_relation.func(relation_id)
+    add_event_relation.func("follows", second.id, first.id)
+    assert started == []

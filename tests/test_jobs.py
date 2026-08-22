@@ -12,14 +12,26 @@ import pytest
 from langchain_core.messages import AIMessageChunk
 from langchain_core.tools import ToolException
 
+from app.graphs.intimacy_interpretation import apply_interpretation
+from app.graphs.intimacy_workflow import InterpretationResult
 from app.graphs.jobs import (
     CHAT_CLAIM,
     JobManager,
+    intimacy_claim_key,
     reset_job_manager,
     scene_claim_key,
 )
 from app.persistence import ChatConversation, JsonFileChatMessageStore
 from app.tools.scene import update_scene_blueprint
+from app.world.models import (
+    Character,
+    CharacterIdentity,
+    Event,
+    IntimacyEvidence,
+    Signal,
+    SignalReview,
+    World,
+)
 
 
 def _graphs_module():
@@ -409,3 +421,159 @@ def test_active_work_count_includes_pending_queue(monkeypatch: pytest.MonkeyPatc
     assert manager.active_work_count() == 2  # one running + one pending
     release_a.set()
     _wait_until(lambda: manager.active_work_count() == 0)
+
+
+def _intimacy_module():
+    return importlib.import_module("app.graphs.intimacy_interpretation")
+
+
+def _seed_event_with_characters(world: World, names: tuple[str, ...]) -> tuple[str, list[str]]:
+    characters = []
+    for name in names:
+        character = Character(identity=CharacterIdentity(name=name))
+        world.story_bible.characters.append(character)
+        characters.append(character)
+    event = Event(
+        title="A look",
+        signals=[
+            Signal(character_id=character.id, interpretation=f"{character.identity.name} notices.")
+            for character in characters
+        ],
+    )
+    world.story_bible.timeline.append(event)
+    return event.id, [character.id for character in characters]
+
+
+def test_intimacy_claim_key_format() -> None:
+    assert intimacy_claim_key("evt_a", "char_b") == "intimacy:evt_a:char_b"
+
+
+def test_start_event_interpretation_fans_out_in_parallel(
+    isolated_world: World,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    event_id, character_ids = _seed_event_with_characters(isolated_world, ("Mira", "Kael"))
+    started: list[str] = []
+    barrier = threading.Barrier(2)
+
+    def slow_run(event_id: str, character_id: str, *, models=None) -> InterpretationResult:
+        started.append(character_id)
+        barrier.wait(timeout=2)
+        return InterpretationResult(event_id=event_id, character_id=character_id)
+
+    monkeypatch.setattr(_intimacy_module(), "run_and_apply_intimacy_interpretation", slow_run)
+    manager = JobManager()
+    jobs = manager.start_event_interpretation(event_id)
+    assert {job.kind for job in jobs} == {"intimacy_interpretation"}
+    assert {intimacy_claim_key(event_id, character_id) for character_id in character_ids} == {
+        job.claims[0] for job in jobs
+    }
+    assert manager.is_interpreting(event_id)
+    _wait_until(lambda: not manager.is_interpreting(event_id))
+    assert set(started) == set(character_ids)
+
+
+def test_start_intimacy_interpretation_rejects_concurrent(
+    isolated_world: World,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    event_id, character_ids = _seed_event_with_characters(isolated_world, ("Mira",))
+
+    def slow_run(event_id: str, character_id: str, *, models=None) -> InterpretationResult:
+        time.sleep(0.05)
+        return InterpretationResult(event_id=event_id, character_id=character_id)
+
+    monkeypatch.setattr(_intimacy_module(), "run_and_apply_intimacy_interpretation", slow_run)
+    manager = JobManager()
+    manager.start_intimacy_interpretation(event_id, character_ids[0])
+    with pytest.raises(RuntimeError, match="already running"):
+        manager.start_intimacy_interpretation(event_id, character_ids[0])
+
+
+def test_event_interpretation_empty_relevant_set_is_noop(isolated_world: World) -> None:
+    isolated_world.story_bible.timeline.append(Event(id="evt_look", title="A look"))
+    manager = JobManager()
+    assert manager.start_event_interpretation("evt_look") == []
+    status = manager.event_interpretation_status("evt_look")
+    assert status.empty_reason is not None
+    assert "No relevant characters" in status.empty_reason
+
+
+def test_intimacy_partial_failure_applies_successful_character(
+    isolated_world: World,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    event_id, character_ids = _seed_event_with_characters(isolated_world, ("Mira", "Kael"))
+    ok_id, fail_id = character_ids
+
+    def mixed_run(event_id: str, character_id: str, *, models=None) -> InterpretationResult:
+        if character_id == fail_id:
+            msg = "model failed"
+            raise RuntimeError(msg)
+        result = InterpretationResult(
+            event_id=event_id,
+            character_id=character_id,
+            interpretation="Approved read.",
+            evidence=[
+                IntimacyEvidence(
+                    intimacy_id="intim_wary",
+                    direction="supports",
+                    strength=2,
+                    rationale="Visible even if rank stays.",
+                )
+            ],
+            review=SignalReview(decision="approved"),
+        )
+        apply_interpretation(result)
+        return result
+
+    monkeypatch.setattr(_intimacy_module(), "run_and_apply_intimacy_interpretation", mixed_run)
+    manager = JobManager()
+    manager.start_event_interpretation(event_id)
+    _wait_until(lambda: not manager.is_interpreting(event_id))
+
+    event = isolated_world.story_bible.get_event(event_id)
+    assert event is not None
+    by_character = {signal.character_id: signal for signal in event.signals}
+    assert by_character[ok_id].interpretation == "Approved read."
+    assert by_character[ok_id].evidence
+    assert by_character[fail_id].interpretation == "Kael notices."
+    assert by_character[fail_id].evidence == []
+    assert manager.last_interpretation_error(event_id, fail_id) == "model failed"
+    assert manager.last_interpretation_error(event_id, ok_id) is None
+
+
+def test_intimacy_apply_is_serialized(
+    isolated_world: World,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    event_id, _character_ids = _seed_event_with_characters(isolated_world, ("Mira", "Kael"))
+    concurrent = {"n": 0, "max": 0}
+    import app.world.store as store
+
+    original_save = store.save_world
+
+    def tracking_save() -> None:
+        concurrent["n"] += 1
+        concurrent["max"] = max(concurrent["max"], concurrent["n"])
+        time.sleep(0.04)
+        original_save()
+        concurrent["n"] -= 1
+
+    monkeypatch.setattr(store, "save_world", tracking_save)
+
+    def apply_run(event_id: str, character_id: str, *, models=None) -> InterpretationResult:
+        result = InterpretationResult(
+            event_id=event_id,
+            character_id=character_id,
+            interpretation=f"{character_id} done",
+            review=SignalReview(decision="approved"),
+        )
+        apply_interpretation(result)
+        return result
+
+    monkeypatch.setattr(_intimacy_module(), "run_and_apply_intimacy_interpretation", apply_run)
+    manager = JobManager()
+    manager.start_event_interpretation(event_id)
+    _wait_until(lambda: not manager.is_interpreting(event_id), timeout=4)
+    assert concurrent["max"] == 1

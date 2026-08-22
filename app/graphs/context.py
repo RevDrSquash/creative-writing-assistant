@@ -19,8 +19,9 @@ signals). Only plot-necessary facts belong on the timeline: if nothing in the st
 detail happening at a specific time, leave it to the prose. Over-populating the timeline with
 trivia constrains scene generation. Each event may carry world-state effects (add, update, or
 remove entries) and per-character signals. A signal is one character's subjective interpretation
-of that event; signals carry evidence (scored relationships to intimacies) and
-structural creation/rewording records. Intimacy rank is derived during replay.
+of that event. Agent-authored signals are hints (character and interpretation
+only); the intimacy interpretation workflow writes approved evidence and
+creation/rewording records. Intimacy rank is derived during replay.
 
 Scenes are units of prose in which something changes. A scene enacts one or more events through
 its blueprint (``event_ids``); each event may be dramatized on-page in at most one scene. Events
@@ -86,7 +87,10 @@ Story bible tools:
 - Use read_world_state to see the derived state of the world and characters at any timeline
   position.
 - Use read_character_arc (or read_character with start/end event ids) to see a character's
-  state entering and leaving a timeline window, plus the transitions in between."""
+  state entering and leaving a timeline window, plus the transitions in between.
+- On add_event / update_event, pass signals only as hints: character_id plus
+  interpretation. Do not author intimacy effects or evidence; interpretation
+  runs automatically and writes those. Baseline intimacies stay on upsert_character."""
 
 
 def compose_story_bible_system_prompt(*usage_sections: str) -> str:

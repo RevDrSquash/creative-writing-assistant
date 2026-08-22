@@ -236,10 +236,10 @@ explicit operations rather than free text.
 
 Decided in the 2026-08-21 project review; the evidence data model (schema v9) and the
 deterministic accumulation/threshold engine are shipped. The per-character interpretation
-graph (`interpret_intimacy`) is also shipped; it returns a reviewed result and does not
-write signals. Triggering, fan-out, and apply are still tracked in the Linear project.
-Until apply lands, agents may still author structural intimacy records directly; when it
-lands, that path is removed — there is no dual-path rollout period.
+graph (`interpret_intimacy`) is also shipped. Triggering, parallel fan-out, and
+deterministic apply run through `JobManager` (`start_event_interpretation`). Agent
+tools no longer persist intimacy effects or evidence; incoming signals are hints.
+There is no dual-path rollout period.
 
 - **Representation: derived accumulation.** Evidence lives on signals as stored source data;
   intimacy rank is computed during replay by a deterministic accumulator. The pipeline writes
@@ -437,10 +437,11 @@ is after the window. Blank window ids mean the start or end of the timeline.
 state cannot leak into an earlier scene's context. Unknown character or event ids, and a
 start that is chronologically after the end, raise `ToolException` listing valid ids.
 
-Intimacy rank is derived from signal evidence. The intimacy interpretation graph
-(`interpret_intimacy`) already produces a reviewed per-character result; automatic
-triggering and writing approved signals are follow-on work. Until apply lands, agents may
-still author structural records directly; that path is removed when apply ships. Evidence
-entries and baseline intimacies stay directly editable in the UI. See "Evidence-Based
+Intimacy rank is derived from signal evidence. The intimacy interpretation
+workflow runs automatically after `add_event` / `update_event` (and from the
+event editor's re-run action) for each relevant character. Agent-authored
+signals are hints (`character_id` + `interpretation`); the apply stage writes
+approved evidence and creation/rewording records. Evidence entries and
+baseline intimacies stay directly editable in the UI. See "Evidence-Based
 Intimacy State" above and
 [architecture_agent_workflows.md](architecture_agent_workflows.md).

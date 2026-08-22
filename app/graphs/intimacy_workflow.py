@@ -1,8 +1,8 @@
 """Enforced LangGraph workflow for per-character intimacy interpretation.
 
 One character and one event in, a reviewed interpretation out. The graph does
-not mutate the world; applying the result is a later stage. See
-``docs/architecture_agent_workflows.md``.
+not mutate the world; ``app/graphs/intimacy_interpretation.py`` persists the
+result. See ``docs/architecture_agent_workflows.md``.
 """
 
 from __future__ import annotations
