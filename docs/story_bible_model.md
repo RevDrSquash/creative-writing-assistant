@@ -235,10 +235,11 @@ explicit operations rather than free text.
 ## Evidence-Based Intimacy State
 
 Decided in the 2026-08-21 project review; the evidence data model (schema v9) and the
-deterministic accumulation/threshold engine are shipped. The interpretation pipeline that
-authors signals is still tracked in the "Evidence-Based Intimacy System" Linear project.
-Until that pipeline lands, agents may still author structural intimacy records directly;
-when it lands, that path is removed — there is no dual-path rollout period.
+deterministic accumulation/threshold engine are shipped. The per-character interpretation
+graph (`interpret_intimacy`) is also shipped; it returns a reviewed result and does not
+write signals. Triggering, fan-out, and apply are still tracked in the Linear project.
+Until apply lands, agents may still author structural intimacy records directly; when it
+lands, that path is removed — there is no dual-path rollout period.
 
 - **Representation: derived accumulation.** Evidence lives on signals as stored source data;
   intimacy rank is computed during replay by a deterministic accumulator. The pipeline writes
@@ -413,7 +414,7 @@ renderer so scoped character context cannot leak late-story state into an earlie
   edits); improving that workflow is deferred.
 - Deleting a character does not delete events or their signals referencing that character;
   replay skips signals whose `character_id` no longer resolves.
-- Intimacy changes are the domain of the planned evidence-based interpretation workflow (see
+- Intimacy changes are the domain of the evidence-based interpretation workflow (see
   "Evidence-Based Intimacy State" above and
   [architecture_agent_workflows.md](architecture_agent_workflows.md)): signals carry evidence,
   rank is derived, and a separate maintenance workflow (future work) handles global
@@ -436,10 +437,10 @@ is after the window. Blank window ids mean the start or end of the timeline.
 state cannot leak into an earlier scene's context. Unknown character or event ids, and a
 start that is chronologically after the end, raise `ToolException` listing valid ids.
 
-Intimacy rank is derived from signal evidence. The intimacy interpretation workflow (planned)
-will run automatically when an event is created or edited, interpret the event per character,
-and write approved signals with evidence entries plus creation/rewording records. Until that
-pipeline lands, agents may still author structural records directly; that path is removed
-when the pipeline ships. Evidence entries and baseline intimacies stay directly editable in
-the UI. See "Evidence-Based Intimacy State" above and
+Intimacy rank is derived from signal evidence. The intimacy interpretation graph
+(`interpret_intimacy`) already produces a reviewed per-character result; automatic
+triggering and writing approved signals are follow-on work. Until apply lands, agents may
+still author structural records directly; that path is removed when apply ships. Evidence
+entries and baseline intimacies stay directly editable in the UI. See "Evidence-Based
+Intimacy State" above and
 [architecture_agent_workflows.md](architecture_agent_workflows.md).

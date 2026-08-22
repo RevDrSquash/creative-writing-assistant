@@ -76,7 +76,7 @@ whole pipeline to buy frontier capability.
   drafter (replacement text sits inline with drafted prose).
 - **Cost shape:** input-moderate, output-trivial.
 
-### 4. Structured critique/review — `scene_outline_review`, `scene_prose_review`, `scene_character_review`
+### 4. Structured critique/review — `scene_outline_review`, `scene_prose_review`, `scene_character_review`, `intimacy_analyze`, `intimacy_review`
 
 One-shot `with_structured_output` calls whose value is *judgment*: catching conceptual
 inconsistencies, continuity breaks, and flat writing. A small model can fill the schema but

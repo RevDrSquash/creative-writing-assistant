@@ -52,10 +52,11 @@ Phase 6c of the phased plan) has been **superseded** by the evidence-based intim
 decided in the 2026-08-21 project review. The authoritative design now lives in
 [story_bible_model.md](story_bible_model.md) ("Evidence-Based Intimacy State" — evidence data
 model, derived rank, replay semantics) and
-[architecture_agent_workflows.md](architecture_agent_workflows.md) ("Planned: Intimacy
-Interpretation Workflow"); implementation is tracked in the "Evidence-Based Intimacy System"
-Linear project. Until the pipeline lands, agents author intimacy effects through the direct
-structured operations described in [story_bible_model.md](story_bible_model.md).
+[architecture_agent_workflows.md](architecture_agent_workflows.md) ("Intimacy Interpretation
+Workflow"); implementation is tracked in the "Evidence-Based Intimacy System" Linear project.
+The per-character graph exists; triggering, fan-out, and apply are still outstanding. Until
+apply lands, agents author intimacy effects through the direct structured operations
+described in [story_bible_model.md](story_bible_model.md).
 
 A separate maintenance/consolidation workflow (merge, split, archive intimacies using the
 stored evidence history) remains future work, out of scope for the interpretation pipeline.

@@ -523,6 +523,8 @@ async def test_model_selection_save_writes_isolated_store(
 ) -> None:
     await user.open("/models/selection")
     await user.should_see("Chat Agent")
+    await user.should_see("Intimacy: Analyze")
+    await user.should_see("Intimacy: Review")
 
     user.find("Save").click()
     await user.should_see("Model selection saved.")

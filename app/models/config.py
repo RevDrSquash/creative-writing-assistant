@@ -32,6 +32,8 @@ SCENE_PROSE_REVIEW_NODE_ID = "scene_prose_review"
 SCENE_CHARACTER_REVIEW_NODE_ID = "scene_character_review"
 SCENE_PROSE_REVISE_NODE_ID = "scene_prose_revise"
 SCENE_SUMMARY_NODE_ID = "scene_summary"
+INTIMACY_ANALYZE_NODE_ID = "intimacy_analyze"
+INTIMACY_REVIEW_NODE_ID = "intimacy_review"
 
 
 class ModelConfig(BaseModel):
@@ -128,6 +130,16 @@ GRAPH_NODES: tuple[GraphNode, ...] = (
         SCENE_SUMMARY_NODE_ID,
         "Scene: Summary",
         default_config_id=STRUCTURE_CONFIG_ID,
+    ),
+    GraphNode(
+        INTIMACY_ANALYZE_NODE_ID,
+        "Intimacy: Analyze",
+        default_config_id=JUDGMENT_CONFIG_ID,
+    ),
+    GraphNode(
+        INTIMACY_REVIEW_NODE_ID,
+        "Intimacy: Review",
+        default_config_id=JUDGMENT_CONFIG_ID,
     ),
 )
 GRAPH_NODE_MAP = {node.node_id: node for node in GRAPH_NODES}

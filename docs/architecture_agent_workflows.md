@@ -1,9 +1,9 @@
 # Agent Workflows
 
 Multi-step agent workflows are built on LangGraph. This doc is the authoritative description of the
-workflow pattern and of the built workflows; currently that is the scene-writing workflow
-(`generate_scene`). The planned intimacy interpretation workflow is described below ("Planned:
-Intimacy Interpretation Workflow"). For the surrounding system see
+workflow pattern and of the built workflows: the scene-writing workflow (`generate_scene`) and
+the per-character intimacy interpretation workflow (`interpret_intimacy`). Triggering, fan-out,
+and apply for intimacy interpretation are still planned (see below). For the surrounding system see
 [architecture.md](architecture.md); for the data these workflows read and write see
 [story_bible_model.md](story_bible_model.md) and [forms_and_data_models.md](forms_and_data_models.md).
 
@@ -234,15 +234,38 @@ dialog, and enqueues them with prerequisite gating so later scenes wait for earl
 [architecture_async_jobs.md](architecture_async_jobs.md) for claims, enforcement, the queue, and
 notifications.
 
-## Planned: Intimacy Interpretation Workflow
+## Intimacy Interpretation Workflow (`interpret_intimacy`)
 
-The evidence-based intimacy interpretation workflow is designed but not yet built.
-Implementation is tracked in the "Evidence-Based Intimacy System" Linear project; the
-data-model decisions live in [story_bible_model.md](story_bible_model.md) ("Evidence-Based
-Intimacy State"). It supersedes the earlier description-based intimacy review workflow that
-was designed in [future_work.md](future_work.md). Until it exists, agents author intimacy
-effects through the direct structured operations described in
-[story_bible_model.md](story_bible_model.md).
+The per-character interpretation graph is built in `app/graphs/intimacy_workflow.py` and
+registered as `interpret_intimacy`. Data-model decisions live in
+[story_bible_model.md](story_bible_model.md) ("Evidence-Based Intimacy State"). It supersedes
+the earlier description-based intimacy review workflow that was designed in
+[future_work.md](future_work.md).
+
+`run_intimacy_interpretation(event_id, character_id)` is the programmatic entry point. It
+returns an `InterpretationResult` and **does not mutate the world**. Triggering on event
+create/edit, parallel per-character fan-out, persistence, and applying the result are still
+tracked as follow-on work. Until that apply stage lands, agents may still author structural
+intimacy records directly.
+
+The graph is an enforced sequence with no conditional routing:
+
+1. **`assemble_context` (deterministic, no LLM).** The event, the character's identity,
+   intimacies and distance-to-threshold *entering* the event (`derive_state_at` /
+   `explain_intimacies_at` at that event's chronological index), recent signals for this
+   character from prior events, and any existing signal on this event labeled as a **hint,
+   not canon**.
+2. **`analyze` (structured output, `intimacy_analyze`, default `judgment`).** One combined
+   call produces the signal text, scored evidence entries (`supports` | `contradicts`,
+   strength 1–5, rationale), and any new-intimacy or rewording proposals. The prompt states
+   that mixed evidence is multiple separate entries and that unrelated intimacies are omitted.
+3. **`validate` (deterministic).** Resolves intimacy ids against the character's catalog
+   (exact, then unique token match; same pattern as agent tools), drops hallucinated ids,
+   assigns `intim_` slug ids to approved-shape new-intimacy proposals (created at `minor`),
+   and accepts evidence that names a new proposal by its text.
+4. **`review` (structured output, `intimacy_review`, default `judgment`, always on).**
+   Approves, revises, or rejects the whole proposal against the review checklist and tags
+   each kept evidence entry `novel` or `duplicate` for the accumulator.
 
 Key decisions (2026-08-21 project review):
 
