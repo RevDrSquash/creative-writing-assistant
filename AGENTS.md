@@ -41,6 +41,12 @@ All commands run through Poetry from the repo root (the system Python does not h
 | Format | `poetry run ruff format .` |
 | Verify (definition of done) | `poetry run ruff check . && poetry run pytest` |
 
+## Git workflow
+
+- Never commit directly to `master`. All changes to `master` land via pull request, no exceptions
+  (including docs-only and config-only changes).
+- Do work on a feature branch, commit there, and open a PR (or leave the branch ready for one).
+
 ## Definition of done
 
 Before declaring any task complete:
@@ -85,3 +91,17 @@ Before declaring any task complete:
   serves on 8080 (confirm with `curl -s -o /dev/null -w '%{http_code}' http://localhost:8080/`).
 - Tests and lint run fully offline and do not need the API key: `poetry run pytest`,
   `poetry run ruff check .` (see Commands table above).
+
+## Linear
+
+Workspace: **Default** (https://linear.app/tristansturgess). Team: **Default** (key `DEF`, id
+`2b4eae87-5660-438d-87c4-1443877bb1ea`).
+
+This repository is `RevDrSquash/creative-writing-assistant`. Identify it in Linear with the `repo`
+configuration label `repo/RevDrSquash/creative-writing-assistant` (default branch `master` /
+`branch/master`). Do not treat any Linear project as this repo's permanent home; projects represent
+bounded outcomes and may change.
+
+Before creating or materially reorganizing Linear content, retrieve and follow the workspace
+**Linear Conventions** document:
+https://linear.app/tristansturgess/document/linear-conventions-0982a648b4dc
