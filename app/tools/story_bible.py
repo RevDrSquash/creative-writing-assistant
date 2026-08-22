@@ -14,6 +14,7 @@ import json
 from langchain_core.tools import ToolException, tool
 
 from app.world.character_arc import CharacterArc, derive_character_arc, format_character_arc
+from app.world.evidence import RankState, format_threshold_distance
 from app.world.models import (
     AddIntimacy,
     Character,
@@ -42,6 +43,7 @@ from app.world.replay import (
     DerivedCharacterState,
     derive_state,
     effect_diagnostics,
+    explain_intimacies,
     format_effect_diagnostics,
 )
 from app.world.scene import enacting_scenes, prune_event_links
@@ -297,7 +299,12 @@ def read_character(
         lines.append("## Current State (after full timeline)")
         derived = derive_state(bible).characters.get(character.id)
         if derived is not None:
-            lines.extend(_derived_character_lines(derived))
+            lines.extend(
+                _derived_character_lines(
+                    derived,
+                    explain_intimacies(bible, character.id),
+                )
+            )
     return "\n".join(lines)
 
 
@@ -743,7 +750,12 @@ def read_world_state(at_event_id: str = "") -> str:
     for character in derived.characters.values():
         lines.append("")
         lines.append(f"## {character.name or 'Unnamed'} [id: {character.character_id}]")
-        lines.extend(_derived_character_lines(character))
+        lines.extend(
+            _derived_character_lines(
+                character,
+                explain_intimacies(bible, character.character_id, at_event_id or None),
+            )
+        )
 
     effect_warnings = format_effect_diagnostics(effect_diagnostics(bible))
     if effect_warnings:
@@ -913,18 +925,29 @@ def _event_relation_summary(bible: StoryBible, event_id: str) -> str:
     return ", ".join(parts)
 
 
-def _intimacy_lines(intimacies: list[Intimacy]) -> list[str]:
+def _intimacy_lines(
+    intimacies: list[Intimacy],
+    ranks: dict[str, RankState] | None = None,
+) -> list[str]:
     if not intimacies:
         return ["(none)"]
-    return [
-        f"- {intimacy.text} ({intimacy.strength}) [id: {intimacy.id}]" for intimacy in intimacies
-    ]
+    lines: list[str] = []
+    for intimacy in intimacies:
+        line = f"- {intimacy.text} ({intimacy.strength}) [id: {intimacy.id}]"
+        explanation = (ranks or {}).get(intimacy.id)
+        if explanation is not None:
+            line = f"{line} -- {format_threshold_distance(explanation)}"
+        lines.append(line)
+    return lines
 
 
-def _derived_character_lines(derived: DerivedCharacterState) -> list[str]:
+def _derived_character_lines(
+    derived: DerivedCharacterState,
+    ranks: dict[str, RankState] | None = None,
+) -> list[str]:
     return [
         "Intimacies:",
-        *_intimacy_lines(derived.intimacies),
+        *_intimacy_lines(derived.intimacies, ranks),
     ]
 
 

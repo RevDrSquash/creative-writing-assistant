@@ -40,9 +40,11 @@ the protagonist to slay the princess", use an intimacy "I must convince the prot
 the princess".
 
 Each intimacy has a strength that scales its influence on behavior:
+- dormant: no current strength; the intimacy and its evidence history remain
 - minor: colors reactions but is easily overridden
 - major: regularly shapes decisions and emotional responses
 - defining: a core driver; other motives yield to it when they conflict
+Rank is derived from accumulated signal evidence during replay, not stored.
 
 Baseline fields describe the start of the timeline. Mid-story changes are recorded as events
 with effects, not by editing baselines.

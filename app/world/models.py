@@ -24,6 +24,7 @@ IntimacyStrength = Literal["minor", "major", "defining"]
 DerivedIntimacyStrength = Literal["dormant", "minor", "major", "defining"]
 EvidenceDirection = Literal["supports", "contradicts"]
 EvidenceStrength = Literal[1, 2, 3, 4, 5]
+EvidenceNovelty = Literal["novel", "duplicate"]
 ReviewDecision = Literal["approved", "revised", "rejected"]
 WorldStateKind = Literal["pressure", "thread", "consequence"]
 EventRelationKind = Literal["follows", "directly_follows", "depends_on", "during"]
@@ -37,6 +38,7 @@ DERIVED_INTIMACY_STRENGTHS: tuple[DerivedIntimacyStrength, ...] = (
 )
 EVIDENCE_DIRECTIONS: tuple[EvidenceDirection, ...] = ("supports", "contradicts")
 EVIDENCE_STRENGTHS: tuple[EvidenceStrength, ...] = (1, 2, 3, 4, 5)
+EVIDENCE_NOVELTIES: tuple[EvidenceNovelty, ...] = ("novel", "duplicate")
 REVIEW_DECISIONS: tuple[ReviewDecision, ...] = ("approved", "revised", "rejected")
 WORLD_STATE_KINDS: tuple[WorldStateKind, ...] = ("pressure", "thread", "consequence")
 EVENT_RELATION_KINDS: tuple[EventRelationKind, ...] = (
@@ -221,12 +223,17 @@ class RemoveIntimacy(BaseModel):
 
 
 class IntimacyEvidence(BaseModel):
-    """A scored relationship between a signal and one intimacy."""
+    """A scored relationship between a signal and one intimacy.
+
+    ``novelty`` is set by the interpretation reviewer (or left ``novel`` for
+    manual edits). The accumulator applies diminishing weight to ``duplicate``.
+    """
 
     intimacy_id: str = ""
     direction: EvidenceDirection = "supports"
     strength: EvidenceStrength = 3
     rationale: str = ""
+    novelty: EvidenceNovelty = "novel"
     confidence: float | None = Field(default=None, ge=0.0, le=1.0)
 
 

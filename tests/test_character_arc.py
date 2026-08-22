@@ -260,7 +260,65 @@ def test_transitions_include_evidence_descriptions() -> None:
     arc = derive_character_arc(bible, character.id)
 
     assert arc.transitions[0].changes == ("Evidence supports Trusts the council (strength 4)",)
+    assert arc.end_state.intimacies[0].strength == "minor"
+
+
+def test_transitions_include_derived_rank_crossing() -> None:
+    intimacy = Intimacy(id="intim_trust", text="Trusts the council", strength="minor")
+    character = Character(
+        id="char_mira",
+        identity=CharacterIdentity(name="Mira"),
+        baseline_state=CharacterBaselineState(intimacies=[intimacy]),
+    )
+    bible = StoryBible(
+        characters=[character],
+        timeline=[
+            Event(
+                id="event_one",
+                title="Oath",
+                signals=[
+                    Signal(
+                        character_id=character.id,
+                        evidence=[
+                            IntimacyEvidence(
+                                intimacy_id=intimacy.id,
+                                direction="supports",
+                                strength=3,
+                            )
+                        ],
+                    )
+                ],
+            ),
+            Event(
+                id="event_two",
+                title="Kept",
+                signals=[
+                    Signal(
+                        character_id=character.id,
+                        evidence=[
+                            IntimacyEvidence(
+                                intimacy_id=intimacy.id,
+                                direction="supports",
+                                strength=3,
+                            )
+                        ],
+                    )
+                ],
+            ),
+        ],
+    )
+
+    arc = derive_character_arc(bible, character.id)
+
+    assert arc.transitions[0].changes == ("Evidence supports Trusts the council (strength 3)",)
+    assert arc.transitions[1].changes == (
+        "Evidence supports Trusts the council (strength 3)",
+        "Derived rank Trusts the council: minor to major",
+    )
     assert arc.end_state.intimacies[0].strength == "major"
+    rendered = format_character_arc(arc)
+    assert "from defining" in rendered
+    assert "above minor" in rendered
 
 
 def test_unknown_event_id_raises() -> None:

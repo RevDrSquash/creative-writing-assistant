@@ -263,7 +263,9 @@ Key decisions (2026-08-21 project review):
   and any new-intimacy or rewording proposals; a reviewer approves or revises; the apply stage
   writes approved signals with evidence entries and creation/rewording records through
   ordinary application code (no LLM executor). Rank changes are never written: the
-  deterministic accumulator derives rank during replay.
+  deterministic accumulator in `app/world/evidence.py` (`accumulate_rank`) derives rank
+  during replay and is directly callable as a what-if oracle (see
+  [story_bible_model.md](story_bible_model.md) "Rank accumulation").
 - **Programmatic invocation.** The interpretation run is exposed as a plain entry point
   (function + `JobManager` job) that UI triggers and the automatic event-authoring trigger
   both call — invocation is not coupled to UI event handlers. A planned plot-editor agent (see

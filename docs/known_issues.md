@@ -175,21 +175,3 @@ fix so the context is not lost between phases.
 - **Possible fix:** Wrap the storage cleanup in a retry (as `JsonFileWorldStore.save()` does for
   `os.replace`), point NiceGUI storage at a `tmp_path` excluded from indexing, or upstream a
   `missing_ok`/retry to NiceGUI's `Storage.clear()`.
-
-## 12. Interim intimacy-rank fold pending the threshold engine
-
-- **Severity:** Low (documented stand-in, not a correctness hole for migrated data)
-- **Location:** `app/world/evidence.py` — `apply_evidence_entry`; invoked from
-  `app/world/replay.py`
-- **Introduced:** Schema version 9 (evidence entries on signals)
-- **Symptom:** Replay derives intimacy rank from evidence with a simple last-write
-  (`supports` maps 1–5 onto minor/major/defining) and step-down (`contradicts` demotes 0–2
-  ranks). This reconstructs v8 `set_intimacy_strength` ranks after migration but does not
-  implement recency, scenario breadth, diminishing duplicates, or inspectable
-  distance-to-threshold.
-- **Why it is acceptable for now:** The real accumulation/threshold engine is a follow-on
-  task (see [story_bible_model.md](story_bible_model.md) "Accumulator shape"). The interim
-  fold keeps derived state defined and editable so the data-model change can ship first.
-- **Possible fix:** Replace `apply_evidence_entry` with the planned accumulator; keep the
-  function a pure (evidence in → rank out) call so replay and a future plot-editor agent
-  share one implementation.

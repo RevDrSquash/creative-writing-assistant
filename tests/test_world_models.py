@@ -551,6 +551,7 @@ def test_signal_evidence_round_trips() -> None:
     assert entry.direction == "supports"
     assert entry.strength == 3
     assert entry.confidence == 0.8
+    assert entry.novelty == "novel"
 
 
 def test_derive_state_applies_evidence_rank_and_keeps_dormant_intimacies() -> None:
@@ -593,7 +594,9 @@ def test_derive_state_applies_evidence_rank_and_keeps_dormant_intimacies() -> No
     after_proof = derive_state_at(bible, 1).characters[character.id]
     after_erosion = derive_state(bible).characters[character.id]
 
-    assert after_proof.intimacies[0].strength == "defining"
+    # One identity-shaking support promotes minor to major, not defining.
+    # A later identity-shaking contradiction then demotes major to minor.
+    assert after_proof.intimacies[0].strength == "major"
     assert after_erosion.intimacies[0].strength == "minor"
     assert after_erosion.intimacies[0].id == intimacy.id
 
@@ -640,10 +643,19 @@ def test_derive_state_recomputes_evidence_rank_at_inserted_event() -> None:
     )
 
     after_insert = derive_state(bible, up_to_event_id=inserted.id).characters[character.id]
-    after_late = derive_state(bible).characters[character.id]
+    after_both = derive_state(bible).characters[character.id]
+    without_insert = derive_state(
+        StoryBible(
+            characters=bible.characters,
+            timeline=[late],
+        )
+    ).characters[character.id]
 
-    assert after_insert.intimacies[0].strength == "dormant"
-    assert after_late.intimacies[0].strength == "defining"
+    # Replay recomputes over the current order: the inserted contradiction is
+    # enough to keep the later identity-shaking support from promoting.
+    assert after_insert.intimacies[0].strength == "minor"
+    assert after_both.intimacies[0].strength == "minor"
+    assert without_insert.intimacies[0].strength == "major"
 
 
 def test_derive_state_same_signal_add_and_evidence() -> None:
@@ -671,7 +683,9 @@ def test_derive_state_same_signal_add_and_evidence() -> None:
 
     derived = derive_state(bible).characters[character.id]
     by_id = {item.id: item for item in derived.intimacies}
-    assert by_id[created.id].strength == "major"
+    # Creating signal evidence explains why the intimacy exists; one ordinary
+    # event does not promote it past the conservative floor.
+    assert by_id[created.id].strength == "minor"
     assert by_id[created.id].text == "Owes Kael a debt"
 
 
