@@ -256,9 +256,10 @@ There is no dual-path rollout period.
 - **Accumulator shape.** Replay folds approved evidence through `accumulate_rank` in
   `app/world/evidence.py`: a pure, side-effect-free function (observations in → rank
   state out) that replay and a planned plot-editor agent can both call. Rejected
-  signals (`review.decision == rejected`) are skipped; missing review counts as
-  approved. The function never reads the world — callers attach scenario id, chronology,
-  and novelty. See "Rank accumulation" below.
+  signals (`review.decision == rejected`) contribute nothing to replay — neither
+  evidence nor structural effects fold until a re-run changes the verdict; missing
+  review counts as approved. The function never reads the world — callers attach
+  scenario id, chronology, and novelty. See "Rank accumulation" below.
 - **Creation and erosion are symmetric.** Intimacies are never removed by the pipeline:
   contradicting evidence erodes rank, and erosion below `minor` derives to a dormant
   (no-strength) state while the intimacy and its evidence history remain stored and can

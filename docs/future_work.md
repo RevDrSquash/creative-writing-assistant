@@ -54,9 +54,10 @@ decided in the 2026-08-21 project review. The authoritative design now lives in
 model, derived rank, replay semantics) and
 [architecture_agent_workflows.md](architecture_agent_workflows.md) ("Intimacy Interpretation
 Workflow"); implementation is tracked in the "Evidence-Based Intimacy System" Linear project.
-The per-character graph exists; triggering, fan-out, and apply are still outstanding. Until
-apply lands, agents author intimacy effects through the direct structured operations
-described in [story_bible_model.md](story_bible_model.md).
+The pipeline is fully wired: event authoring triggers per-character interpretation jobs
+through `JobManager`, reviewed results persist through the deterministic apply stage, and
+agents no longer author intimacy effects directly — signals passed to the event tools are
+hints to the workflow (see [architecture_agent_workflows.md](architecture_agent_workflows.md)).
 
 A separate maintenance/consolidation workflow (merge, split, archive intimacies using the
 stored evidence history) remains future work, out of scope for the interpretation pipeline.

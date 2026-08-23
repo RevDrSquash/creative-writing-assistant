@@ -21,6 +21,7 @@ from app.world.models import (
     IntimacyEvidence,
     Scene,
     SceneBlueprint,
+    SetIntimacyStrength,
     Signal,
     SignalReview,
     UpdateIntimacy,
@@ -198,6 +199,100 @@ def test_apply_rejected_clears_evidence_and_skips_proposals(isolated_world: Worl
     assert signal.effects == []
     derived = derive_state(isolated_world.story_bible).characters["char_mira"]
     assert derived.intimacies == []
+
+
+def test_apply_rejected_rerun_drops_prior_workflow_effects(isolated_world: World) -> None:
+    """A rejected re-run removes earlier creation/rewording records, not just evidence."""
+
+    intimacy = Intimacy(id="intim_wary", text="Wary of outsiders", strength="minor")
+    isolated_world.story_bible.characters.append(
+        _character("Mira", "char_mira", intimacies=[intimacy])
+    )
+    isolated_world.story_bible.timeline.append(
+        Event(
+            id="evt_look",
+            title="A look",
+            signals=[
+                Signal(
+                    character_id="char_mira",
+                    interpretation="Old approved read",
+                    review=SignalReview(decision="approved"),
+                    evidence=[
+                        IntimacyEvidence(intimacy_id="intim_debt", direction="supports", strength=3)
+                    ],
+                    effects=[
+                        AddIntimacy(intimacy=Intimacy(id="intim_debt", text="Owes Kael a debt")),
+                        UpdateIntimacy(intimacy_id="intim_wary", text="Cannot trust strangers"),
+                        # UI/legacy record the workflow never authors; apply must not touch it.
+                        SetIntimacyStrength(intimacy_id="intim_wary", strength="major"),
+                    ],
+                )
+            ],
+        )
+    )
+
+    apply_interpretation(
+        InterpretationResult(
+            event_id="evt_look",
+            character_id="char_mira",
+            interpretation="Just weather.",
+            review=SignalReview(decision="rejected", notes="Overread."),
+        )
+    )
+
+    signal = isolated_world.story_bible.timeline[0].signals[0]
+    assert signal.evidence == []
+    assert [type(effect) for effect in signal.effects] == [SetIntimacyStrength]
+    derived = derive_state(isolated_world.story_bible).characters["char_mira"]
+    texts = {item.text for item in derived.intimacies}
+    assert "Owes Kael a debt" not in texts
+    assert "Cannot trust strangers" not in texts
+
+
+def test_apply_rerun_replaces_stale_structural_effects(isolated_world: World) -> None:
+    """A re-run drops records the new result no longer proposes but keeps the
+    establishing record for an intimacy the new evidence still references."""
+
+    intimacy = Intimacy(id="intim_wary", text="Wary of outsiders", strength="minor")
+    isolated_world.story_bible.characters.append(
+        _character("Mira", "char_mira", intimacies=[intimacy])
+    )
+    isolated_world.story_bible.timeline.append(
+        Event(
+            id="evt_look",
+            title="A look",
+            signals=[
+                Signal(
+                    character_id="char_mira",
+                    interpretation="Old approved read",
+                    review=SignalReview(decision="approved"),
+                    effects=[
+                        AddIntimacy(intimacy=Intimacy(id="intim_debt", text="Owes Kael a debt")),
+                        AddIntimacy(intimacy=Intimacy(id="intim_stale", text="A passing fancy")),
+                        UpdateIntimacy(intimacy_id="intim_wary", text="Old rewording"),
+                    ],
+                )
+            ],
+        )
+    )
+
+    apply_interpretation(
+        _approved_result(
+            "evt_look",
+            "char_mira",
+            evidence=[IntimacyEvidence(intimacy_id="intim_debt", direction="supports", strength=2)],
+        )
+    )
+
+    signal = isolated_world.story_bible.timeline[0].signals[0]
+    add_ids = [effect.intimacy.id for effect in signal.effects if isinstance(effect, AddIntimacy)]
+    assert add_ids == ["intim_debt"]
+    assert not any(isinstance(effect, UpdateIntimacy) for effect in signal.effects)
+    derived = derive_state(isolated_world.story_bible).characters["char_mira"]
+    texts = {item.text for item in derived.intimacies}
+    assert "Owes Kael a debt" in texts
+    assert "A passing fancy" not in texts
+    assert "Wary of outsiders" in texts
 
 
 def test_apply_failed_save_rolls_back_memory(

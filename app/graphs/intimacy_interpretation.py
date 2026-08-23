@@ -10,7 +10,11 @@ from __future__ import annotations
 
 from langchain_core.language_models import BaseChatModel
 
-from app.graphs.intimacy_workflow import InterpretationResult, run_intimacy_interpretation
+from app.graphs.intimacy_workflow import (
+    InterpretationResult,
+    RewordingProposal,
+    run_intimacy_interpretation,
+)
 from app.world.models import (
     AddIntimacy,
     Event,
@@ -62,10 +66,12 @@ def relevant_character_ids(world: World, event_id: str) -> list[str]:
 def apply_interpretation(result: InterpretationResult) -> None:
     """Persist a reviewed interpretation through ``world_transaction()``.
 
-    Approved and revised results write the signal, evidence, and approved
-    creation/rewording records even when rank will not change. Rejected
-    results write interpretation plus review metadata and clear this signal's
-    evidence so the event stops contributing; they do not add proposals.
+    Each run owns this signal's workflow-authored records: evidence and
+    creation/rewording effects are replaced, not merged, so a re-run cannot
+    leave stale proposals behind. Approved and revised results write them even
+    when rank will not change. Rejected results write interpretation plus
+    review metadata and clear this signal's evidence and workflow effects so
+    the event stops contributing.
     """
 
     with world_transaction() as world:
@@ -83,6 +89,7 @@ def apply_interpretation(result: InterpretationResult) -> None:
 
         if result.review.decision == "rejected":
             signal.evidence = []
+            _drop_workflow_effects(signal)
             return
 
         evidence, new_intimacies = _dedupe_new_intimacies(
@@ -92,7 +99,7 @@ def apply_interpretation(result: InterpretationResult) -> None:
             result.new_intimacies,
         )
         signal.evidence = evidence
-        _merge_structural_effects(signal, new_intimacies, result.rewordings)
+        _replace_structural_effects(signal, new_intimacies, result.rewordings)
 
 
 def run_and_apply_intimacy_interpretation(
@@ -156,27 +163,45 @@ def _dedupe_new_intimacies(
     return remapped, kept
 
 
-def _merge_structural_effects(
+def _drop_workflow_effects(signal: Signal) -> None:
+    """Remove workflow-authored creation/rewording records from the signal."""
+
+    signal.effects = [
+        effect for effect in signal.effects if not isinstance(effect, (AddIntimacy, UpdateIntimacy))
+    ]
+
+
+def _replace_structural_effects(
     signal: Signal,
     new_intimacies: list[Intimacy],
-    rewordings: list,
+    rewordings: list[RewordingProposal],
 ) -> None:
-    existing_add_ids = {
-        effect.intimacy.id for effect in signal.effects if isinstance(effect, AddIntimacy)
-    }
-    for intimacy in new_intimacies:
-        if intimacy.id in existing_add_ids:
-            continue
-        signal.effects.append(AddIntimacy(intimacy=intimacy))
-        existing_add_ids.add(intimacy.id)
+    """Replace this signal's creation/rewording records with the new run's.
 
-    reword_ids = {item.intimacy_id for item in rewordings if item.intimacy_id and item.text.strip()}
-    signal.effects = [
-        effect
-        for effect in signal.effects
-        if not (isinstance(effect, UpdateIntimacy) and effect.intimacy_id in reword_ids)
-    ]
-    for item in rewordings:
-        if not item.intimacy_id or not item.text.strip():
+    A prior ``AddIntimacy`` survives only while the new result still references
+    its intimacy: it is the establishing record for an intimacy this signal
+    minted on an earlier run, and dropping it would orphan the evidence.
+    All other workflow-authored records are superseded by this run; effects
+    the workflow never authors (legacy/UI records) are left untouched.
+    """
+
+    reword_items = [item for item in rewordings if item.intimacy_id and item.text.strip()]
+    referenced = {entry.intimacy_id for entry in signal.evidence}
+    referenced.update(item.intimacy_id for item in reword_items)
+
+    kept: list = []
+    for effect in signal.effects:
+        if isinstance(effect, AddIntimacy):
+            if effect.intimacy.id in referenced:
+                kept.append(effect)
             continue
-        signal.effects.append(UpdateIntimacy(intimacy_id=item.intimacy_id, text=item.text.strip()))
+        if isinstance(effect, UpdateIntimacy):
+            continue
+        kept.append(effect)
+
+    kept.extend(AddIntimacy(intimacy=intimacy) for intimacy in new_intimacies)
+    kept.extend(
+        UpdateIntimacy(intimacy_id=item.intimacy_id, text=item.text.strip())
+        for item in reword_items
+    )
+    signal.effects = kept

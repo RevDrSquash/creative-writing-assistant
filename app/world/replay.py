@@ -462,7 +462,14 @@ def apply_signal_to_intimacies(
     signal: Signal,
     context: SignalFoldContext,
 ) -> list[RankState]:
-    """Fold one signal into an intimacy list in place and return rank updates."""
+    """Fold one signal into an intimacy list in place and return rank updates.
+
+    A rejected signal contributes nothing: neither its structural records nor
+    its evidence fold into derived state until a re-run changes the verdict.
+    """
+
+    if signal.review is not None and signal.review.decision == "rejected":
+        return []
 
     for effect in signal.effects:
         if isinstance(effect, AddIntimacy):
@@ -488,33 +495,31 @@ def apply_signal_to_intimacies(
                 )
                 track.reset(effect.strength)
 
-    rejected = signal.review is not None and signal.review.decision == "rejected"
     rank_states: list[RankState] = []
-    if not rejected:
-        for entry in signal.evidence:
-            intimacy = _find_intimacy(intimacies, entry.intimacy_id)
-            if intimacy is None:
-                continue
-            track = context.tracks.setdefault(
-                (context.character_id, entry.intimacy_id),
-                IntimacyEvidenceTrack(baseline_rank=intimacy.strength),
+    for entry in signal.evidence:
+        intimacy = _find_intimacy(intimacies, entry.intimacy_id)
+        if intimacy is None:
+            continue
+        track = context.tracks.setdefault(
+            (context.character_id, entry.intimacy_id),
+            IntimacyEvidenceTrack(baseline_rank=intimacy.strength),
+        )
+        track.observations.append(
+            observation_from_entry(
+                entry,
+                event_id=context.event_id,
+                signal_id=signal.id,
+                chronological_index=context.chronological_index,
+                scenario_id=context.scenario_id,
             )
-            track.observations.append(
-                observation_from_entry(
-                    entry,
-                    event_id=context.event_id,
-                    signal_id=signal.id,
-                    chronological_index=context.chronological_index,
-                    scenario_id=context.scenario_id,
-                )
-            )
-            state = accumulate_rank(
-                track.baseline_rank,
-                track.observations,
-                intimacy_id=entry.intimacy_id,
-            )
-            intimacy.strength = state.rank
-            rank_states.append(state)
+        )
+        state = accumulate_rank(
+            track.baseline_rank,
+            track.observations,
+            intimacy_id=entry.intimacy_id,
+        )
+        intimacy.strength = state.rank
+        rank_states.append(state)
 
     for effect in signal.effects:
         if isinstance(effect, RemoveIntimacy):

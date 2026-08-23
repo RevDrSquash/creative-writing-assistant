@@ -889,6 +889,48 @@ def test_add_event_without_relevant_characters_is_noop(isolated_world: World) ->
     )
 
 
+def test_event_tools_report_already_running_interpretation(
+    isolated_world: World, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """When every relevant character is already claimed, the tool must not
+    claim there are no relevant characters."""
+
+    import importlib
+    import threading
+
+    upsert_character.func(name="Mira")
+    character = isolated_world.story_bible.characters[0]
+    add_event.func(
+        "A look",
+        signals=[Signal(character_id=character.id, interpretation="Hint")],
+    )
+    event = isolated_world.story_bible.timeline[0]
+    manager = get_job_manager()
+    deadline = time.time() + 2
+    while manager.is_interpreting(event.id) and time.time() < deadline:
+        time.sleep(0.01)
+
+    intimacy_mod = importlib.import_module("app.graphs.intimacy_interpretation")
+    release = threading.Event()
+
+    def blocking_run(event_id: str, character_id: str, *, models=None):
+        release.wait(timeout=2)
+        return intimacy_mod.InterpretationResult(event_id=event_id, character_id=character_id)
+
+    monkeypatch.setattr(intimacy_mod, "run_and_apply_intimacy_interpretation", blocking_run)
+
+    first = update_event.func(event.id, title="A longer look")
+    assert "Started intimacy interpretation" in first
+    second = update_event.func(event.id, title="An even longer look")
+    assert "already running" in second
+    assert "No relevant characters" not in second
+
+    release.set()
+    deadline = time.time() + 2
+    while manager.is_interpreting(event.id) and time.time() < deadline:
+        time.sleep(0.01)
+
+
 def test_update_event_retriggers_interpretation(isolated_world: World) -> None:
     upsert_character.func(name="Mira")
     character = isolated_world.story_bible.characters[0]

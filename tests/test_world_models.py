@@ -22,6 +22,7 @@ from app.world.models import (
     SceneCharacterStance,
     SetIntimacyStrength,
     Signal,
+    SignalReview,
     StoryBible,
     UpdateIntimacy,
     UpdateWorldStateEntry,
@@ -599,6 +600,38 @@ def test_derive_state_applies_evidence_rank_and_keeps_dormant_intimacies() -> No
     assert after_proof.intimacies[0].strength == "major"
     assert after_erosion.intimacies[0].strength == "minor"
     assert after_erosion.intimacies[0].id == intimacy.id
+
+
+def test_derive_state_skips_rejected_signal_entirely() -> None:
+    bible, character, intimacy = _bible_with_character()
+    bible.timeline = [
+        Event(
+            title="Rejected read",
+            signals=[
+                Signal(
+                    character_id=character.id,
+                    review=SignalReview(decision="rejected", notes="Event summary."),
+                    effects=[
+                        AddIntimacy(intimacy=Intimacy(id="intim_ghost", text="Should not exist")),
+                        UpdateIntimacy(intimacy_id=intimacy.id, text="Should not reword"),
+                        SetIntimacyStrength(intimacy_id=intimacy.id, strength="defining"),
+                    ],
+                    evidence=[
+                        IntimacyEvidence(
+                            intimacy_id=intimacy.id,
+                            direction="supports",
+                            strength=5,
+                        )
+                    ],
+                )
+            ],
+        )
+    ]
+
+    derived = derive_state(bible).characters[character.id]
+    assert [item.id for item in derived.intimacies] == [intimacy.id]
+    assert derived.intimacies[0].text == intimacy.text
+    assert derived.intimacies[0].strength == "minor"
 
 
 def test_derive_state_recomputes_evidence_rank_at_inserted_event() -> None:

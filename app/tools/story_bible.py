@@ -865,11 +865,16 @@ def _start_event_interpretation_note(event_id: str) -> str:
 
     from app.graphs.jobs import get_job_manager
 
+    manager = get_job_manager()
     try:
-        jobs = get_job_manager().start_event_interpretation(event_id)
+        jobs = manager.start_event_interpretation(event_id)
     except ValueError as exc:
         return f" {exc}"
     if not jobs:
+        # An empty job list is ambiguous: either nothing was relevant, or every
+        # relevant character is already claimed by a running interpretation.
+        if manager.is_interpreting(event_id):
+            return " Intimacy interpretation is already running for this event."
         from app.graphs.intimacy_interpretation import NO_RELEVANT_CHARACTERS_MESSAGE
 
         return f" {NO_RELEVANT_CHARACTERS_MESSAGE}"
