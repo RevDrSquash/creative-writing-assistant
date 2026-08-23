@@ -260,15 +260,26 @@ def accumulate_rank(
 
 
 def format_threshold_distance(state: RankState) -> str:
-    """Human-readable distance-to-threshold for tools and character-arc rendering."""
+    """Human-readable distance-to-threshold for tools and character-arc rendering.
+
+    A met-but-gated threshold (score crossed, rank held back by the hard rules,
+    e.g. a single ordinary event never changes rank) is annotated rather than
+    rendered as a confusing negative distance.
+    """
 
     parts: list[str] = []
     next_rank = state.next_rank
     if next_rank is not None and state.distance_to_promote is not None:
-        parts.append(f"{state.distance_to_promote:.1f} from {next_rank}")
+        if state.distance_to_promote <= 0:
+            parts.append(f"score met for {next_rank}; needs another event to cross")
+        else:
+            parts.append(f"{state.distance_to_promote:.1f} from {next_rank}")
     previous_rank = state.previous_rank
     if previous_rank is not None and state.distance_to_demote is not None:
-        parts.append(f"{state.distance_to_demote:.1f} above {previous_rank}")
+        if state.distance_to_demote <= 0:
+            parts.append(f"eroded to the {previous_rank} threshold; needs another event to cross")
+        else:
+            parts.append(f"{state.distance_to_demote:.1f} above {previous_rank}")
     if not parts:
         return "at defining ceiling"
     return ", ".join(parts)

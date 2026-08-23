@@ -55,6 +55,23 @@ def test_single_ordinary_event_does_not_promote() -> None:
     assert state.crossings == ()
     assert state.distance_to_promote is not None
     assert state.distance_to_promote <= 0
+    assert "score met for moderate; needs another event to cross" in format_threshold_distance(
+        state
+    )
+
+
+def test_gated_demotion_is_annotated_not_negative() -> None:
+    state = accumulate_rank(
+        "minor",
+        [_obs(event_id="e1", strength=4, direction="contradicts", chronological_index=0)],
+    )
+
+    assert state.rank == "minor"
+    assert state.distance_to_demote is not None
+    assert state.distance_to_demote <= 0
+    rendered = format_threshold_distance(state)
+    assert "eroded to the dormant threshold; needs another event to cross" in rendered
+    assert "-" not in rendered
 
 
 def test_successive_meaningful_supports_promote_minor_to_moderate_to_major() -> None:

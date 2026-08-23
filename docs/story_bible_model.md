@@ -387,6 +387,13 @@ expose this for a character at a timeline position. Character-arc markdown and
 `read_character` / `read_world_state` append the distances next to each derived
 intimacy (for example `4.5 from moderate, 3.5 above dormant`).
 
+Because the hard rules can hold a rank back even when the score has crossed a
+threshold (for example a single strength-4 event pushing effective net past a
+promote boundary), a met-but-gated threshold is annotated instead of rendered
+as a negative distance: `score met for moderate; needs another event to cross`
+(promotion) or `eroded to the minor threshold; needs another event to cross`
+(demotion).
+
 ## Character Arc Derivation
 
 `derive_character_arc` (`app/world/character_arc.py`) is a pure function over the bible. It
