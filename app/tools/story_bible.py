@@ -14,7 +14,9 @@ import json
 from langchain_core.tools import ToolException, tool
 
 from app.world.character_arc import CharacterArc, derive_character_arc, format_character_arc
+from app.world.evidence import RankState, format_threshold_distance
 from app.world.models import (
+    AddIntimacy,
     Character,
     Event,
     EventRelation,
@@ -41,6 +43,7 @@ from app.world.replay import (
     DerivedCharacterState,
     derive_state,
     effect_diagnostics,
+    explain_intimacies,
     format_effect_diagnostics,
 )
 from app.world.scene import enacting_scenes, prune_event_links
@@ -296,7 +299,12 @@ def read_character(
         lines.append("## Current State (after full timeline)")
         derived = derive_state(bible).characters.get(character.id)
         if derived is not None:
-            lines.extend(_derived_character_lines(derived))
+            lines.extend(
+                _derived_character_lines(
+                    derived,
+                    explain_intimacies(bible, character.id),
+                )
+            )
     return "\n".join(lines)
 
 
@@ -459,6 +467,11 @@ def read_event(event_id: str) -> str:
         character = bible.get_character(signal.character_id)
         name = character.identity.name if character else f"unknown ({signal.character_id})"
         lines.append(f"- {name} [signal id: {signal.id}]: {signal.interpretation or '-'}")
+        if signal.review is not None and signal.review.decision:
+            notes = f" — {signal.review.notes}" if signal.review.notes else ""
+            lines.append(f"  - review: {signal.review.decision}{notes}")
+        for entry in signal.evidence:
+            lines.append(f"  - evidence {json.dumps(entry.model_dump(mode='json'))}")
         for effect in signal.effects:
             lines.append(f"  - {json.dumps(effect.model_dump(mode='json'))}")
 
@@ -531,8 +544,9 @@ def add_event(
     ties among unrelated events.
 
     ``world_state_effects`` are structured deltas to the active world state.
-    ``signals`` describe how specific characters interpret the event and carry
-    character-state effects (intimacies).
+    ``signals`` are hints for the intimacy interpretation workflow: pass
+    ``character_id`` and ``interpretation`` only. Effects and evidence on
+    incoming signals are ignored; the workflow authors those after review.
     """
 
     with world_transaction() as world:
@@ -548,13 +562,15 @@ def add_event(
                 f"{_event_listing(bible)}"
             )
 
+        hint_signals = _signals_as_hints(signals or [])
+        _validate_signal_character_ids(bible, hint_signals)
+        _validate_signal_evidence_ids(bible, hint_signals)
         event = Event(
             title=title,
             description=description,
             world_state_effects=world_state_effects or [],
-            signals=signals or [],
+            signals=hint_signals,
         )
-        _validate_signal_character_ids(bible, event.signals)
         event.id = unique_slug(
             "event_",
             title,
@@ -584,7 +600,10 @@ def add_event(
     relation_note = ""
     if added_relations:
         relation_note = f" Added {len(added_relations)} relation(s)."
-    return f"Added event '{event.title}' (id: {event.id}).{relation_note}"
+    return (
+        f"Added event '{event.title}' (id: {event.id}).{relation_note}"
+        f"{_start_event_interpretation_note(event.id)}"
+    )
 
 
 @tool
@@ -598,9 +617,13 @@ def update_event(
     """Partially update an event; only provided fields change.
 
     `world_state_effects` and `signals` replace the whole respective list, so
-    read the event first and resend the full list when editing them. To change
+    read the event first and resend the full list when editing them. Incoming
+    signals are hints (character_id + interpretation); effects and evidence
+    supplied by the agent are ignored. Existing evidence and structural
+    records for the same character stay until interpretation applies. To change
     chronology, use add_event_relation / remove_event_relation rather than
-    moving the event in the timeline list.
+    moving the event in the timeline list. Relation edits do not re-run
+    interpretation.
     """
 
     with world_transaction() as world:
@@ -616,10 +639,15 @@ def update_event(
         if world_state_effects is not None:
             event.world_state_effects = world_state_effects
         if signals is not None:
-            _validate_signal_character_ids(bible, signals)
-            event.signals = signals
+            hint_signals = _signals_as_hints(signals, existing=event.signals)
+            _validate_signal_character_ids(bible, hint_signals)
+            _validate_signal_evidence_ids(bible, hint_signals)
+            event.signals = hint_signals
 
-    return f"Updated event '{event.title}' (id: {event.id})."
+    return (
+        f"Updated event '{event.title}' (id: {event.id})."
+        f"{_start_event_interpretation_note(event.id)}"
+    )
 
 
 @tool
@@ -737,7 +765,12 @@ def read_world_state(at_event_id: str = "") -> str:
     for character in derived.characters.values():
         lines.append("")
         lines.append(f"## {character.name or 'Unnamed'} [id: {character.character_id}]")
-        lines.extend(_derived_character_lines(character))
+        lines.extend(
+            _derived_character_lines(
+                character,
+                explain_intimacies(bible, character.character_id, at_event_id or None),
+            )
+        )
 
     effect_warnings = format_effect_diagnostics(effect_diagnostics(bible))
     if effect_warnings:
@@ -775,8 +808,7 @@ def _character_listing(bible: StoryBible) -> str:
     if not bible.characters:
         return "No characters exist yet; create one first."
     listing = ", ".join(
-        f"{character.identity.name or 'Unnamed'} [{character.id}]"
-        for character in bible.characters
+        f"{character.identity.name or 'Unnamed'} [{character.id}]" for character in bible.characters
     )
     return f"Valid characters: {listing}"
 
@@ -786,6 +818,69 @@ def _event_listing(bible: StoryBible) -> str:
         return "No events exist yet."
     listing = ", ".join(f"{event.title or 'Untitled'} [{event.id}]" for event in bible.timeline)
     return f"Valid events: {listing}"
+
+
+def _signals_as_hints(
+    incoming: list[Signal],
+    existing: list[Signal] | None = None,
+) -> list[Signal]:
+    """Keep character + interpretation from the agent; drop authored mutations.
+
+    When ``existing`` signals are provided (update), prior evidence, effects,
+    and review for the same character or signal id are preserved until apply
+    overwrites them. Agent-supplied effects and evidence are never persisted.
+    """
+
+    existing_by_char = {
+        signal.character_id: signal for signal in existing or [] if signal.character_id
+    }
+    existing_by_id = {signal.id: signal for signal in existing or [] if signal.id}
+    hints: list[Signal] = []
+    for raw in incoming:
+        prior = None
+        if raw.id and raw.id in existing_by_id:
+            prior = existing_by_id[raw.id]
+        elif raw.character_id and raw.character_id in existing_by_char:
+            prior = existing_by_char[raw.character_id]
+        hints.append(
+            Signal(
+                id=prior.id if prior is not None else raw.id,
+                character_id=raw.character_id,
+                interpretation=raw.interpretation,
+                evidence=list(prior.evidence) if prior is not None else [],
+                effects=list(prior.effects) if prior is not None else [],
+                review=prior.review if prior is not None else None,
+                evidence_schema_version=(
+                    prior.evidence_schema_version
+                    if prior is not None
+                    else raw.evidence_schema_version
+                ),
+            )
+        )
+    return hints
+
+
+def _start_event_interpretation_note(event_id: str) -> str:
+    """Trigger interpretation after a committed event write; never from relation edits."""
+
+    from app.graphs.jobs import get_job_manager
+
+    manager = get_job_manager()
+    try:
+        jobs = manager.start_event_interpretation(event_id)
+    except ValueError as exc:
+        return f" {exc}"
+    if not jobs:
+        # An empty job list is ambiguous: either nothing was relevant, or every
+        # relevant character is already claimed by a running interpretation.
+        if manager.is_interpreting(event_id):
+            return " Intimacy interpretation is already running for this event."
+        from app.graphs.intimacy_interpretation import NO_RELEVANT_CHARACTERS_MESSAGE
+
+        return f" {NO_RELEVANT_CHARACTERS_MESSAGE}"
+    count = len(jobs)
+    noun = "character" if count == 1 else "characters"
+    return f" Started intimacy interpretation for {count} {noun}."
 
 
 def _validate_signal_character_ids(bible: StoryBible, signals: list[Signal]) -> None:
@@ -802,6 +897,46 @@ def _validate_signal_character_ids(bible: StoryBible, signals: list[Signal]) -> 
             else:
                 detail = "No characters exist yet; create one first."
             raise ToolException(f"Unknown character_id '{signal.character_id}' in signal. {detail}")
+
+
+def _validate_signal_evidence_ids(bible: StoryBible, signals: list[Signal]) -> None:
+    """Resolve or reject evidence intimacy ids; never persist a dangling reference."""
+
+    for signal in signals:
+        extra_ids = [
+            effect.intimacy.id
+            for effect in signal.effects
+            if isinstance(effect, AddIntimacy) and effect.intimacy.id
+        ]
+        catalog = dict(bible.intimacy_catalog(signal.character_id or None))
+        for extra_id in extra_ids:
+            if extra_id not in catalog:
+                catalog[extra_id] = extra_id
+        for entry in signal.evidence:
+            if not entry.intimacy_id:
+                raise ToolException(
+                    f"Signal evidence is missing intimacy_id. {_intimacy_listing(catalog)}"
+                )
+            match = bible.resolve_intimacy_id(
+                entry.intimacy_id,
+                character_id=signal.character_id or None,
+                extra_ids=extra_ids,
+            )
+            if match is None:
+                raise ToolException(
+                    f"Unknown intimacy_id '{entry.intimacy_id}' in signal evidence. "
+                    f"{_intimacy_listing(catalog)}"
+                )
+            entry.intimacy_id = match
+
+
+def _intimacy_listing(catalog: dict[str, str]) -> str:
+    if not catalog:
+        return "No intimacies exist yet for this character; add one first."
+    listing = ", ".join(
+        f"{text or intimacy_id} [{intimacy_id}]" for intimacy_id, text in catalog.items()
+    )
+    return f"Valid intimacies: {listing}"
 
 
 def _chronological_event_index(bible: StoryBible, event_id: str) -> int:
@@ -838,11 +973,7 @@ def _format_event_placement(world, event_id: str) -> str:
 
 
 def _scenes_related_to_event(world, event_id: str) -> list:
-    return [
-        scene
-        for scene in world.scenes
-        if event_id in scene.blueprint.related_event_ids
-    ]
+    return [scene for scene in world.scenes if event_id in scene.blueprint.related_event_ids]
 
 
 def _duplicate_enactment_warnings(world) -> str:
@@ -872,18 +1003,29 @@ def _event_relation_summary(bible: StoryBible, event_id: str) -> str:
     return ", ".join(parts)
 
 
-def _intimacy_lines(intimacies: list[Intimacy]) -> list[str]:
+def _intimacy_lines(
+    intimacies: list[Intimacy],
+    ranks: dict[str, RankState] | None = None,
+) -> list[str]:
     if not intimacies:
         return ["(none)"]
-    return [
-        f"- {intimacy.text} ({intimacy.strength}) [id: {intimacy.id}]" for intimacy in intimacies
-    ]
+    lines: list[str] = []
+    for intimacy in intimacies:
+        line = f"- {intimacy.text} ({intimacy.strength}) [id: {intimacy.id}]"
+        explanation = (ranks or {}).get(intimacy.id)
+        if explanation is not None:
+            line = f"{line} -- {format_threshold_distance(explanation)}"
+        lines.append(line)
+    return lines
 
 
-def _derived_character_lines(derived: DerivedCharacterState) -> list[str]:
+def _derived_character_lines(
+    derived: DerivedCharacterState,
+    ranks: dict[str, RankState] | None = None,
+) -> list[str]:
     return [
         "Intimacies:",
-        *_intimacy_lines(derived.intimacies),
+        *_intimacy_lines(derived.intimacies, ranks),
     ]
 
 

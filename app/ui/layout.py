@@ -102,6 +102,8 @@ def _render_job_completion_toasts() -> None:
                     ui.notify(f"{job.label} generated", type="positive")
                 elif job.kind == "chat_turn":
                     ui.notify("Agent reply ready", type="positive")
+                elif job.kind == "intimacy_interpretation":
+                    ui.notify(f"{job.label} interpreted", type="positive")
             elif job.status == "failed":
                 if job.kind == "scene_generation":
                     ui.notify(
@@ -110,6 +112,11 @@ def _render_job_completion_toasts() -> None:
                     )
                 elif job.kind == "chat_turn":
                     ui.notify(job.error or "Chat agent error", type="negative")
+                elif job.kind == "intimacy_interpretation":
+                    ui.notify(
+                        f"Intimacy interpretation failed: {job.error or 'unknown error'}",
+                        type="negative",
+                    )
 
     ui.timer(1.0, poll_finished_jobs)
 

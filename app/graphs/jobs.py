@@ -12,10 +12,11 @@ from typing import Any, Literal
 
 from langchain_core.messages import AIMessageChunk, BaseMessageChunk
 
+from app.graphs.intimacy_interpretation import NO_RELEVANT_CHARACTERS_MESSAGE
 from app.persistence import ChatConversation, get_chat_conversation
 from app.world.scene import resolve_scene, set_scene_text
 
-JobKind = Literal["scene_generation", "chat_turn"]
+JobKind = Literal["scene_generation", "chat_turn", "intimacy_interpretation"]
 JobStatus = Literal["running", "finished", "failed"]
 QueueStatus = Literal["pending", "running", "finished", "failed", "blocked"]
 
@@ -27,6 +28,12 @@ def scene_claim_key(scene_id: str) -> str:
     """Return the resource claim key for a scene."""
 
     return f"scene:{scene_id}"
+
+
+def intimacy_claim_key(event_id: str, character_id: str) -> str:
+    """Return the resource claim key for one character-event interpretation."""
+
+    return f"intimacy:{event_id}:{character_id}"
 
 
 @dataclass
@@ -56,6 +63,25 @@ class SceneGenerationLive:
 
 
 @dataclass
+class IntimacyInterpretationLive:
+    """Streaming state for a per-character intimacy interpretation job."""
+
+    version: int = 0
+    event_id: str = ""
+    character_id: str = ""
+
+
+@dataclass
+class EventInterpretationStatus:
+    """UI-facing status for intimacy jobs on one event."""
+
+    running_character_ids: list[str] = field(default_factory=list)
+    last_errors: dict[str, str] = field(default_factory=dict)
+    empty_reason: str | None = None
+    finished_character_ids: list[str] = field(default_factory=list)
+
+
+@dataclass
 class Job:
     """In-memory record for one background job."""
 
@@ -68,7 +94,9 @@ class Job:
     finished_at: datetime | None = None
     error: str | None = None
     cancel_requested: bool = False
-    live: ChatLive | SceneGenerationLive = field(default_factory=ChatLive)
+    live: ChatLive | SceneGenerationLive | IntimacyInterpretationLive = field(
+        default_factory=ChatLive
+    )
 
 
 @dataclass
@@ -99,6 +127,7 @@ class JobManager:
         self._claim_index: dict[str, str] = {}
         self._queue: list[QueuedScene] = []
         self._chat_task: asyncio.Task[None] | None = None
+        self._event_notes: dict[str, str] = {}
 
     def start_scene_generation(self, scene_id: str, *, max_revisions: int = 1) -> Job:
         """Start scene generation in a background thread with a scene claim."""
@@ -189,6 +218,142 @@ class JobManager:
                 if job.status in ("running", "finished"):
                     return None
             return None
+
+    def start_intimacy_interpretation(
+        self,
+        event_id: str,
+        character_id: str,
+        *,
+        models: dict[str, Any] | None = None,
+    ) -> Job:
+        """Start a per-character interpretation job with an intimacy claim."""
+
+        with self._lock:
+            job, thread_args = self._prepare_intimacy_interpretation_unlocked(
+                event_id,
+                character_id,
+                models=models,
+            )
+        thread = threading.Thread(
+            target=self._run_intimacy_interpretation,
+            args=thread_args,
+            name=f"intimacy-{event_id}-{character_id}",
+            daemon=True,
+        )
+        thread.start()
+        return job
+
+    def start_event_interpretation(
+        self,
+        event_id: str,
+        *,
+        character_ids: Sequence[str] | None = None,
+        models: dict[str, Any] | None = None,
+    ) -> list[Job]:
+        """Fan out parallel interpretation jobs for an event's relevant characters.
+
+        When the relevant set is empty, no jobs start and
+        ``event_interpretation_status`` exposes ``NO_RELEVANT_CHARACTERS_MESSAGE``.
+        A character already being interpreted is skipped rather than raising.
+        """
+
+        from app.graphs.intimacy_interpretation import relevant_character_ids
+        from app.world.store import get_world
+
+        world = get_world()
+        if world.story_bible.get_event(event_id) is None:
+            msg = f"Event not found: {event_id}"
+            raise ValueError(msg)
+
+        if character_ids is None:
+            ids = relevant_character_ids(world, event_id)
+        else:
+            ids = [
+                character_id
+                for character_id in character_ids
+                if world.story_bible.get_character(character_id) is not None
+            ]
+
+        with self._lock:
+            if not ids:
+                self._event_notes[event_id] = NO_RELEVANT_CHARACTERS_MESSAGE
+                return []
+            self._event_notes.pop(event_id, None)
+
+        jobs: list[Job] = []
+        for character_id in ids:
+            try:
+                jobs.append(
+                    self.start_intimacy_interpretation(event_id, character_id, models=models)
+                )
+            except RuntimeError:
+                continue
+        return jobs
+
+    def is_interpreting(self, event_id: str, character_id: str | None = None) -> bool:
+        """Return True when an interpretation job claims this event (or pair)."""
+
+        if character_id is not None:
+            return self.claim_for(intimacy_claim_key(event_id, character_id)) is not None
+        prefix = f"intimacy:{event_id}:"
+        with self._lock:
+            return any(
+                claim.startswith(prefix) and self._jobs.get(job_id) is not None
+                for claim, job_id in self._claim_index.items()
+            )
+
+    def last_interpretation_error(
+        self,
+        event_id: str,
+        character_id: str | None = None,
+    ) -> str | None:
+        """Return the latest failed interpretation error for the event or pair."""
+
+        with self._lock:
+            for job in reversed(list(self._jobs.values())):
+                if job.kind != "intimacy_interpretation":
+                    continue
+                if not self._job_matches_event(job, event_id, character_id):
+                    continue
+                if job.status == "failed":
+                    return job.error
+                if job.status in ("running", "finished"):
+                    return None
+            return None
+
+    def event_interpretation_status(self, event_id: str) -> EventInterpretationStatus:
+        """Summarize running, finished, and failed interpretation jobs for an event."""
+
+        with self._lock:
+            running: list[str] = []
+            finished: list[str] = []
+            errors: dict[str, str] = {}
+            latest_by_character: dict[str, Job] = {}
+            for job in self._jobs.values():
+                if job.kind != "intimacy_interpretation":
+                    continue
+                character_id = self._character_id_from_job(job, event_id)
+                if character_id is None:
+                    continue
+                previous = latest_by_character.get(character_id)
+                if previous is None or job.created_at >= previous.created_at:
+                    latest_by_character[character_id] = job
+            for character_id, job in latest_by_character.items():
+                if job.status == "running":
+                    running.append(character_id)
+                elif job.status == "failed" and job.error:
+                    errors[character_id] = job.error
+                elif job.status == "finished":
+                    finished.append(character_id)
+            empty_reason = (
+                None if running or latest_by_character else self._event_notes.get(event_id)
+            )
+            return EventInterpretationStatus(
+                running_character_ids=running,
+                last_errors=errors,
+                empty_reason=empty_reason,
+                finished_character_ids=finished,
+            )
 
     def scene_is_claimed(self, scene_id: str) -> bool:
         """Return True when any running job claims ``scene_id``."""
@@ -305,6 +470,71 @@ class JobManager:
         )
         self._register_job(job)
         return job, (job.id, scene_id, max_revisions)
+
+    def _prepare_intimacy_interpretation_unlocked(
+        self,
+        event_id: str,
+        character_id: str,
+        *,
+        models: dict[str, Any] | None = None,
+    ) -> tuple[Job, tuple[str, str, str, dict[str, Any] | None]]:
+        claim = intimacy_claim_key(event_id, character_id)
+        if claim in self._claim_index:
+            msg = f"Interpretation already running for event {event_id} character {character_id}"
+            raise RuntimeError(msg)
+
+        from app.world.store import get_world
+
+        world = get_world()
+        event = world.story_bible.get_event(event_id)
+        character = world.story_bible.get_character(character_id)
+        event_title = event.title if event is not None else event_id
+        character_name = character.identity.name if character is not None else character_id
+        job = Job(
+            id=str(uuid.uuid4()),
+            kind="intimacy_interpretation",
+            label=f"Intimacy: '{event_title or 'Untitled'}' / {character_name or 'Unnamed'}",
+            claims=[claim],
+            live=IntimacyInterpretationLive(event_id=event_id, character_id=character_id),
+        )
+        self._register_job(job)
+        return job, (job.id, event_id, character_id, models)
+
+    def _run_intimacy_interpretation(
+        self,
+        job_id: str,
+        event_id: str,
+        character_id: str,
+        models: dict[str, Any] | None,
+    ) -> None:
+        from app.graphs.intimacy_interpretation import run_and_apply_intimacy_interpretation
+
+        try:
+            run_and_apply_intimacy_interpretation(event_id, character_id, models=models)
+        except Exception as exc:
+            self._finish_job(job_id, status="failed", error=str(exc))
+        else:
+            self._finish_job(job_id, status="finished")
+
+    def _job_matches_event(
+        self,
+        job: Job,
+        event_id: str,
+        character_id: str | None,
+    ) -> bool:
+        if character_id is not None:
+            return intimacy_claim_key(event_id, character_id) in job.claims
+        prefix = f"intimacy:{event_id}:"
+        return any(claim.startswith(prefix) for claim in job.claims)
+
+    def _character_id_from_job(self, job: Job, event_id: str) -> str | None:
+        prefix = f"intimacy:{event_id}:"
+        for claim in job.claims:
+            if claim.startswith(prefix):
+                return claim[len(prefix) :]
+        if isinstance(job.live, IntimacyInterpretationLive) and job.live.event_id == event_id:
+            return job.live.character_id
+        return None
 
     def _finish_job(self, job_id: str, *, status: JobStatus, error: str | None = None) -> None:
         with self._lock:

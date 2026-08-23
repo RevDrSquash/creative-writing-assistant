@@ -283,6 +283,7 @@ async def test_add_character_creates_and_opens_detail_form(
     await user.should_see("Identity")
     await user.should_see("Baseline State")
     await user.should_see("Derived State")
+    await user.should_see("Signal history")
     await user.should_not_see("Stance")
 
     world_path = isolated_data_dir / "world.json"
@@ -301,11 +302,126 @@ async def test_timeline_add_event_opens_event_form(
     await user.should_see("Event graph")
     await user.should_see("World State Effects")
     await user.should_see("Signals")
+    await user.should_see("Interpret intimacies")
     await user.should_see("Relationships")
     await user.should_see("Connect:")
 
     stored = json.loads((isolated_data_dir / "world.json").read_text(encoding="utf-8"))
     assert len(stored["story_bible"]["timeline"]) == 1
+
+
+async def test_event_signal_evidence_is_editable(
+    user: User,
+    isolated_data_dir: Path,
+) -> None:
+    from app.persistence.world import JsonFileWorldStore, default_world
+    from app.world.models import (
+        Character,
+        CharacterBaselineState,
+        CharacterIdentity,
+        Event,
+        Intimacy,
+        Signal,
+    )
+
+    world = default_world()
+    intimacy = Intimacy(id="intim_wary", text="Wary of outsiders", strength="minor")
+    world.story_bible.characters.append(
+        Character(
+            id="char_mira",
+            identity=CharacterIdentity(name="Mira"),
+            baseline_state=CharacterBaselineState(intimacies=[intimacy]),
+        )
+    )
+    world.story_bible.timeline.append(
+        Event(
+            id="evt_look",
+            title="A look",
+            signals=[
+                Signal(
+                    id="sig_mira",
+                    character_id="char_mira",
+                    interpretation="They meant it.",
+                )
+            ],
+        )
+    )
+    JsonFileWorldStore(isolated_data_dir / "world.json").save(world)
+
+    await user.open("/workspace/timeline")
+    user.find(marker="timeline-graph").trigger("node_click", "c1_mermaid-flowchart-evt_look-0")
+    await user.should_see("Evidence")
+    await user.should_see("No evidence entries.")
+    user.find("Add evidence").click()
+    await user.should_see("Supports")
+    await user.should_see("3 · Meaningful")
+
+    stored = json.loads((isolated_data_dir / "world.json").read_text(encoding="utf-8"))
+    evidence = stored["story_bible"]["timeline"][0]["signals"][0]["evidence"]
+    assert len(evidence) == 1
+    assert evidence[0]["intimacy_id"] == "intim_wary"
+    assert evidence[0]["direction"] == "supports"
+    assert evidence[0]["strength"] == 3
+
+
+async def test_event_interpret_intimacies_runs_for_signal_character(
+    user: User,
+    isolated_data_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.graphs.intimacy_workflow import InterpretationResult
+    from app.persistence.world import JsonFileWorldStore, default_world
+    from app.world.models import Character, CharacterIdentity, Event, Signal
+
+    world = default_world()
+    world.story_bible.characters.append(
+        Character(id="char_mira", identity=CharacterIdentity(name="Mira"))
+    )
+    world.story_bible.timeline.append(
+        Event(
+            id="evt_look",
+            title="A look",
+            signals=[
+                Signal(
+                    id="sig_mira",
+                    character_id="char_mira",
+                    interpretation="They meant it.",
+                )
+            ],
+        )
+    )
+    JsonFileWorldStore(isolated_data_dir / "world.json").save(world)
+
+    await user.open("/workspace/timeline")
+    monkeypatch.setattr(
+        "app.graphs.intimacy_interpretation.run_and_apply_intimacy_interpretation",
+        lambda event_id, character_id, *, models=None: InterpretationResult(
+            event_id=event_id,
+            character_id=character_id,
+        ),
+    )
+    user.find(marker="timeline-graph").trigger("node_click", "c1_mermaid-flowchart-evt_look-0")
+    await user.should_see("Interpret intimacies")
+    user.find(marker="interpret-intimacies-button").click()
+    await user.should_see("Last interpretation finished for Mira.")
+
+
+async def test_event_interpret_intimacies_empty_relevant_set(
+    user: User,
+    isolated_data_dir: Path,
+) -> None:
+    from app.persistence.world import JsonFileWorldStore, default_world
+    from app.world.models import Event
+
+    world = default_world()
+    world.story_bible.timeline.append(Event(id="evt_look", title="A look"))
+    JsonFileWorldStore(isolated_data_dir / "world.json").save(world)
+
+    await user.open("/workspace/timeline")
+    user.find(marker="timeline-graph").trigger("node_click", "c1_mermaid-flowchart-evt_look-0")
+    await user.should_see("Interpret intimacies")
+    user.find(marker="interpret-intimacies-button").click()
+    await user.should_see("No relevant characters — add a signal or scene cast, then re-run.")
 
 
 async def test_timeline_graph_and_event_relationships(
@@ -469,6 +585,8 @@ async def test_model_selection_save_writes_isolated_store(
 ) -> None:
     await user.open("/models/selection")
     await user.should_see("Chat Agent")
+    await user.should_see("Intimacy: Analyze")
+    await user.should_see("Intimacy: Review")
 
     user.find("Save").click()
     await user.should_see("Model selection saved.")
@@ -553,6 +671,7 @@ async def test_work_queue_nav_and_empty_page(user: User) -> None:
     await user.should_see("Work Queue")
     user.find(marker="header-work-queue").click()
     await user.should_see("Work Queue")
+    await user.should_see("intimacy interpretation")
     await user.should_see("No active or recent workflows.")
 
 

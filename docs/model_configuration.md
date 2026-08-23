@@ -68,6 +68,15 @@ Scene-writing workflow nodes (`generate_scene`):
 * `scene_prose_revise` - "Scene: Revise Prose", defaulting to `judgment`.
 * `scene_summary` - "Scene: Summary", defaulting to `structure`.
 
+Intimacy interpretation workflow nodes (`interpret_intimacy`):
+
+* `intimacy_analyze` - "Intimacy: Analyze", defaulting to `judgment`.
+* `intimacy_review` - "Intimacy: Review", defaulting to `judgment`.
+
+Both are one-shot structured-output calls whose value is character judgment (signal
+fidelity, score discipline, overlap checks), so they share the review role rather than
+cheap schema-fill. Context assembly and validation are deterministic and have no model.
+
 The revise nodes default to `judgment`, not `writing`: they are output-small precision work that
 shares economics with the reviews, and keeping them off the `writing` config lets that config
 point at a writing specialist. After the gather/write split, `scene_draft` is tool-free, so the

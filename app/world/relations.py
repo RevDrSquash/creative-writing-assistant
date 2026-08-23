@@ -118,6 +118,39 @@ def _relation_conflicts(
     return None
 
 
+def scenario_ids(bible: StoryBible) -> dict[str, str]:
+    """Map each event to a scenario id.
+
+    A scenario is a connected component of ``directly_follows`` edges treated as
+    undirected. Events with no such edge are their own scenario. The scenario id
+    is the lexicographically smallest event id in the component.
+    """
+
+    parent = {event.id: event.id for event in bible.timeline}
+
+    def find(event_id: str) -> str:
+        while parent[event_id] != event_id:
+            parent[event_id] = parent[parent[event_id]]
+            event_id = parent[event_id]
+        return event_id
+
+    def union(left: str, right: str) -> None:
+        root_left, root_right = find(left), find(right)
+        if root_left != root_right:
+            parent[root_right] = root_left
+
+    for relation in bible.event_relations:
+        if relation.kind != "directly_follows":
+            continue
+        if relation.source_id in parent and relation.target_id in parent:
+            union(relation.source_id, relation.target_id)
+
+    members: dict[str, list[str]] = {}
+    for event_id in parent:
+        members.setdefault(find(event_id), []).append(event_id)
+    return {event_id: min(group) for group in members.values() for event_id in group}
+
+
 def chronological_order(bible: StoryBible) -> list[Event]:
     """Return events in canonical chronological order.
 

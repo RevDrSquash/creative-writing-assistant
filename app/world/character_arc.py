@@ -8,23 +8,31 @@ in the inclusive window that carry a signal for the character. See
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
+from app.world.evidence import IntimacyEvidenceTrack, RankState, format_threshold_distance
 from app.world.models import (
     AddIntimacy,
     CharacterStateEffect,
     Event,
     Intimacy,
-    RemoveIntimacy,
+    IntimacyEvidence,
     SetIntimacyStrength,
     Signal,
     StoryBible,
     UpdateIntimacy,
 )
-from app.world.relations import chronological_order
-from app.world.replay import DerivedCharacterState, derive_state_at
+from app.world.relations import chronological_order, scenario_ids
+from app.world.replay import (
+    DerivedCharacterState,
+    SignalFoldContext,
+    apply_signal_to_intimacies,
+    derive_state_at,
+    explain_intimacies_at,
+    intimacy_tracks_from_baselines,
+)
 
-_STRENGTH_ORDER = {"minor": 0, "major": 1, "defining": 2}
+_STRENGTH_ORDER = {"dormant": -1, "minor": 0, "major": 1, "defining": 2}
 
 
 @dataclass(frozen=True)
@@ -46,6 +54,8 @@ class CharacterArc:
     start_state: DerivedCharacterState
     transitions: tuple[CharacterArcTransition, ...]
     end_state: DerivedCharacterState
+    start_ranks: dict[str, RankState] = field(default_factory=dict)
+    end_ranks: dict[str, RankState] = field(default_factory=dict)
 
 
 def derive_character_arc(
@@ -73,11 +83,14 @@ def derive_character_arc(
 
     if not ordered:
         baseline = _character_state(bible, character_id, 0)
+        empty_ranks = explain_intimacies_at(bible, character_id, 0)
         return CharacterArc(
             character_id=character_id,
             start_state=baseline,
             transitions=(),
             end_state=baseline,
+            start_ranks=empty_ranks,
+            end_ranks=empty_ranks,
         )
 
     start_index = _event_index(ordered, start_id) if start_id is not None else 0
@@ -89,10 +102,24 @@ def derive_character_arc(
 
     start_state = _character_state(bible, character_id, start_index)
     end_state = _character_state(bible, character_id, end_index + 1)
-    intimacies = [intimacy.model_copy(deep=True) for intimacy in start_state.intimacies]
+    intimacies = [
+        intimacy.model_copy(deep=True)
+        for intimacy in _character_state(bible, character_id, 0).intimacies
+    ]
+    tracks = intimacy_tracks_from_baselines(bible)
+    scenarios = scenario_ids(bible)
     transitions: list[CharacterArcTransition] = []
-    for event in ordered[start_index : end_index + 1]:
-        transition = _transition_for_event(event, character_id, intimacies)
+    for index, event in enumerate(ordered[: end_index + 1]):
+        in_window = start_index <= index <= end_index
+        transition = _transition_for_event(
+            event,
+            character_id,
+            intimacies,
+            chronological_index=index,
+            scenario_id=scenarios.get(event.id, event.id),
+            tracks=tracks,
+            record=in_window,
+        )
         if transition is not None:
             transitions.append(transition)
     return CharacterArc(
@@ -100,6 +127,8 @@ def derive_character_arc(
         start_state=start_state,
         transitions=tuple(transitions),
         end_state=end_state,
+        start_ranks=explain_intimacies_at(bible, character_id, start_index),
+        end_ranks=explain_intimacies_at(bible, character_id, end_index + 1),
     )
 
 
@@ -109,7 +138,7 @@ def format_character_arc(arc: CharacterArc) -> str:
     lines = [
         "### State at start",
         "",
-        *_state_lines(arc.start_state),
+        *_state_lines(arc.start_state, arc.start_ranks),
         "",
         "### Transitions",
         "",
@@ -121,7 +150,7 @@ def format_character_arc(arc: CharacterArc) -> str:
             if index:
                 lines.append("")
             lines.extend(_transition_lines(transition))
-    lines.extend(["", "### State at end", "", *_state_lines(arc.end_state)])
+    lines.extend(["", "### State at end", "", *_state_lines(arc.end_state, arc.end_ranks)])
     return "\n".join(lines)
 
 
@@ -153,6 +182,11 @@ def _transition_for_event(
     event: Event,
     character_id: str,
     intimacies: list[Intimacy],
+    *,
+    chronological_index: int,
+    scenario_id: str,
+    tracks: dict[tuple[str, str], IntimacyEvidenceTrack],
+    record: bool,
 ) -> CharacterArcTransition | None:
     signals = [signal for signal in event.signals if signal.character_id == character_id]
     if not signals:
@@ -163,8 +197,19 @@ def _transition_for_event(
     for signal in signals:
         if signal.interpretation:
             interpretations.append(signal.interpretation)
-        changes.extend(_describe_and_apply_signal(signal, intimacies))
+        context = SignalFoldContext(
+            character_id=character_id,
+            event_id=event.id,
+            chronological_index=chronological_index,
+            scenario_id=scenario_id,
+            tracks=tracks,
+        )
+        described = _describe_and_apply_signal(signal, intimacies, context)
+        if record:
+            changes.extend(described)
 
+    if not record:
+        return None
     return CharacterArcTransition(
         event_id=event.id,
         title=event.title,
@@ -174,9 +219,28 @@ def _transition_for_event(
     )
 
 
-def _describe_and_apply_signal(signal: Signal, intimacies: list[Intimacy]) -> list[str]:
+def _describe_and_apply_signal(
+    signal: Signal,
+    intimacies: list[Intimacy],
+    context: SignalFoldContext,
+) -> list[str]:
     descriptions = [_describe_effect(effect, intimacies) for effect in signal.effects]
-    _apply_effects(signal.effects, intimacies)
+    rank_states = apply_signal_to_intimacies(intimacies, signal, context)
+    descriptions.extend(_describe_evidence(entry, intimacies) for entry in signal.evidence)
+    seen = {entry.intimacy_id for entry in signal.evidence}
+    for state in rank_states:
+        if state.intimacy_id not in seen:
+            continue
+        if not state.crossings:
+            continue
+        crossing = state.crossings[-1]
+        if crossing.event_id != context.event_id:
+            continue
+        current = _find_intimacy(intimacies, state.intimacy_id)
+        label = current.text if current is not None and current.text else state.intimacy_id
+        descriptions.append(
+            f"Derived rank {label}: {crossing.previous_rank} to {crossing.new_rank}"
+        )
     return descriptions
 
 
@@ -197,7 +261,13 @@ def _describe_effect(effect: CharacterStateEffect, intimacies: list[Intimacy]) -
     if isinstance(effect, UpdateIntimacy):
         return f"Updated intimacy {label} to {effect.text}"
 
-    return f"Removed intimacy {label}"
+    return f"Eroded intimacy {label} to dormant"
+
+
+def _describe_evidence(entry: IntimacyEvidence, intimacies: list[Intimacy]) -> str:
+    current = _find_intimacy(intimacies, entry.intimacy_id)
+    label = current.text if current is not None and current.text else entry.intimacy_id
+    return f"Evidence {entry.direction} {label} (strength {entry.strength})"
 
 
 def _strength_verb(previous: str | None, new: str) -> str:
@@ -212,37 +282,24 @@ def _strength_verb(previous: str | None, new: str) -> str:
     return "Set"
 
 
-def _apply_effects(effects: list[CharacterStateEffect], intimacies: list[Intimacy]) -> None:
-    for effect in effects:
-        if isinstance(effect, AddIntimacy):
-            intimacies.append(effect.intimacy.model_copy(deep=True))
-        elif isinstance(effect, SetIntimacyStrength):
-            intimacy = _find_intimacy(intimacies, effect.intimacy_id)
-            if intimacy is not None:
-                intimacy.strength = effect.strength
-        elif isinstance(effect, UpdateIntimacy):
-            intimacy = _find_intimacy(intimacies, effect.intimacy_id)
-            if intimacy is not None:
-                intimacy.text = effect.text
-        elif isinstance(effect, RemoveIntimacy):
-            intimacies[:] = [
-                intimacy for intimacy in intimacies if intimacy.id != effect.intimacy_id
-            ]
-
-
 def _find_intimacy(intimacies: list[Intimacy], intimacy_id: str) -> Intimacy | None:
     return next((intimacy for intimacy in intimacies if intimacy.id == intimacy_id), None)
 
 
-def _state_lines(state: DerivedCharacterState) -> list[str]:
+def _state_lines(
+    state: DerivedCharacterState,
+    ranks: dict[str, RankState] | None = None,
+) -> list[str]:
     lines = ["Intimacies:"]
     if not state.intimacies:
         lines.append("(none)")
         return lines
-    lines.extend(
-        f"- {intimacy.text} ({intimacy.strength}) [id: {intimacy.id}]"
-        for intimacy in state.intimacies
-    )
+    for intimacy in state.intimacies:
+        line = f"- {intimacy.text} ({intimacy.strength}) [id: {intimacy.id}]"
+        explanation = (ranks or {}).get(intimacy.id)
+        if explanation is not None:
+            line = f"{line} -- {format_threshold_distance(explanation)}"
+        lines.append(line)
     return lines
 
 

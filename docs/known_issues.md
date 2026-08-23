@@ -81,17 +81,18 @@ fix so the context is not lost between phases.
 - **Possible fix:** Re-slug on first non-blank save of the primary text field, or prompt for a
   name before creating the entity.
 
-## 6. World schema version 1 is rejected; no automatic migration
+## 6. World schema versions 1–2 are rejected; no migration below v3
 
 - **Severity:** Low (documented breaking change)
-- **Location:** `app/persistence/world.py` — `validate_world_payload`; `app/world/models.py`
-  — `SCHEMA_VERSION = 2`
+- **Location:** `app/persistence/world.py` — `migrate_world_payload`; `app/world/models.py`
+  — `SCHEMA_VERSION` (currently 9; the code is authoritative, this number drifts)
 - **Introduced:** Schema version 2 (readable slug ids)
-- **Symptom:** Loading a `world.json` (or ZIP import) with `schema_version: 1` fails with a
-  clear unsupported-version error. Existing v1 worlds must be hand-converted (re-slug entity
-  ids and repair signal `character_id` references) before the app will load them.
-- **Why it is acceptable:** Automatic migration would need to rewrite every cross-reference;
-  the project has a single dev world and migration tooling is deferred.
+- **Symptom:** `migrate_world_payload` upgrades stored worlds from v3 through the current
+  version, but loading a `world.json` (or ZIP import) with `schema_version` 1 or 2 fails with
+  a clear unsupported-version error. Those worlds must be hand-converted (re-slug entity ids
+  and repair signal `character_id` references) before the app will load them.
+- **Why it is acceptable:** Migrating v1/v2 would need to rewrite every cross-reference; the
+  project has a single dev world that is already past those versions.
 - **Possible fix:** Add a one-shot migration script or import-time rewriter that maps old hex
   ids to new slugs and updates all references.
 
@@ -102,9 +103,10 @@ fix so the context is not lost between phases.
   warnings card; `read_timeline` / `read_event` / `read_world_state` tools
 - **Introduced:** Graph-derived timeline order (chronology changes when relations are edited,
   making prior effect references invalid at replay time)
-- **Symptom:** An event's `set_intimacy_strength`, `update_intimacy`, `remove_intimacy`, or
-  world-state `update_entry` / `remove_entry` may target an id that is not present when that
-  event is replayed (for example, strengthening an intimacy before the event that adds it).
+- **Symptom:** An event's `set_intimacy_strength`, `update_intimacy`, `remove_intimacy`,
+  signal evidence entry, or world-state `update_entry` / `remove_entry` may target an id that
+  is not present when that event is replayed (for example, evidence for an intimacy before
+  the event that adds it).
   Replay skips the effect silently; `effect_diagnostics()` and the Timeline warnings card
   surface the problem but edits are still allowed.
 - **Why it is acceptable for now:** Warning-first keeps authoring flexible while surfacing
@@ -173,3 +175,21 @@ fix so the context is not lost between phases.
 - **Possible fix:** Wrap the storage cleanup in a retry (as `JsonFileWorldStore.save()` does for
   `os.replace`), point NiceGUI storage at a `tmp_path` excluded from indexing, or upstream a
   `missing_ok`/retry to NiceGUI's `Storage.clear()`.
+
+## 12. Intimacy interpretation does not re-run on UI keystrokes or relation edits
+
+- **Severity:** Low (accepted trigger posture, not a defect)
+- **Location:** `app/tools/story_bible.py` (`add_event` / `update_event`);
+  `app/ui/components/story_bible_forms.py` event editor; `app/graphs/jobs.py`
+- **Introduced:** DEF-11 (intimacy pipeline wiring)
+- **Symptom:** Changing an event title or signal in the form, or adding/removing an
+  event relation, does not start interpretation. Only agent `add_event` /
+  `update_event` and the event editor's Interpret / Re-run button do. After a
+  reorder, `effect_diagnostics()` may warn about stale evidence until the user
+  re-runs.
+- **Why it is acceptable:** Form binds save on every keystroke and are not
+  transactional (see #3); firing an LLM run on each save would be costly and racy.
+  Relation-triggered re-analysis was explicitly declined (replay recomputes rank;
+  semantic re-read is manual).
+- **Possible fix:** Optional debounce after the user leaves an event, or a
+  "signals look stale" badge after relation edits that deep-links to Re-run.

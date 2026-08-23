@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Protocol
 
 from app.persistence.paths import get_data_dir
+from app.world.evidence import evidence_from_strength_effect
 from app.world.models import SCHEMA_VERSION, SceneBlueprint, World, blueprint_fingerprint, utc_now
 
 WORLD_FILENAME = "world.json"
@@ -99,6 +100,8 @@ def migrate_world_payload(data: dict) -> dict:
         return migrate_world_payload(migrated)
     if schema_version == 7:
         return migrate_world_payload(_migrate_v7_to_v8(data))
+    if schema_version == 8:
+        return migrate_world_payload(_migrate_v8_to_v9(data))
     msg = (
         f"Unsupported world schema_version {schema_version!r}; "
         f"this app supports version {SCHEMA_VERSION}."
@@ -180,6 +183,44 @@ def _migrate_v7_to_v8(data: dict) -> dict:
 
     migrated["scenes"] = scenes
     migrated["schema_version"] = 8
+    return migrated
+
+
+def _migrate_v8_to_v9(data: dict) -> dict:
+    """Convert ``set_intimacy_strength`` effects into equivalent evidence entries.
+
+    Creation/rewording records (``add_intimacy`` / ``update_intimacy``) and
+    legacy ``remove_intimacy`` markers are left in place.
+    """
+
+    migrated = dict(data)
+    bible = dict(migrated.get("story_bible") or {})
+    timeline = []
+    for raw_event in bible.get("timeline", []):
+        event = dict(raw_event)
+        signals = []
+        for raw_signal in event.get("signals", []):
+            signal = dict(raw_signal)
+            evidence = [dict(entry) for entry in signal.get("evidence", [])]
+            kept_effects = []
+            for raw_effect in signal.get("effects", []):
+                effect = dict(raw_effect)
+                if effect.get("op") == "set_intimacy_strength":
+                    converted = evidence_from_strength_effect(
+                        str(effect.get("intimacy_id", "")),
+                        str(effect.get("strength", "minor")),
+                    )
+                    evidence.append(converted.model_dump(mode="json"))
+                else:
+                    kept_effects.append(effect)
+            signal["effects"] = kept_effects
+            signal["evidence"] = evidence
+            signals.append(signal)
+        event["signals"] = signals
+        timeline.append(event)
+    bible["timeline"] = timeline
+    migrated["story_bible"] = bible
+    migrated["schema_version"] = 9
     return migrated
 
 

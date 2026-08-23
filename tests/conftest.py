@@ -61,12 +61,24 @@ def isolated_data_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterat
 
 
 @pytest.fixture
-def isolated_world(isolated_data_dir: Path):
+def isolated_world(isolated_data_dir: Path, monkeypatch: pytest.MonkeyPatch):
     """Fresh in-memory World singleton backed by an isolated world.json."""
 
+    import importlib
+
+    intimacy_mod = importlib.import_module("app.graphs.intimacy_interpretation")
+    jobs_mod = importlib.import_module("app.graphs.jobs")
+    workflow_mod = importlib.import_module("app.graphs.intimacy_workflow")
+
+    def no_apply(event_id: str, character_id: str, *, models=None):
+        return workflow_mod.InterpretationResult(event_id=event_id, character_id=character_id)
+
+    monkeypatch.setattr(intimacy_mod, "run_and_apply_intimacy_interpretation", no_apply)
+    jobs_mod.reset_job_manager()
     _world_persistence._WORLD_STORE = None
     _world_store._WORLD = None
     yield _world_store.get_world()
+    jobs_mod.reset_job_manager()
     _world_persistence._WORLD_STORE = None
     _world_store._WORLD = None
 

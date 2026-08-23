@@ -11,7 +11,9 @@ from collections.abc import Callable
 
 from nicegui import ui
 
+from app.graphs.jobs import get_job_manager
 from app.ui.save_helpers import save_world_ui
+from app.world.evidence import format_threshold_distance
 from app.world.models import (
     AddIntimacy,
     AddWorldStateEntry,
@@ -20,6 +22,7 @@ from app.world.models import (
     EventRelation,
     EventRelationKind,
     Intimacy,
+    IntimacyEvidence,
     RemoveIntimacy,
     RemoveWorldStateEntry,
     Scene,
@@ -40,11 +43,28 @@ from app.world.relations import (
     normalize_relation,
     relation_diagnostics,
 )
-from app.world.replay import derive_state_at, effect_diagnostics
+from app.world.replay import derive_state_at, effect_diagnostics, explain_intimacies_at
 from app.world.scene import enacting_scenes, prune_event_links
 from app.world.store import get_world
 
-_STRENGTH_OPTIONS = {"minor": "Minor", "major": "Major", "defining": "Defining"}
+_STRENGTH_OPTIONS = {
+    "dormant": "Dormant",
+    "minor": "Minor",
+    "major": "Major",
+    "defining": "Defining",
+}
+_BASELINE_STRENGTH_OPTIONS = {"minor": "Minor", "major": "Major", "defining": "Defining"}
+_EVIDENCE_DIRECTION_OPTIONS = {
+    "supports": "Supports",
+    "contradicts": "Contradicts",
+}
+_EVIDENCE_STRENGTH_OPTIONS = {
+    1: "1 · Incidental",
+    2: "2 · Noticeable",
+    3: "3 · Meaningful",
+    4: "4 · Pivotal",
+    5: "5 · Identity-shaking",
+}
 _WORLD_STATE_KIND_OPTIONS = {
     "pressure": "Pressure",
     "thread": "Thread",
@@ -121,6 +141,25 @@ def _bound_select(target: object, field: str, options: dict) -> ui.select:
     element = ui.select(options).props("dense outlined")
     element.bind_value(target, field)
     _save_on_change(element)
+    return element
+
+
+def _bound_int_select(target: object, field: str, options: dict[int, str]) -> ui.select:
+    """Bind a select whose option keys are ints (NiceGUI may emit them as strings)."""
+
+    element = ui.select(options).props("dense outlined")
+    element.bind_value(target, field)
+
+    def on_change(event) -> None:
+        raw = event.value
+        if raw is not None and not isinstance(raw, int):
+            try:
+                setattr(target, field, int(raw))
+            except (TypeError, ValueError):
+                pass
+        save_world_ui()
+
+    element.on_value_change(on_change)
     return element
 
 
@@ -446,7 +485,7 @@ def _render_intimacy_row(
         text.props("dense outlined")
         text.bind_value(intimacy, "text")
         _save_on_change(text)
-        _bound_select(intimacy, "strength", _STRENGTH_OPTIONS)
+        _bound_select(intimacy, "strength", _BASELINE_STRENGTH_OPTIONS)
 
         def delete_intimacy(intimacy: Intimacy = intimacy) -> None:
             intimacies[:] = [item for item in intimacies if item.id != intimacy.id]
@@ -478,12 +517,19 @@ def _render_derived_character_state(character: Character) -> None:
             if derived is None:
                 ui.label("Character not present in derived state.").classes("text-grey-7")
                 return
+            ranks = explain_intimacies_at(bible, character.id, position["value"])
             if not derived.intimacies:
                 ui.label("No intimacies.").classes("text-grey-7")
             for intimacy in derived.intimacies:
                 with ui.row().classes("w-full items-center no-wrap gap-2"):
                     ui.badge(_STRENGTH_OPTIONS[intimacy.strength]).props("outline color=primary")
                     ui.label(intimacy.text)
+                    explanation = ranks.get(intimacy.id)
+                    if explanation is not None:
+                        ui.label(format_threshold_distance(explanation)).classes(
+                            "text-grey-7 text-sm"
+                        )
+            _render_signal_history(bible, character.id, position["value"])
 
         def on_position_change(event) -> None:
             if isinstance(event.value, int):
@@ -811,6 +857,9 @@ def _render_event_editor(
         ui.label("Signals").classes("text-lg font-semibold")
         ui.label("How specific characters interpret this event.").classes("text-grey-7 text-sm")
 
+        manager = get_job_manager()
+        was_running = {"value": manager.is_interpreting(event.id)}
+
         @ui.refreshable
         def signals_section() -> None:
             if not event.signals:
@@ -818,6 +867,63 @@ def _render_event_editor(
             for signal in event.signals:
                 _render_signal_card(event, signal, chron_index, signals_section.refresh)
 
+        def start_interpretation() -> None:
+            try:
+                manager.start_event_interpretation(event.id)
+            except (RuntimeError, ValueError) as exc:
+                ui.notify(str(exc), type="warning")
+                return
+            interpretation_controls.refresh()
+
+        @ui.refreshable
+        def interpretation_controls() -> None:
+            status = manager.event_interpretation_status(event.id)
+            running = bool(status.running_character_ids)
+            if running:
+                button = ui.button("Interpreting...", icon="hourglass_empty")
+                button.props("flat disable")
+                button.mark("interpret-intimacies-button")
+                ui.spinner(size="sm").mark("interpret-intimacies-spinner")
+                names = _character_names(bible, status.running_character_ids)
+                ui.label(f"Interpreting intimacies for {names}.").classes(
+                    "text-grey-7 text-sm"
+                ).mark("intimacy-interpretation-status")
+            else:
+                label = (
+                    "Re-run interpretation"
+                    if _event_has_reviewed_signal(event)
+                    else "Interpret intimacies"
+                )
+                button = ui.button(label, icon="psychology", on_click=start_interpretation)
+                button.props("flat")
+                button.mark("interpret-intimacies-button")
+                if status.empty_reason:
+                    ui.label(status.empty_reason).classes("text-grey-7 text-sm").mark(
+                        "intimacy-interpretation-status"
+                    )
+                elif status.last_errors:
+                    details = "; ".join(
+                        f"{_character_name(bible, character_id)}: {error}"
+                        for character_id, error in status.last_errors.items()
+                    )
+                    ui.label(f"Interpretation failed: {details}").classes(
+                        "text-negative text-sm"
+                    ).mark("intimacy-interpretation-status")
+                elif status.finished_character_ids:
+                    names = _character_names(bible, status.finished_character_ids)
+                    ui.label(f"Last interpretation finished for {names}.").classes(
+                        "text-grey-7 text-sm"
+                    ).mark("intimacy-interpretation-status")
+
+        def poll_interpretation() -> None:
+            running = manager.is_interpreting(event.id)
+            if was_running["value"] and not running:
+                signals_section.refresh()
+            was_running["value"] = running
+            interpretation_controls.refresh()
+
+        interpretation_controls()
+        ui.timer(1.0, poll_interpretation)
         signals_section()
 
         def add_signal() -> None:
@@ -1171,8 +1277,32 @@ def _render_signal_card(
         _bound_textarea(
             signal, "interpretation", placeholder="How the character reads this event..."
         )
+        if signal.review is not None and signal.review.decision:
+            with ui.row().classes("w-full items-center gap-2"):
+                ui.badge(signal.review.decision.capitalize()).props("outline")
+                if signal.review.notes:
+                    ui.label(signal.review.notes).classes("text-grey-7 text-sm")
 
-        intimacy_options = _intimacy_options_before(bible, chron_index, signal.character_id)
+        intimacy_options = _intimacy_options_for_signal(bible, chron_index, signal)
+
+        _field_label("Evidence")
+
+        @ui.refreshable
+        def evidence_section() -> None:
+            if not signal.evidence:
+                ui.label("No evidence entries.").classes("text-grey-7")
+            for entry in signal.evidence:
+                _render_evidence_row(signal, entry, intimacy_options, evidence_section.refresh)
+
+        evidence_section()
+
+        def add_evidence() -> None:
+            default_id = next(iter(intimacy_options), "")
+            signal.evidence.append(IntimacyEvidence(intimacy_id=default_id))
+            save_world_ui()
+            evidence_section.refresh()
+
+        ui.button("Add evidence", icon="add", on_click=add_evidence).props("flat")
 
         _field_label("State Effects")
 
@@ -1188,6 +1318,13 @@ def _render_signal_card(
         effects_section()
 
         def add_effect(effect) -> None:
+            if isinstance(effect, AddIntimacy):
+                effect.intimacy.strength = "minor"
+                effect.intimacy.id = unique_slug(
+                    "intim_",
+                    effect.intimacy.text,
+                    set(bible.intimacy_ids()),
+                )
             signal.effects.append(effect)
             save_world_ui()
             effects_section.refresh()
@@ -1195,10 +1332,6 @@ def _render_signal_card(
         with ui.button("Add state effect", icon="add").props("flat"):
             with ui.menu():
                 ui.menu_item("Add intimacy", on_click=lambda: add_effect(AddIntimacy()))
-                ui.menu_item(
-                    "Set intimacy strength",
-                    on_click=lambda: add_effect(SetIntimacyStrength()),
-                )
                 ui.menu_item("Update intimacy", on_click=lambda: add_effect(UpdateIntimacy()))
                 ui.menu_item("Remove intimacy", on_click=lambda: add_effect(RemoveIntimacy()))
 
@@ -1216,7 +1349,7 @@ def _render_character_effect_row(
             text.props("dense outlined")
             text.bind_value(effect.intimacy, "text")
             _save_on_change(text)
-            _bound_select(effect.intimacy, "strength", _STRENGTH_OPTIONS)
+            ui.badge("minor").props("outline")
         elif isinstance(effect, SetIntimacyStrength):
             ui.badge("Set strength").props("outline color=warning")
             select = _bound_select(
@@ -1245,6 +1378,32 @@ def _render_character_effect_row(
             refresh()
 
         _delete_button(delete_effect, "Remove effect")
+
+
+def _render_evidence_row(
+    signal: Signal,
+    entry: IntimacyEvidence,
+    intimacy_options: dict[str, str],
+    refresh: Callable[[], None],
+) -> None:
+    with ui.row().classes("w-full items-center no-wrap gap-2"):
+        _bound_select(entry, "direction", _EVIDENCE_DIRECTION_OPTIONS)
+        select = _bound_select(
+            entry, "intimacy_id", _with_current(intimacy_options, entry.intimacy_id)
+        )
+        select.classes("grow")
+        _bound_int_select(entry, "strength", _EVIDENCE_STRENGTH_OPTIONS)
+        rationale = ui.input(placeholder="Why this signal bears on the intimacy...").classes("grow")
+        rationale.props("dense outlined")
+        rationale.bind_value(entry, "rationale")
+        _save_on_change(rationale)
+
+        def delete_entry(entry: IntimacyEvidence = entry) -> None:
+            signal.evidence = [item for item in signal.evidence if item is not entry]
+            save_world_ui()
+            refresh()
+
+        _delete_button(delete_entry, "Remove evidence")
 
 
 async def _confirm_delete_event(
@@ -1278,6 +1437,38 @@ async def _confirm_delete_event(
         ui.navigate.to("/workspace/timeline")
 
 
+def _event_has_reviewed_signal(event: Event) -> bool:
+    return any(signal.review is not None and signal.review.decision for signal in event.signals)
+
+
+def _character_name(bible: StoryBible, character_id: str) -> str:
+    character = bible.get_character(character_id)
+    if character is None:
+        return character_id
+    return character.identity.name or "Unnamed"
+
+
+def _character_names(bible: StoryBible, character_ids: list[str]) -> str:
+    return ", ".join(_character_name(bible, character_id) for character_id in character_ids)
+
+
+def _render_signal_history(bible: StoryBible, character_id: str, position: int) -> None:
+    ui.label("Signal history").classes("text-sm font-semibold")
+    shown = False
+    for event in chronological_order(bible)[:position]:
+        for signal in event.signals:
+            if signal.character_id != character_id:
+                continue
+            shown = True
+            with ui.row().classes("w-full items-start no-wrap gap-2"):
+                ui.label(event.title or "Untitled").classes("text-sm font-medium")
+                if signal.review is not None and signal.review.decision:
+                    ui.badge(signal.review.decision.capitalize()).props("outline")
+                ui.label(signal.interpretation or "—").classes("text-sm text-grey-7")
+    if not shown:
+        ui.label("No signals yet.").classes("text-grey-7 text-sm")
+
+
 def _entry_options_before(bible: StoryBible, chron_index: int) -> dict[str, str]:
     derived = derive_state_at(bible, chron_index)
     return {entry.id: f"{entry.text or entry.id} ({entry.kind})" for entry in derived.world_state}
@@ -1292,6 +1483,18 @@ def _intimacy_options_before(
     if derived is None:
         return {}
     return {intimacy.id: intimacy.text or intimacy.id for intimacy in derived.intimacies}
+
+
+def _intimacy_options_for_signal(
+    bible: StoryBible,
+    chron_index: int,
+    signal: Signal,
+) -> dict[str, str]:
+    options = _intimacy_options_before(bible, chron_index, signal.character_id)
+    for effect in signal.effects:
+        if isinstance(effect, AddIntimacy) and effect.intimacy.id:
+            options[effect.intimacy.id] = effect.intimacy.text or effect.intimacy.id
+    return options
 
 
 def _with_current(options: dict[str, str], current: str) -> dict[str, str]:

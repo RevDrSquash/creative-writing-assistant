@@ -1,9 +1,9 @@
 """Pydantic models for the World, Story Bible, and scenes.
 
-The Story Bible is event-sourced: Events and Signals carry structured effects,
-and derived state is computed by the replay engine (``app/world/replay.py``)
-rather than stored. See ``docs/story_bible_model.md`` for the authoritative
-model description.
+The Story Bible is event-sourced: Events and Signals carry structured effects
+and evidence, and derived state is computed by the replay engine
+(``app/world/replay.py``) rather than stored. See ``docs/story_bible_model.md``
+for the authoritative model description.
 """
 
 from __future__ import annotations
@@ -18,13 +18,28 @@ from uuid import uuid4
 
 from pydantic import BaseModel, Field
 
-SCHEMA_VERSION = 8
+SCHEMA_VERSION = 9
 
 IntimacyStrength = Literal["minor", "major", "defining"]
+DerivedIntimacyStrength = Literal["dormant", "minor", "major", "defining"]
+EvidenceDirection = Literal["supports", "contradicts"]
+EvidenceStrength = Literal[1, 2, 3, 4, 5]
+EvidenceNovelty = Literal["novel", "duplicate"]
+ReviewDecision = Literal["approved", "revised", "rejected"]
 WorldStateKind = Literal["pressure", "thread", "consequence"]
 EventRelationKind = Literal["follows", "directly_follows", "depends_on", "during"]
 
 INTIMACY_STRENGTHS: tuple[IntimacyStrength, ...] = ("minor", "major", "defining")
+DERIVED_INTIMACY_STRENGTHS: tuple[DerivedIntimacyStrength, ...] = (
+    "dormant",
+    "minor",
+    "major",
+    "defining",
+)
+EVIDENCE_DIRECTIONS: tuple[EvidenceDirection, ...] = ("supports", "contradicts")
+EVIDENCE_STRENGTHS: tuple[EvidenceStrength, ...] = (1, 2, 3, 4, 5)
+EVIDENCE_NOVELTIES: tuple[EvidenceNovelty, ...] = ("novel", "duplicate")
+REVIEW_DECISIONS: tuple[ReviewDecision, ...] = ("approved", "revised", "rejected")
 WORLD_STATE_KINDS: tuple[WorldStateKind, ...] = ("pressure", "thread", "consequence")
 EVENT_RELATION_KINDS: tuple[EventRelationKind, ...] = (
     "follows",
@@ -41,7 +56,7 @@ DIRECTED_EVENT_RELATION_KINDS: tuple[EventRelationKind, ...] = (
 # Articles dropped when comparing entity ids, so a model that emits
 # ``char_narrator`` still resolves to the real ``char_the_narrator``.
 _ID_STOPWORDS = frozenset({"the", "a", "an"})
-_ID_TYPE_PREFIXES = ("char_", "evt_", "fact_", "scene_", "wse_")
+_ID_TYPE_PREFIXES = ("char_", "evt_", "fact_", "scene_", "wse_", "intim_")
 
 
 def _entity_id_tokens(value: str) -> frozenset[str]:
@@ -112,11 +127,15 @@ def utc_now() -> datetime:
 
 
 class Intimacy(BaseModel):
-    """A character-subjective belief, attachment, value, fear, or desire."""
+    """A character-subjective belief, attachment, value, fear, or desire.
+
+    Stored baseline and creation records use ``minor`` / ``major`` / ``defining``.
+    Replay may derive ``dormant`` when accumulated evidence erodes below ``minor``.
+    """
 
     id: str = Field(default_factory=new_id)
     text: str = ""
-    strength: IntimacyStrength = "minor"
+    strength: DerivedIntimacyStrength = "minor"
 
 
 class WorldFact(BaseModel):
@@ -166,7 +185,11 @@ WorldStateEffect = Annotated[
 
 
 class AddIntimacy(BaseModel):
-    """Add an intimacy to the character."""
+    """Event-sourced creation record for an intimacy.
+
+    New intimacies are created at ``minor``; the creating signal should also
+    carry an evidence entry explaining why the intimacy exists.
+    """
 
     op: Literal["add_intimacy"] = "add_intimacy"
     intimacy: Intimacy = Field(default_factory=Intimacy)
@@ -189,10 +212,39 @@ class UpdateIntimacy(BaseModel):
 
 
 class RemoveIntimacy(BaseModel):
-    """Remove an intimacy from the character."""
+    """Legacy erode-to-dormant marker.
+
+    The interpretation pipeline never authors this effect. Replay honors existing
+    records by deriving ``dormant`` without deleting the intimacy or its history.
+    """
 
     op: Literal["remove_intimacy"] = "remove_intimacy"
     intimacy_id: str = ""
+
+
+class IntimacyEvidence(BaseModel):
+    """A scored relationship between a signal and one intimacy.
+
+    ``novelty`` is set by the interpretation reviewer (or left ``novel`` for
+    manual edits). The accumulator applies diminishing weight to ``duplicate``.
+    """
+
+    intimacy_id: str = ""
+    direction: EvidenceDirection = "supports"
+    strength: EvidenceStrength = 3
+    rationale: str = ""
+    novelty: EvidenceNovelty = "novel"
+    confidence: float | None = Field(default=None, ge=0.0, le=1.0)
+
+
+class SignalReview(BaseModel):
+    """Reviewer decision metadata for a persisted interpretation signal."""
+
+    decision: ReviewDecision | None = None
+    notes: str = ""
+    analysis_model: str = ""
+    review_model: str = ""
+    prompt_version: str = ""
 
 
 CharacterStateEffect = Annotated[
@@ -226,12 +278,20 @@ class Character(BaseModel):
 
 
 class Signal(BaseModel):
-    """A character's subjective interpretation of the Event that contains it."""
+    """A character's subjective interpretation of the Event that contains it.
+
+    ``evidence`` holds scored intimacy relationships. ``effects`` keep structural
+    creation/rewording records (and leftover legacy mutations). Review metadata
+    lives on the signal, not on those records.
+    """
 
     id: str = Field(default_factory=new_id)
     character_id: str = ""
     interpretation: str = ""
+    evidence: list[IntimacyEvidence] = Field(default_factory=list)
     effects: list[CharacterStateEffect] = Field(default_factory=list)
+    review: SignalReview | None = None
+    evidence_schema_version: int = 1
 
 
 class EventRelationSpec(BaseModel):
@@ -334,6 +394,56 @@ class StoryBible(BaseModel):
         """Resolve a possibly-imprecise world-fact id (exact, then unique token match)."""
 
         return _resolve_entity_id(fact_id, [fact.id for fact in self.world_facts])
+
+    def intimacy_ids(self, character_id: str | None = None) -> list[str]:
+        """Return known intimacy ids (baseline plus ``add_intimacy`` records)."""
+
+        return [intimacy_id for intimacy_id, _text in self.intimacy_catalog(character_id)]
+
+    def intimacy_catalog(self, character_id: str | None = None) -> list[tuple[str, str]]:
+        """Return ``(id, text)`` for baseline and created intimacies.
+
+        When ``character_id`` is given, only that character's catalog is returned.
+        """
+
+        catalog: list[tuple[str, str]] = []
+        seen: set[str] = set()
+
+        def _add(intimacy_id: str, text: str) -> None:
+            if intimacy_id and intimacy_id not in seen:
+                seen.add(intimacy_id)
+                catalog.append((intimacy_id, text))
+
+        for character in self.characters:
+            if character_id is not None and character.id != character_id:
+                continue
+            for intimacy in character.baseline_state.intimacies:
+                _add(intimacy.id, intimacy.text or intimacy.id)
+
+        for event in self.timeline:
+            for signal in event.signals:
+                if character_id is not None and signal.character_id != character_id:
+                    continue
+                for effect in signal.effects:
+                    if isinstance(effect, AddIntimacy):
+                        _add(effect.intimacy.id, effect.intimacy.text or effect.intimacy.id)
+        return catalog
+
+    def resolve_intimacy_id(
+        self,
+        intimacy_id: str,
+        *,
+        character_id: str | None = None,
+        extra_ids: Iterable[str] | None = None,
+    ) -> str | None:
+        """Resolve a possibly-imprecise intimacy id (exact, then unique token match)."""
+
+        candidate_ids = self.intimacy_ids(character_id)
+        if extra_ids is not None:
+            for extra_id in extra_ids:
+                if extra_id and extra_id not in candidate_ids:
+                    candidate_ids.append(extra_id)
+        return _resolve_entity_id(intimacy_id, candidate_ids)
 
     def get_world_fact(self, fact_id: str) -> WorldFact | None:
         return next((fact for fact in self.world_facts if fact.id == fact_id), None)

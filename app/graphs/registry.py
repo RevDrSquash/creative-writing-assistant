@@ -7,12 +7,14 @@ from typing import Any
 
 from langgraph.graph.state import CompiledStateGraph
 
+from app.graphs.intimacy_workflow import build_intimacy_interpreter_graph
 from app.graphs.scene_workflow import build_scene_writer_graph
 
 WorkflowBuilder = Callable[..., CompiledStateGraph]
 
 WORKFLOWS: dict[str, WorkflowBuilder] = {
     "generate_scene": build_scene_writer_graph,
+    "interpret_intimacy": build_intimacy_interpreter_graph,
 }
 
 

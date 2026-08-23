@@ -17,6 +17,7 @@ from app.persistence.world import (
     get_world_store,
 )
 from app.world.models import SCHEMA_VERSION, Character, CharacterIdentity, Scene, World, WorldFact
+from app.world.replay import derive_state
 from app.world.scene import (
     create_scene,
     delete_scene,
@@ -180,6 +181,66 @@ def test_store_load_migrates_v7_to_v8_moves_stances_and_outline(tmp_path: Path) 
     assert scene.generated.outline == ["Beat one"]
     assert scene.generated.generated_at is not None
     assert scene.generated.blueprint_fingerprint == blueprint_fingerprint(scene.blueprint)
+
+
+def test_store_load_migrates_v8_to_v9_converts_strength_effects(tmp_path: Path) -> None:
+    path = tmp_path / "world.json"
+    payload = default_world().model_dump(mode="json")
+    payload["schema_version"] = 8
+    payload["story_bible"]["characters"] = [
+        {
+            "id": "char_mira",
+            "identity": {"name": "Mira"},
+            "baseline_state": {
+                "intimacies": [
+                    {"id": "intim_wary", "text": "Wary of outsiders", "strength": "minor"}
+                ]
+            },
+        }
+    ]
+    payload["story_bible"]["timeline"] = [
+        {
+            "id": "event_betrayal",
+            "title": "Betrayal",
+            "world_state_effects": [],
+            "signals": [
+                {
+                    "id": "sig_1",
+                    "character_id": "char_mira",
+                    "interpretation": "They cannot be trusted.",
+                    "effects": [
+                        {
+                            "op": "set_intimacy_strength",
+                            "intimacy_id": "intim_wary",
+                            "strength": "defining",
+                        },
+                        {
+                            "op": "add_intimacy",
+                            "intimacy": {
+                                "id": "intim_debt",
+                                "text": "Owes Kael a debt",
+                                "strength": "minor",
+                            },
+                        },
+                    ],
+                }
+            ],
+        }
+    ]
+    path.write_text(json.dumps(payload), encoding="utf-8")
+
+    world = JsonFileWorldStore(path).load()
+
+    assert world.schema_version == SCHEMA_VERSION
+    signal = world.story_bible.timeline[0].signals[0]
+    assert [effect.op for effect in signal.effects] == ["add_intimacy"]
+    assert len(signal.evidence) == 1
+    assert signal.evidence[0].intimacy_id == "intim_wary"
+    assert signal.evidence[0].direction == "supports"
+    assert signal.evidence[0].strength == 5
+    derived = derive_state(world.story_bible)
+    # Migrated single identity-shaking evidence follows the accumulator, not last-write.
+    assert derived.characters["char_mira"].intimacies[0].strength == "major"
 
 
 def test_get_world_singleton_loads_once_and_save_world_persists(

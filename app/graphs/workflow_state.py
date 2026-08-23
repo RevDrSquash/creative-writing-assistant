@@ -1,4 +1,4 @@
-"""State schema for enforced scene-writing workflow graphs."""
+"""State schemas for enforced LangGraph workflow graphs."""
 
 from __future__ import annotations
 
@@ -38,3 +38,15 @@ class SceneWorkflowState(TypedDict, total=False):
     prose_revision_count: int
     summary: str
     max_revisions: int
+
+
+class IntimacyWorkflowState(TypedDict, total=False):
+    """Inputs, working fields, and outputs for one character-event interpretation."""
+
+    event_id: str
+    character_id: str
+    context: str
+    analysis: dict[str, Any]
+    validated: dict[str, Any]
+    review: dict[str, Any]
+    result: dict[str, Any]

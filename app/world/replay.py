@@ -1,24 +1,32 @@
 """Replay engine: derive world and character state at any timeline position.
 
 Replay is a pure function over the Story Bible. It folds each event's
-world-state effects and each signal's character-state effects over the
-editable baselines, in chronological order (graph-derived with list tie-break).
-Effects that reference missing entries or intimacies are skipped silently;
-``effect_diagnostics`` surfaces those dangling references as warnings.
+world-state effects and each signal's character-state effects and evidence
+over the editable baselines, in chronological order (graph-derived with list
+tie-break). Effects or evidence that reference missing entries or intimacies
+are skipped silently; ``effect_diagnostics`` surfaces those dangling
+references as warnings.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Literal
 
 from pydantic import BaseModel, Field
 
+from app.world.evidence import (
+    IntimacyEvidenceTrack,
+    RankState,
+    accumulate_rank,
+    observation_from_entry,
+)
 from app.world.models import (
     AddIntimacy,
     AddWorldStateEntry,
     CharacterStateEffect,
     Intimacy,
+    IntimacyEvidence,
     RemoveIntimacy,
     RemoveWorldStateEntry,
     SetIntimacyStrength,
@@ -29,7 +37,7 @@ from app.world.models import (
     WorldStateEffect,
     WorldStateEntry,
 )
-from app.world.relations import chronological_order
+from app.world.relations import chronological_order, scenario_ids
 
 
 class DerivedCharacterState(BaseModel):
@@ -46,6 +54,17 @@ class DerivedState(BaseModel):
     events_applied: int = 0
     world_state: list[WorldStateEntry] = Field(default_factory=list)
     characters: dict[str, DerivedCharacterState] = Field(default_factory=dict)
+
+
+@dataclass
+class SignalFoldContext:
+    """Per-fold metadata so one signal can update the intimacy accumulator."""
+
+    character_id: str
+    event_id: str
+    chronological_index: int
+    scenario_id: str
+    tracks: dict[tuple[str, str], IntimacyEvidenceTrack] = field(default_factory=dict)
 
 
 EffectDiagnosticKind = Literal["dangling_effect"]
@@ -88,32 +107,64 @@ def derive_state_at(bible: StoryBible, event_count: int) -> DerivedState:
     ordered = chronological_order(bible)
     event_count = max(0, min(event_count, len(ordered)))
 
-    world_state = [entry.model_copy(deep=True) for entry in bible.baseline_world_state]
-    characters = {
-        character.id: DerivedCharacterState(
-            character_id=character.id,
-            name=character.identity.name,
-            intimacies=[
-                intimacy.model_copy(deep=True) for intimacy in character.baseline_state.intimacies
-            ],
-        )
-        for character in bible.characters
-    }
-
-    for event in ordered[:event_count]:
-        for world_effect in event.world_state_effects:
-            _apply_world_state_effect(world_state, world_effect)
-        for signal in event.signals:
-            character = characters.get(signal.character_id)
-            if character is None:
-                continue
-            _apply_signal(character, signal)
-
+    world_state, characters, _tracks = _fold_timeline(bible, event_count)
     return DerivedState(
         events_applied=event_count,
         world_state=world_state,
         characters=characters,
     )
+
+
+def explain_intimacies(
+    bible: StoryBible,
+    character_id: str,
+    up_to_event_id: str | None = None,
+) -> dict[str, RankState]:
+    """Return inspectable rank state for each of a character's intimacies.
+
+    ``up_to_event_id=None`` is after the full timeline. Raises ``ValueError`` if
+    the character or event id is missing.
+    """
+
+    if bible.get_character(character_id) is None:
+        msg = f"Character not found: {character_id}"
+        raise ValueError(msg)
+
+    ordered = chronological_order(bible)
+    if up_to_event_id is None:
+        event_count = len(ordered)
+    else:
+        try:
+            index = next(index for index, event in enumerate(ordered) if event.id == up_to_event_id)
+        except StopIteration:
+            msg = f"Event not found on timeline: {up_to_event_id}"
+            raise ValueError(msg) from None
+        event_count = index + 1
+    return explain_intimacies_at(bible, character_id, event_count)
+
+
+def explain_intimacies_at(
+    bible: StoryBible,
+    character_id: str,
+    event_count: int,
+) -> dict[str, RankState]:
+    """Return inspectable rank state after the first ``event_count`` events."""
+
+    _world_state, characters, tracks = _fold_timeline(bible, event_count)
+    character = characters.get(character_id)
+    if character is None:
+        return {}
+    explained: dict[str, RankState] = {}
+    for intimacy in character.intimacies:
+        track = tracks.get((character_id, intimacy.id))
+        if track is None:
+            track = IntimacyEvidenceTrack(baseline_rank=intimacy.strength)
+        explained[intimacy.id] = accumulate_rank(
+            track.baseline_rank,
+            track.observations,
+            intimacy_id=intimacy.id,
+        )
+    return explained
 
 
 def effect_diagnostics(bible: StoryBible) -> list[EffectDiagnostic]:
@@ -174,6 +225,17 @@ def effect_diagnostics(bible: StoryBible) -> list[EffectDiagnostic]:
                 if diagnostic is not None:
                     diagnostics.append(diagnostic)
                 _track_character_effect(effect, intimacy_ids)
+            for entry in signal.evidence:
+                diagnostic = _evidence_diagnostic(
+                    event.id,
+                    event_label,
+                    signal.character_id,
+                    entry,
+                    intimacy_ids,
+                    first_intimacy_add,
+                )
+                if diagnostic is not None:
+                    diagnostics.append(diagnostic)
 
     return diagnostics
 
@@ -260,6 +322,41 @@ def _character_effect_diagnostic(
     )
 
 
+def _evidence_diagnostic(
+    event_id: str,
+    event_label: str,
+    character_id: str,
+    entry: IntimacyEvidence,
+    present_ids: set[str],
+    first_add: dict[str, tuple[str, str]],
+) -> EffectDiagnostic | None:
+    intimacy_id = entry.intimacy_id
+    if not intimacy_id or intimacy_id in present_ids:
+        return None
+
+    first = first_add.get(intimacy_id)
+    if first is not None:
+        first_character_id, first_event_id = first
+        if first_character_id == character_id:
+            detail = f"first added at event '{first_event_id}' (later in chronological order)"
+        else:
+            detail = (
+                f"first added for character '{first_character_id}' at event "
+                f"'{first_event_id}' (different character)"
+            )
+    else:
+        detail = "never added on the timeline"
+
+    return EffectDiagnostic(
+        kind="dangling_effect",
+        event_id=event_id,
+        message=(
+            f"Event '{event_label}' [{event_id}]: evidence on character '{character_id}' "
+            f"targets intimacy '{intimacy_id}' which is not present ({detail})."
+        ),
+    )
+
+
 def _track_world_effect(effect: WorldStateEffect, present_ids: set[str]) -> None:
     if isinstance(effect, AddWorldStateEntry):
         present_ids.add(effect.entry.id)
@@ -270,8 +367,6 @@ def _track_world_effect(effect: WorldStateEffect, present_ids: set[str]) -> None
 def _track_character_effect(effect: CharacterStateEffect, present_ids: set[str]) -> None:
     if isinstance(effect, AddIntimacy):
         present_ids.add(effect.intimacy.id)
-    elif isinstance(effect, RemoveIntimacy):
-        present_ids.discard(effect.intimacy_id)
 
 
 def _apply_world_state_effect(
@@ -296,22 +391,148 @@ def _apply_world_state_effect(
         world_state[:] = [entry for entry in world_state if entry.id != effect.entry_id]
 
 
-def _apply_signal(character: DerivedCharacterState, signal: Signal) -> None:
+def _fold_timeline(
+    bible: StoryBible,
+    event_count: int,
+) -> tuple[
+    list[WorldStateEntry],
+    dict[str, DerivedCharacterState],
+    dict[tuple[str, str], IntimacyEvidenceTrack],
+]:
+    ordered = chronological_order(bible)
+    event_count = max(0, min(event_count, len(ordered)))
+    scenarios = scenario_ids(bible)
+
+    world_state = [entry.model_copy(deep=True) for entry in bible.baseline_world_state]
+    characters = {
+        character.id: DerivedCharacterState(
+            character_id=character.id,
+            name=character.identity.name,
+            intimacies=[
+                intimacy.model_copy(deep=True) for intimacy in character.baseline_state.intimacies
+            ],
+        )
+        for character in bible.characters
+    }
+    tracks = intimacy_tracks_from_baselines(bible)
+
+    for index, event in enumerate(ordered[:event_count]):
+        for world_effect in event.world_state_effects:
+            _apply_world_state_effect(world_state, world_effect)
+        for signal in event.signals:
+            character = characters.get(signal.character_id)
+            if character is None:
+                continue
+            context = SignalFoldContext(
+                character_id=signal.character_id,
+                event_id=event.id,
+                chronological_index=index,
+                scenario_id=scenarios.get(event.id, event.id),
+                tracks=tracks,
+            )
+            apply_signal(character, signal, context)
+
+    return world_state, characters, tracks
+
+
+def intimacy_tracks_from_baselines(
+    bible: StoryBible,
+) -> dict[tuple[str, str], IntimacyEvidenceTrack]:
+    tracks: dict[tuple[str, str], IntimacyEvidenceTrack] = {}
+    for character in bible.characters:
+        for intimacy in character.baseline_state.intimacies:
+            tracks[(character.id, intimacy.id)] = IntimacyEvidenceTrack(
+                baseline_rank=intimacy.strength,
+            )
+    return tracks
+
+
+def apply_signal(
+    character: DerivedCharacterState,
+    signal: Signal,
+    context: SignalFoldContext,
+) -> list[RankState]:
+    """Apply one signal's structural records, evidence, and legacy mutations."""
+
+    return apply_signal_to_intimacies(character.intimacies, signal, context)
+
+
+def apply_signal_to_intimacies(
+    intimacies: list[Intimacy],
+    signal: Signal,
+    context: SignalFoldContext,
+) -> list[RankState]:
+    """Fold one signal into an intimacy list in place and return rank updates.
+
+    A rejected signal contributes nothing: neither its structural records nor
+    its evidence fold into derived state until a re-run changes the verdict.
+    """
+
+    if signal.review is not None and signal.review.decision == "rejected":
+        return []
+
     for effect in signal.effects:
         if isinstance(effect, AddIntimacy):
-            character.intimacies.append(effect.intimacy.model_copy(deep=True))
-        elif isinstance(effect, SetIntimacyStrength):
-            intimacy = _find_intimacy(character.intimacies, effect.intimacy_id)
-            if intimacy is not None:
-                intimacy.strength = effect.strength
-        elif isinstance(effect, UpdateIntimacy):
-            intimacy = _find_intimacy(character.intimacies, effect.intimacy_id)
+            added = effect.intimacy.model_copy(deep=True)
+            intimacies.append(added)
+            context.tracks.setdefault(
+                (context.character_id, added.id),
+                IntimacyEvidenceTrack(baseline_rank=added.strength),
+            )
+
+    for effect in signal.effects:
+        if isinstance(effect, UpdateIntimacy):
+            intimacy = _find_intimacy(intimacies, effect.intimacy_id)
             if intimacy is not None:
                 intimacy.text = effect.text
-        elif isinstance(effect, RemoveIntimacy):
-            character.intimacies[:] = [
-                intimacy for intimacy in character.intimacies if intimacy.id != effect.intimacy_id
-            ]
+        elif isinstance(effect, SetIntimacyStrength):
+            intimacy = _find_intimacy(intimacies, effect.intimacy_id)
+            if intimacy is not None:
+                intimacy.strength = effect.strength
+                track = context.tracks.setdefault(
+                    (context.character_id, effect.intimacy_id),
+                    IntimacyEvidenceTrack(baseline_rank=effect.strength),
+                )
+                track.reset(effect.strength)
+
+    rank_states: list[RankState] = []
+    for entry in signal.evidence:
+        intimacy = _find_intimacy(intimacies, entry.intimacy_id)
+        if intimacy is None:
+            continue
+        track = context.tracks.setdefault(
+            (context.character_id, entry.intimacy_id),
+            IntimacyEvidenceTrack(baseline_rank=intimacy.strength),
+        )
+        track.observations.append(
+            observation_from_entry(
+                entry,
+                event_id=context.event_id,
+                signal_id=signal.id,
+                chronological_index=context.chronological_index,
+                scenario_id=context.scenario_id,
+            )
+        )
+        state = accumulate_rank(
+            track.baseline_rank,
+            track.observations,
+            intimacy_id=entry.intimacy_id,
+        )
+        intimacy.strength = state.rank
+        rank_states.append(state)
+
+    for effect in signal.effects:
+        if isinstance(effect, RemoveIntimacy):
+            intimacy = _find_intimacy(intimacies, effect.intimacy_id)
+            if intimacy is not None:
+                intimacy.strength = "dormant"
+                track = context.tracks.setdefault(
+                    (context.character_id, effect.intimacy_id),
+                    IntimacyEvidenceTrack(baseline_rank="dormant"),
+                )
+                track.reset("dormant")
+
+    return rank_states
 
 
 def _find_entry(entries: list[WorldStateEntry], entry_id: str) -> WorldStateEntry | None:

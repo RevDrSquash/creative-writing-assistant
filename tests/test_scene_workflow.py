@@ -70,8 +70,10 @@ from app.models.config import (
 from app.tools.scene import propose_scene
 from app.tools.story_bible import add_event, upsert_character
 from app.world.models import (
+    AddIntimacy,
     Event,
     EventRelation,
+    Intimacy,
     Scene,
     SceneBlueprint,
     SceneCharacterStance,
@@ -368,17 +370,14 @@ def _seed_arc_character() -> tuple[str, str, str]:
                 {
                     "character_id": character.id,
                     "interpretation": "This stranger may be useful.",
-                    "effects": [
-                        {
-                            "op": "add_intimacy",
-                            "intimacy": {"text": "Owes Kael a debt", "strength": "major"},
-                        }
-                    ],
                 }
             ],
         }
     )
     meeting = get_world().story_bible.timeline[-1]
+    meeting.signals[0].effects.append(
+        AddIntimacy(intimacy=Intimacy(text="Owes Kael a debt", strength="major"))
+    )
     add_event.invoke(
         {
             "title": "Betrayal",
@@ -387,17 +386,14 @@ def _seed_arc_character() -> tuple[str, str, str]:
                 {
                     "character_id": character.id,
                     "interpretation": "Outsiders cannot be trusted.",
-                    "effects": [
-                        {
-                            "op": "add_intimacy",
-                            "intimacy": {"text": "Kael will pay", "strength": "defining"},
-                        }
-                    ],
                 }
             ],
         }
     )
     betrayal = get_world().story_bible.timeline[-1]
+    betrayal.signals[0].effects.append(
+        AddIntimacy(intimacy=Intimacy(text="Kael will pay", strength="defining"))
+    )
     add_event.invoke(
         {
             "title": "Exile",
@@ -406,15 +402,12 @@ def _seed_arc_character() -> tuple[str, str, str]:
                 {
                     "character_id": character.id,
                     "interpretation": "The valley is lost.",
-                    "effects": [
-                        {
-                            "op": "add_intimacy",
-                            "intimacy": {"text": "Never go home", "strength": "major"},
-                        }
-                    ],
                 }
             ],
         }
+    )
+    get_world().story_bible.timeline[-1].signals[0].effects.append(
+        AddIntimacy(intimacy=Intimacy(text="Never go home", strength="major"))
     )
     return character.id, meeting.id, betrayal.id
 
