@@ -25,6 +25,7 @@ DerivedIntimacyStrength = Literal["dormant", "minor", "major", "defining"]
 EvidenceDirection = Literal["supports", "contradicts"]
 EvidenceStrength = Literal[1, 2, 3, 4, 5]
 EvidenceNovelty = Literal["novel", "duplicate"]
+EvidenceAuthor = Literal["interpretation", "plot_agent"]
 ReviewDecision = Literal["approved", "revised", "rejected"]
 WorldStateKind = Literal["pressure", "thread", "consequence"]
 EventRelationKind = Literal["follows", "directly_follows", "depends_on", "during"]
@@ -39,6 +40,7 @@ DERIVED_INTIMACY_STRENGTHS: tuple[DerivedIntimacyStrength, ...] = (
 EVIDENCE_DIRECTIONS: tuple[EvidenceDirection, ...] = ("supports", "contradicts")
 EVIDENCE_STRENGTHS: tuple[EvidenceStrength, ...] = (1, 2, 3, 4, 5)
 EVIDENCE_NOVELTIES: tuple[EvidenceNovelty, ...] = ("novel", "duplicate")
+EVIDENCE_AUTHORS: tuple[EvidenceAuthor, ...] = ("interpretation", "plot_agent")
 REVIEW_DECISIONS: tuple[ReviewDecision, ...] = ("approved", "revised", "rejected")
 WORLD_STATE_KINDS: tuple[WorldStateKind, ...] = ("pressure", "thread", "consequence")
 EVENT_RELATION_KINDS: tuple[EventRelationKind, ...] = (
@@ -227,6 +229,8 @@ class IntimacyEvidence(BaseModel):
 
     ``novelty`` is set by the interpretation reviewer (or left ``novel`` for
     manual edits). The accumulator applies diminishing weight to ``duplicate``.
+    ``author`` is provenance: interpretation re-runs replace only
+    ``interpretation``-authored entries, so ``plot_agent`` nudges survive them.
     """
 
     intimacy_id: str = ""
@@ -235,6 +239,7 @@ class IntimacyEvidence(BaseModel):
     rationale: str = ""
     novelty: EvidenceNovelty = "novel"
     confidence: float | None = Field(default=None, ge=0.0, le=1.0)
+    author: EvidenceAuthor = "interpretation"
 
 
 class SignalReview(BaseModel):

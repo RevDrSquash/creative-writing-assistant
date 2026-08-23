@@ -55,6 +55,7 @@ DraftAction = Literal[
     "insert_between",
     "add_relation",
     "remove_relation",
+    "semantic_edit",
 ]
 
 # Relation kinds insert_event_between can rewire.
@@ -328,6 +329,18 @@ class PlotDraft:
             stale_added,
         )
         return relation
+
+    def record_semantic_edit(self, summary: str, event_ids: tuple[str, ...] = ()) -> DraftStep:
+        """Record a tool-layer semantic edit already applied to ``bible`` as a step.
+
+        The plot-draft tools mutate signals directly (applying interpretation
+        results, appending nudges, rewording text). Recording those mutations
+        as steps keeps the snapshot log consistent, so ``truncate_to`` restores
+        semantic state too. No staleness is computed: semantic edits never
+        change chronology or scenario membership.
+        """
+
+        return self._record_step("semantic_edit", summary, event_ids, ())
 
     # -------------------------------------------------------------- step log
 

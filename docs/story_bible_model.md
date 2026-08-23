@@ -200,7 +200,10 @@ mutations), optional `review` metadata, and `evidence_schema_version`.
 
 Each evidence entry records the affected intimacy id, a `direction` (`supports` or
 `contradicts`), an ordinal strength (1–5), a brief rationale, a `novelty` tag
-(`novel` or `duplicate`, default `novel`), and optional confidence. Structural records
+(`novel` or `duplicate`, default `novel`), optional confidence, and an `author`
+provenance tag (`interpretation`, the default, or `plot_agent` for the plot sub-agent's
+bounded nudges — capped at strength 1). Interpretation re-runs replace only
+`interpretation`-authored entries, so plot-agent nudges survive them. Structural records
 for intimacy creation and rewording remain effect-shaped (see Character-State Effects
 below); review metadata from the interpretation workflow lives on the signal, not on
 those records.

@@ -75,12 +75,16 @@ def apply_interpretation_to_bible(bible: StoryBible, result: InterpretationResul
 
     ``bible`` may be any Story Bible — the live world (via
     ``apply_interpretation``) or a plot draft's sandbox copy. Each run owns
-    this signal's workflow-authored records: evidence and creation/rewording
-    effects are replaced, not merged, so a re-run cannot leave stale proposals
-    behind. Approved and revised results write them even when rank will not
-    change. Rejected results write interpretation plus review metadata and
-    clear this signal's evidence and workflow effects so the event stops
-    contributing.
+    this signal's workflow-authored records: interpretation-authored evidence
+    and creation/rewording effects are replaced, not merged, so a re-run cannot
+    leave stale proposals behind. Evidence authored by the plot agent
+    (``author == "plot_agent"``, the bounded nudges) is never the workflow's to
+    replace and survives re-runs. Approved and revised results write their
+    records even when rank will not change. Rejected results write
+    interpretation plus review metadata and clear this signal's
+    interpretation-authored evidence and workflow effects so the event stops
+    contributing (a rejected signal contributes nothing to replay, so surviving
+    nudges are inert until a re-run changes the verdict).
     """
 
     event = bible.get_event(result.event_id)
@@ -94,9 +98,10 @@ def apply_interpretation_to_bible(bible: StoryBible, result: InterpretationResul
     signal = _upsert_signal(event, result.character_id)
     signal.interpretation = result.interpretation
     signal.review = result.review
+    preserved = [entry for entry in signal.evidence if entry.author == "plot_agent"]
 
     if result.review.decision == "rejected":
-        signal.evidence = []
+        signal.evidence = preserved
         _drop_workflow_effects(signal)
         return
 
@@ -106,7 +111,7 @@ def apply_interpretation_to_bible(bible: StoryBible, result: InterpretationResul
         result.evidence,
         result.new_intimacies,
     )
-    signal.evidence = evidence
+    signal.evidence = evidence + preserved
     _replace_structural_effects(signal, new_intimacies, result.rewordings)
 
 

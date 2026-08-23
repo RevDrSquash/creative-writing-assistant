@@ -303,10 +303,13 @@ Key decisions (2026-08-21 project review):
   and any new-intimacy or rewording proposals; a reviewer approves or revises; the apply stage
   writes approved signals with evidence entries and creation/rewording records through
   ordinary application code (no LLM executor). Each run **owns** the signal's
-  workflow-authored records: evidence and creation/rewording effects are replaced (a prior
-  `AddIntimacy` survives only while the new result still references its intimacy, since it is
-  the establishing record), and a rejected verdict clears them — replay additionally treats a
-  rejected signal as contributing nothing. Legacy/UI-authored effects on the same signal are
+  workflow-authored records: interpretation-authored evidence and creation/rewording effects
+  are replaced (a prior `AddIntimacy` survives only while the new result still references its
+  intimacy, since it is the establishing record), and a rejected verdict clears them — replay
+  additionally treats a rejected signal as contributing nothing. Evidence carrying the
+  `author == "plot_agent"` provenance tag (bounded nudges appended by the plot sub-agent's
+  draft tools in `app/tools/plot_draft.py`) is never the workflow's to replace and survives
+  re-runs. Legacy/UI-authored effects on the same signal are
   left untouched by apply. Rank changes are never written: the
   deterministic accumulator in `app/world/evidence.py` (`accumulate_rank`) derives rank
   during replay and is directly callable as a what-if oracle (see

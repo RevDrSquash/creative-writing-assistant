@@ -250,6 +250,68 @@ def test_apply_rejected_rerun_drops_prior_workflow_effects(isolated_world: World
     assert "Cannot trust strangers" not in texts
 
 
+def test_apply_preserves_plot_agent_nudges_across_reruns(isolated_world: World) -> None:
+    """Re-runs replace interpretation-authored evidence only; nudges survive."""
+
+    intimacy = Intimacy(id="intim_wary", text="Wary of outsiders", strength="minor")
+    isolated_world.story_bible.characters.append(
+        _character("Mira", "char_mira", intimacies=[intimacy])
+    )
+    nudge = IntimacyEvidence(
+        intimacy_id="intim_wary",
+        direction="supports",
+        strength=1,
+        rationale="Editorial nudge.",
+        author="plot_agent",
+    )
+    isolated_world.story_bible.timeline.append(
+        Event(
+            id="evt_look",
+            title="A look",
+            signals=[
+                Signal(
+                    character_id="char_mira",
+                    interpretation="Old read",
+                    evidence=[
+                        IntimacyEvidence(
+                            intimacy_id="intim_wary", direction="supports", strength=3
+                        ),
+                        nudge,
+                    ],
+                )
+            ],
+        )
+    )
+
+    apply_interpretation(
+        _approved_result(
+            "evt_look",
+            "char_mira",
+            evidence=[
+                IntimacyEvidence(intimacy_id="intim_wary", direction="supports", strength=2)
+            ],
+        )
+    )
+
+    signal = isolated_world.story_bible.timeline[0].signals[0]
+    assert [(entry.author, entry.strength) for entry in signal.evidence] == [
+        ("interpretation", 2),
+        ("plot_agent", 1),
+    ]
+
+    rejected = InterpretationResult(
+        event_id="evt_look",
+        character_id="char_mira",
+        interpretation="Just weather.",
+        review=SignalReview(decision="rejected", notes="Not a signal."),
+    )
+    apply_interpretation(rejected)
+
+    signal = isolated_world.story_bible.timeline[0].signals[0]
+    assert [entry.author for entry in signal.evidence] == ["plot_agent"]
+    assert signal.evidence[0].rationale == "Editorial nudge."
+
+
 def test_apply_rerun_replaces_stale_structural_effects(isolated_world: World) -> None:
     """A re-run drops records the new result no longer proposes but keeps the
     establishing record for an intimacy the new evidence still references."""
