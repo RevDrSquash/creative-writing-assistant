@@ -135,9 +135,13 @@ class CandidateEventSpec(BaseModel):
 
 
 class CandidateChain(BaseModel):
-    """A candidate sequence of 1-3 event specs, adopted or discarded whole."""
+    """A candidate sequence of 1-3 event specs, adopted or discarded whole.
 
-    label: str = ""
+    Every event spec requires a ``title``; ``title`` on the chain itself is an
+    optional short name shown in the comparison output.
+    """
+
+    title: str = ""
     events: list[CandidateEventSpec]
 
 
@@ -965,7 +969,9 @@ def create_plot_draft_toolset(
     def explore_candidates(chains: list[CandidateChain]) -> str:
         """Compare 2-4 candidate event chains speculatively, without drafting.
 
-        Each chain is 1-3 event specs. The first event of a chain must anchor
+        Each chain is 1-3 event specs; give the chain a short `title` and give
+        every event spec its own `title` (required, like add_draft_event) plus
+        `description` and `signals`. The first event of a chain must anchor
         to existing draft events via `relations`; later events are linked to
         the previous chain event with `link_kind` automatically. Every chain
         is interpreted against a throwaway copy of the draft in parallel; the
@@ -1043,7 +1049,7 @@ def create_plot_draft_toolset(
         for chain_number, (chain, (scratch, _event_ids), report) in enumerate(
             zip(chains, prepared, reports, strict=True), start=1
         ):
-            label = f": {chain.label}" if chain.label else ""
+            label = f": {chain.title}" if chain.title else ""
             lines.append(f"## Chain {chain_number}{label}")
             lines.extend(report)
             lines.append("### Final state vs current draft")

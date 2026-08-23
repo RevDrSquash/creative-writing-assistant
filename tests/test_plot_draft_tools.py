@@ -318,7 +318,7 @@ def test_explore_candidates_compares_chains_without_drafting(isolated_world: Wor
     before = draft.bible.model_dump(mode="json")
     chains = [
         CandidateChain(
-            label="Confrontation",
+            title="Confrontation",
             events=[
                 CandidateEventSpec(
                     title="The alley",
@@ -328,7 +328,7 @@ def test_explore_candidates_compares_chains_without_drafting(isolated_world: Wor
             ],
         ),
         CandidateChain(
-            label="Slow burn",
+            title="Slow burn",
             events=[
                 CandidateEventSpec(
                     title="The market",
