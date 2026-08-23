@@ -287,9 +287,7 @@ def test_apply_preserves_plot_agent_nudges_across_reruns(isolated_world: World) 
         _approved_result(
             "evt_look",
             "char_mira",
-            evidence=[
-                IntimacyEvidence(intimacy_id="intim_wary", direction="supports", strength=2)
-            ],
+            evidence=[IntimacyEvidence(intimacy_id="intim_wary", direction="supports", strength=2)],
         )
     )
 

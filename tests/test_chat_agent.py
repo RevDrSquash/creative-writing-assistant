@@ -17,7 +17,6 @@ import app.graphs.chat_agent as chat_agent_module
 from app.graphs.chat_agent import build_chat_agent
 from app.graphs.context import DEFAULT_SYSTEM_PROMPT, ContextAssembler
 from app.models.config import CHAT_NODE_ID, ModelConfig
-from app.world.models import unique_slug
 from app.world.store import get_world
 
 
@@ -289,31 +288,26 @@ async def test_chat_agent_surfaces_tool_failure_in_async_stream(isolated_world) 
     assert final_messages[-1].content == "No such character exists yet."
 
 
-def _batched_add_event_message(titles: list[str]) -> AIMessage:
-    tool_calls = []
-    assigned_ids: list[str] = []
-    for index, title in enumerate(titles):
-        args: dict = {"title": title}
-        if index > 0:
-            args["relations"] = [{"kind": "follows", "event_id": assigned_ids[index - 1]}]
-        event_id = unique_slug("event_", title, set(assigned_ids))
-        assigned_ids.append(event_id)
-        tool_calls.append(
+def _batched_upsert_character_message(names: list[str]) -> AIMessage:
+    return AIMessage(
+        content="",
+        tool_calls=[
             {
-                "name": "add_event",
-                "args": args,
-                "id": f"add-event-{index}",
+                "name": "upsert_character",
+                "args": {"name": name},
+                "id": f"upsert-character-{index}",
                 "type": "tool_call",
             }
-        )
-    return AIMessage(content="", tool_calls=tool_calls)
+            for index, name in enumerate(names)
+        ],
+    )
 
 
 def test_chat_agent_applies_batched_tool_calls_in_emission_order_sync(isolated_world) -> None:
-    titles = ["Alpha", "Bravo", "Charlie", "Delta", "Echo"]
+    names = ["Alpha", "Bravo", "Charlie", "Delta", "Echo"]
     fake_model = ToolAwareFakeChatModel(
         messages=iter(
-            [_batched_add_event_message(titles), AIMessage(content="Added the timeline.")]
+            [_batched_upsert_character_message(names), AIMessage(content="Added the cast.")]
         )
     )
     agent = build_chat_agent(
@@ -321,24 +315,24 @@ def test_chat_agent_applies_batched_tool_calls_in_emission_order_sync(isolated_w
         assembler=ContextAssembler(system_prompt="System instructions"),
     )
 
-    agent.invoke({"messages": [HumanMessage(content="Add the events.")]})
+    agent.invoke({"messages": [HumanMessage(content="Add the characters.")]})
 
-    assert [event.title for event in isolated_world.story_bible.timeline] == titles
+    cast = [character.identity.name for character in isolated_world.story_bible.characters]
+    assert cast == names
 
 
 async def test_chat_agent_applies_batched_tool_calls_in_emission_order_async(
     isolated_world,
 ) -> None:
-    titles = ["Alpha", "Bravo", "Charlie", "Delta", "Echo"]
+    names = ["Alpha", "Bravo", "Charlie", "Delta", "Echo"]
 
     # The tool node runs a batch concurrently, so a single pass can pass by
     # luck; repeat to make the ordering guarantee a reliable regression guard.
     for _ in range(10):
-        isolated_world.story_bible.timeline = []
-        isolated_world.story_bible.event_relations = []
+        isolated_world.story_bible.characters = []
         fake_model = ToolAwareFakeChatModel(
             messages=iter(
-                [_batched_add_event_message(titles), AIMessage(content="Added the timeline.")]
+                [_batched_upsert_character_message(names), AIMessage(content="Added the cast.")]
             )
         )
         agent = build_chat_agent(
@@ -346,6 +340,7 @@ async def test_chat_agent_applies_batched_tool_calls_in_emission_order_async(
             assembler=ContextAssembler(system_prompt="System instructions"),
         )
 
-        await agent.ainvoke({"messages": [HumanMessage(content="Add the events.")]})
+        await agent.ainvoke({"messages": [HumanMessage(content="Add the characters.")]})
 
-        assert [event.title for event in isolated_world.story_bible.timeline] == titles
+        cast = [character.identity.name for character in isolated_world.story_bible.characters]
+        assert cast == names

@@ -12,6 +12,16 @@ throwaway copies; ``nudge_intimacy`` and the reword tools are bounded,
 provenance-marked editorial smoothing; ``finish_plot`` / ``bail_out`` are the
 terminal tools producing a structured ``PlotPlanResult``.
 
+Two briefing-level constraints are enforced here rather than by prompt:
+
+- **Preservation pins** (``pins``): specific character intimacies the run must
+  not change. Every write result carries a drift report diffing each pin's
+  rank and net against the original timeline, so drift is measured, not vibes.
+- **Revise-range containment** (``revise_range``): events outside the range
+  are read-only — write tools reject edits to them outright. Downstream
+  interpretations may still refresh via the stale ripple; in revise mode the
+  drift report additionally diffs the full end-state against the original.
+
 Nothing here touches the live world: all reads and writes target the draft's
 sandbox bible. Committing the draft is the caller's responsibility.
 """
@@ -20,13 +30,11 @@ from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 from langchain_core.tools import BaseTool, ToolException, tool
 from pydantic import BaseModel, Field
 
-from app.graphs.intimacy_interpretation import apply_interpretation_to_bible
-from app.graphs.intimacy_workflow import InterpretationResult, run_intimacy_interpretation
 from app.tools.story_bible import _signals_as_hints
 from app.world.draft import PlotDraft
 from app.world.evidence import RankState, format_threshold_distance
@@ -42,10 +50,14 @@ from app.world.models import (
 )
 from app.world.relations import (
     RelationValidationError,
+    chronological_order,
     format_diagnostics,
     relation_diagnostics,
 )
 from app.world.replay import effect_diagnostics, explain_intimacies, format_effect_diagnostics
+
+if TYPE_CHECKING:
+    from app.graphs.intimacy_workflow import InterpretationResult
 
 BailOutReason = Literal["budget", "judgment", "overconstrained"]
 
@@ -80,6 +92,18 @@ class PlotBudget(BaseModel):
 
     max_new_events: int = Field(ge=0)
     max_reinterpretation_runs: int = Field(ge=0)
+
+
+class PinnedIntimacy(BaseModel):
+    """One character intimacy the briefing pins: the run must not change it.
+
+    Pins are mechanically checked: every write result diffs each pin's derived
+    rank and net against the original timeline. Drift is a red flag the agent
+    must resolve or bail out on (reason ``overconstrained``).
+    """
+
+    character_id: str
+    intimacy_id: str
 
 
 class DraftRelationSpec(BaseModel):
@@ -154,6 +178,7 @@ class PlotPlanResult(BaseModel):
     reinterpretation_runs_used: int = 0
     reinterpretation_budget: int = 0
     gap_report: list[ArcGapReport] = Field(default_factory=list)
+    drift_report: list[str] = Field(default_factory=list)
 
 
 @dataclass
@@ -163,6 +188,9 @@ class PlotDraftRun:
     draft: PlotDraft
     budget: PlotBudget
     models: dict[str, Any] | None = None
+    pins: list[PinnedIntimacy] = field(default_factory=list)
+    protected_event_ids: frozenset[str] = frozenset()
+    revise_active: bool = False
     new_events_used: int = 0
     reinterpretation_runs_used: int = 0
     result: PlotPlanResult | None = None
@@ -197,8 +225,7 @@ def _character_listing(bible: StoryBible) -> str:
     if not bible.characters:
         return "No characters exist yet."
     listing = ", ".join(
-        f"{character.identity.name or 'Unnamed'} [{character.id}]"
-        for character in bible.characters
+        f"{character.identity.name or 'Unnamed'} [{character.id}]" for character in bible.characters
     )
     return f"Valid characters: {listing}"
 
@@ -284,6 +311,10 @@ def _run_interpretations(
 ) -> tuple[dict[str, InterpretationResult], dict[str, str]]:
     """Interpret one event for several characters in parallel threads, awaited."""
 
+    # Lazy import: app.tools must stay importable without app.graphs (the chat
+    # agent module imports app.tools while the graphs package initializes).
+    from app.graphs.intimacy_workflow import run_intimacy_interpretation
+
     results: dict[str, InterpretationResult] = {}
     errors: dict[str, str] = {}
     if not character_ids:
@@ -313,6 +344,8 @@ def _interpret_and_apply(
     models: dict[str, Any] | None,
 ) -> tuple[dict[str, InterpretationResult], dict[str, str]]:
     """Run inline interpretation for an event's signal characters and apply results."""
+
+    from app.graphs.intimacy_interpretation import apply_interpretation_to_bible
 
     character_ids = _signal_character_ids(draft.bible, event)
     results, errors = _run_interpretations(draft.bible, event.id, character_ids, models)
@@ -380,8 +413,9 @@ def _interpretation_report(
     for character_id in [*results, *errors]:
         name = _character_name(bible, character_id)
         if character_id in errors:
-            lines.append(f"- {name} [{character_id}]: interpretation FAILED: "
-                         f"{errors[character_id]}")
+            lines.append(
+                f"- {name} [{character_id}]: interpretation FAILED: {errors[character_id]}"
+            )
             continue
         result = results[character_id]
         decision = result.review.decision or "approved"
@@ -425,6 +459,127 @@ def _evidence_summary(signal_evidence: list[IntimacyEvidence]) -> list[str]:
     ]
 
 
+_DRIFT_EPSILON = 0.05
+
+
+def _pin_state(bible: StoryBible, pin: PinnedIntimacy) -> RankState | None:
+    ranks = _ranks_for(bible, [pin.character_id]).get(pin.character_id, {})
+    return ranks.get(pin.intimacy_id)
+
+
+def _pin_drift_lines(run: PlotDraftRun) -> list[str]:
+    draft = run.draft
+    entries: list[str] = []
+    drifted = False
+    for pin in run.pins:
+        name = _character_name(draft.base, pin.character_id)
+        catalog = dict(draft.base.intimacy_catalog(pin.character_id))
+        text = catalog.get(pin.intimacy_id, pin.intimacy_id)
+        base_state = _pin_state(draft.base, pin)
+        base_rank = base_state.rank if base_state is not None else "unknown"
+        base_net = base_state.effective_net if base_state is not None else 0.0
+        draft_state = _pin_state(draft.bible, pin)
+        if draft_state is None:
+            drifted = True
+            entries.append(
+                f"  - DRIFT {name}: '{text}' [{pin.intimacy_id}] is no longer present "
+                f"(was {base_rank}, net {base_net:.1f})"
+            )
+            continue
+        if draft_state.rank != base_rank:
+            drifted = True
+            marker = "DRIFT"
+        elif abs(draft_state.effective_net - base_net) >= _DRIFT_EPSILON:
+            marker = "net shifted"
+        else:
+            marker = "stable"
+        entries.append(
+            f"  - {marker} {name}: '{text}' [{pin.intimacy_id}]: {base_rank} "
+            f"(net {base_net:.1f}) -> {draft_state.rank} (net {draft_state.effective_net:.1f})"
+        )
+    header = "Preservation pins (vs original timeline):"
+    if drifted:
+        header = (
+            "Preservation pins (vs original timeline) - PIN DRIFT: undo the drift "
+            "or bail_out (overconstrained):"
+        )
+    return [header, *entries]
+
+
+def _end_state_drift_lines(draft: PlotDraft) -> list[str]:
+    """Diff the draft's final derived ranks against the original timeline's."""
+
+    changes: list[str] = []
+    for character in draft.bible.characters:
+        character_id = character.id
+        base_ranks = _ranks_for(draft.base, [character_id]).get(character_id, {})
+        draft_ranks = _ranks_for(draft.bible, [character_id]).get(character_id, {})
+        catalog = dict(draft.bible.intimacy_catalog(character_id))
+        name = _character_name(draft.bible, character_id)
+        for intimacy_id, state in draft_ranks.items():
+            base = base_ranks.get(intimacy_id)
+            text = catalog.get(intimacy_id, intimacy_id)
+            if base is None:
+                changes.append(
+                    f"  - {name}: NEW intimacy '{text}' [{intimacy_id}] at {state.rank} "
+                    f"(net {state.effective_net:.1f})"
+                )
+            elif base.rank != state.rank:
+                changes.append(f"  - {name}: '{text}' [{intimacy_id}]: {base.rank} -> {state.rank}")
+        for intimacy_id, base in base_ranks.items():
+            if intimacy_id not in draft_ranks:
+                changes.append(f"  - {name}: intimacy [{intimacy_id}] removed (was {base.rank})")
+    if not changes:
+        return ["End-state drift vs original timeline: none (all ranks unchanged)."]
+    return ["End-state drift vs original timeline:", *changes]
+
+
+def _drift_note(run: PlotDraftRun) -> list[str]:
+    """Drift report lines for write results; empty when no pins and not revising."""
+
+    lines: list[str] = []
+    if run.pins:
+        lines.extend(_pin_drift_lines(run))
+    if run.revise_active:
+        lines.extend(_end_state_drift_lines(run.draft))
+    return lines
+
+
+def _editable_listing(run: PlotDraftRun, bible: StoryBible) -> str:
+    editable = [
+        f"{event.title or 'Untitled'} [{event.id}]"
+        for event in bible.timeline
+        if event.id not in run.protected_event_ids
+    ]
+    return f"Editable events: {', '.join(editable) or '(none)'}"
+
+
+def _require_editable(run: PlotDraftRun, event_id: str) -> None:
+    if event_id in run.protected_event_ids:
+        raise ToolException(
+            f"Event {event_id} is outside this run's revise range and is read-only. "
+            f"{_editable_listing(run, run.draft.bible)}"
+        )
+
+
+def _require_anchor_in_range(
+    run: PlotDraftRun,
+    specs: list[EventRelationSpec],
+    *,
+    context: str = "",
+) -> None:
+    """In revise mode, new events must anchor to at least one in-range event."""
+
+    if not run.revise_active or not specs:
+        return
+    if all(spec.event_id in run.protected_event_ids for spec in specs):
+        prefix = f"{context}: " if context else ""
+        raise ToolException(
+            f"{prefix}in revise mode a new event must link to at least one event inside "
+            f"the revise range. {_editable_listing(run, run.draft.bible)}"
+        )
+
+
 def _build_result(
     run: PlotDraftRun,
     *,
@@ -453,6 +608,7 @@ def _build_result(
         reinterpretation_runs_used=run.reinterpretation_runs_used,
         reinterpretation_budget=run.budget.max_reinterpretation_runs,
         gap_report=gap_report or [],
+        drift_report=_drift_note(run),
     )
 
 
@@ -493,19 +649,72 @@ def _budget_line(run: PlotDraftRun) -> str:
 # ------------------------------------------------------------------ factory
 
 
+def _resolve_pins(bible: StoryBible, pins: list[PinnedIntimacy]) -> list[PinnedIntimacy]:
+    """Resolve pin references against the bible; unknown ids raise ValueError."""
+
+    resolved: list[PinnedIntimacy] = []
+    for pin in pins:
+        character_id = bible.resolve_character_id(pin.character_id)
+        if character_id is None:
+            raise ValueError(
+                f"Unknown character_id '{pin.character_id}' in pinned intimacy. "
+                f"{_character_listing(bible)}"
+            )
+        intimacy_id = bible.resolve_intimacy_id(pin.intimacy_id, character_id=character_id)
+        if intimacy_id is None:
+            raise ValueError(
+                f"Unknown intimacy_id '{pin.intimacy_id}' for character {character_id} "
+                f"in pinned intimacy. {_intimacy_listing(bible, character_id)}"
+            )
+        resolved.append(PinnedIntimacy(character_id=character_id, intimacy_id=intimacy_id))
+    return resolved
+
+
+def _protected_ids(bible: StoryBible, revise_range: tuple[str, str]) -> frozenset[str]:
+    """Base-timeline events outside ``revise_range`` in chronological order."""
+
+    order = [event.id for event in chronological_order(bible)]
+    resolved: list[str] = []
+    for raw in revise_range:
+        event_id = bible.resolve_event_id(raw)
+        if event_id is None:
+            raise ValueError(f"Unknown event id '{raw}' in revise_range. {_event_listing(bible)}")
+        resolved.append(event_id)
+    start_pos = order.index(resolved[0])
+    end_pos = order.index(resolved[1])
+    if start_pos > end_pos:
+        start_pos, end_pos = end_pos, start_pos
+    return frozenset(order) - frozenset(order[start_pos : end_pos + 1])
+
+
 def create_plot_draft_toolset(
     draft: PlotDraft,
     budget: PlotBudget,
     *,
     models: dict[str, Any] | None = None,
+    pins: list[PinnedIntimacy] | None = None,
+    revise_range: tuple[str, str] | None = None,
 ) -> PlotDraftToolset:
     """Build the plot sub-agent's tools as closures over one draft and budget.
 
     ``models`` overrides the interpretation workflow's per-node models (used by
-    tests; production resolves per-node model configs).
+    tests; production resolves per-node model configs). ``pins`` are briefing
+    preservation constraints diffed in every write result. ``revise_range`` is
+    a (start, end) pair of base-timeline event ids; events outside it become
+    read-only and write results include an end-state drift report. Unknown pin
+    or range ids raise ``ValueError``.
     """
 
-    run = PlotDraftRun(draft=draft, budget=budget, models=models)
+    run = PlotDraftRun(
+        draft=draft,
+        budget=budget,
+        models=models,
+        pins=_resolve_pins(draft.base, pins or []),
+        protected_event_ids=(
+            _protected_ids(draft.base, revise_range) if revise_range is not None else frozenset()
+        ),
+        revise_active=revise_range is not None,
+    )
 
     @tool
     def add_draft_event(
@@ -532,6 +741,7 @@ def create_plot_draft_toolset(
         hints = _signals_as_hints(signals or [])
         ranks_before = _ranks_for(draft.bible, _hint_character_ids(draft.bible, hints))
         resolved = _resolve_relation_specs(draft.bible, relations or [])
+        _require_anchor_in_range(run, resolved)
         try:
             event = draft.add_event(
                 title,
@@ -549,6 +759,7 @@ def create_plot_draft_toolset(
         lines.append(_budget_line(run))
         lines.extend(_interpretation_report(draft.bible, results, errors, ranks_before))
         lines.extend(_stale_note(draft, ()))
+        lines.extend(_drift_note(run))
         return "\n".join(lines)
 
     @tool
@@ -578,6 +789,15 @@ def create_plot_draft_toolset(
         ranks_before = _ranks_for(draft.bible, _hint_character_ids(draft.bible, hints))
         earlier = _resolve_event_id(draft.bible, earlier_event_id)
         later = _resolve_event_id(draft.bible, later_event_id)
+        if (
+            run.revise_active
+            and earlier in run.protected_event_ids
+            and later in run.protected_event_ids
+        ):
+            raise ToolException(
+                "Both anchors are outside this run's revise range; insertions must touch "
+                f"the range. {_editable_listing(run, draft.bible)}"
+            )
         try:
             event = draft.insert_event_between(
                 title,
@@ -600,6 +820,7 @@ def create_plot_draft_toolset(
         lines.append(_budget_line(run))
         lines.extend(_interpretation_report(draft.bible, results, errors, ranks_before))
         lines.extend(_stale_note(draft, stale_added))
+        lines.extend(_drift_note(run))
         return "\n".join(lines)
 
     @tool
@@ -623,6 +844,7 @@ def create_plot_draft_toolset(
 
         _require_active(run)
         resolved_id = _resolve_event_id(draft.bible, event_id)
+        _require_editable(run, resolved_id)
         event = draft.bible.get_event(resolved_id)
         hints = _signals_as_hints(signals, existing=event.signals) if signals is not None else None
         prospective = hints if hints is not None else event.signals
@@ -649,6 +871,7 @@ def create_plot_draft_toolset(
         lines.append(_budget_line(run))
         lines.extend(_interpretation_report(draft.bible, results, errors, ranks_before))
         lines.extend(_stale_note(draft, stale_added))
+        lines.extend(_drift_note(run))
         return "\n".join(lines)
 
     @tool
@@ -661,6 +884,7 @@ def create_plot_draft_toolset(
 
         _require_active(run)
         resolved_id = _resolve_event_id(draft.bible, event_id)
+        _require_editable(run, resolved_id)
         try:
             event = draft.delete_event(resolved_id)
         except ValueError as exc:
@@ -668,6 +892,7 @@ def create_plot_draft_toolset(
         stale_added = draft.steps[-1].stale_added
         lines = [f"Deleted draft event '{event.title or 'Untitled'}' (id: {resolved_id})."]
         lines.extend(_stale_note(draft, stale_added))
+        lines.extend(_drift_note(run))
         return "\n".join(lines)
 
     @tool
@@ -691,6 +916,16 @@ def create_plot_draft_toolset(
         report: list[str] = []
         stale: list[str] = []
         for relation_id in remove_relation_ids or []:
+            existing = draft.bible.get_event_relation(relation_id)
+            if existing is not None and (
+                existing.source_id in run.protected_event_ids
+                or existing.target_id in run.protected_event_ids
+            ):
+                report.append(
+                    f"- remove {relation_id}: ERROR: this relation touches an event outside "
+                    "the revise range and is read-only."
+                )
+                continue
             try:
                 removed = draft.remove_relation(relation_id)
             except ValueError as exc:
@@ -705,6 +940,11 @@ def create_plot_draft_toolset(
             try:
                 source = _resolve_event_id(draft.bible, spec.source_id)
                 target = _resolve_event_id(draft.bible, spec.target_id)
+                if source in run.protected_event_ids or target in run.protected_event_ids:
+                    raise ToolException(
+                        "relations may not touch events outside the revise range "
+                        "(they are read-only)."
+                    )
                 relation = draft.add_relation(spec.kind, source, target)
             except (RelationValidationError, ValueError, ToolException) as exc:
                 report.append(
@@ -718,6 +958,7 @@ def create_plot_draft_toolset(
             )
         lines = ["Relation edits:", *report]
         lines.extend(_stale_note(draft, tuple(dict.fromkeys(stale))))
+        lines.extend(_drift_note(run))
         return "\n".join(lines)
 
     @tool
@@ -756,6 +997,8 @@ def create_plot_draft_toolset(
                     relation_specs = _resolve_relation_specs(scratch.bible, spec.relations)
                 except ToolException as exc:
                     raise ToolException(f"Chain {chain_number}: {exc}") from exc
+                if previous_id is None:
+                    _require_anchor_in_range(run, relation_specs, context=f"Chain {chain_number}")
                 if previous_id is not None:
                     relation_specs.append(
                         EventRelationSpec(kind=spec.link_kind, event_id=previous_id)
@@ -774,6 +1017,8 @@ def create_plot_draft_toolset(
             prepared.append((scratch, event_ids))
 
         def _evaluate(scratch: PlotDraft, event_ids: list[str]) -> list[str]:
+            from app.graphs.intimacy_interpretation import apply_interpretation_to_bible
+
             lines: list[str] = []
             for event_id in event_ids:
                 event = scratch.bible.get_event(event_id)
@@ -785,9 +1030,7 @@ def create_plot_draft_toolset(
                 for result in results.values():
                     apply_interpretation_to_bible(scratch.bible, result)
                 lines.append(f"### {event.title or 'Untitled'} [{event_id}]")
-                lines.extend(
-                    _interpretation_report(scratch.bible, results, errors, ranks_before)
-                )
+                lines.extend(_interpretation_report(scratch.bible, results, errors, ranks_before))
             return lines
 
         with ThreadPoolExecutor(max_workers=len(prepared)) as pool:
@@ -828,6 +1071,7 @@ def create_plot_draft_toolset(
         if not rationale.strip():
             raise ToolException("A nudge requires a non-empty rationale.")
         resolved_event = _resolve_event_id(draft.bible, event_id)
+        _require_editable(run, resolved_event)
         resolved_character = _resolve_character_id(draft.bible, character_id)
         resolved_intimacy = _resolve_intimacy_id(draft.bible, resolved_character, intimacy_id)
         event = draft.bible.get_event(resolved_event)
@@ -882,6 +1126,7 @@ def create_plot_draft_toolset(
                 [resolved_intimacy],
             )
         )
+        lines.extend(_drift_note(run))
         return "\n".join(lines)
 
     @tool
@@ -897,6 +1142,7 @@ def create_plot_draft_toolset(
         if not interpretation.strip():
             raise ToolException("Pass a non-empty interpretation text.")
         resolved_event = _resolve_event_id(draft.bible, event_id)
+        _require_editable(run, resolved_event)
         resolved_character = _resolve_character_id(draft.bible, character_id)
         event = draft.bible.get_event(resolved_event)
         signal = next(
@@ -937,6 +1183,7 @@ def create_plot_draft_toolset(
         if not rationale.strip():
             raise ToolException("Pass a non-empty rationale.")
         resolved_event = _resolve_event_id(draft.bible, event_id)
+        _require_editable(run, resolved_event)
         resolved_character = _resolve_character_id(draft.bible, character_id)
         resolved_intimacy = _resolve_intimacy_id(draft.bible, resolved_character, intimacy_id)
         event = draft.bible.get_event(resolved_event)
@@ -948,21 +1195,16 @@ def create_plot_draft_toolset(
             raise ToolException(
                 f"Event {resolved_event} has no signal for character {resolved_character}."
             )
-        matches = [
-            entry for entry in signal.evidence if entry.intimacy_id == resolved_intimacy
-        ]
+        matches = [entry for entry in signal.evidence if entry.intimacy_id == resolved_intimacy]
         if not matches:
-            present = ", ".join(
-                dict.fromkeys(entry.intimacy_id for entry in signal.evidence)
-            )
+            present = ", ".join(dict.fromkeys(entry.intimacy_id for entry in signal.evidence))
             raise ToolException(
                 f"The signal has no evidence for {resolved_intimacy}. "
                 f"Evidence exists for: {present or '(none)'}."
             )
         if len(matches) > 1 and entry_index is None:
             listing = "; ".join(
-                f"{index}: {entry.direction} strength {entry.strength} "
-                f"({entry.rationale or '-'})"
+                f"{index}: {entry.direction} strength {entry.strength} ({entry.rationale or '-'})"
                 for index, entry in enumerate(matches)
             )
             raise ToolException(
@@ -998,6 +1240,8 @@ def create_plot_draft_toolset(
         """
 
         _require_active(run)
+        from app.graphs.intimacy_interpretation import apply_interpretation_to_bible
+
         stale = draft.stale_event_ids
         if not stale:
             return "No stale events to refresh."
@@ -1014,8 +1258,7 @@ def create_plot_draft_toolset(
             if run.reinterpretation_runs_used >= run.budget.max_reinterpretation_runs:
                 remaining = sorted(draft.stale_event_ids)
                 lines.append(
-                    "Re-interpretation budget exhausted; still stale: "
-                    + ", ".join(remaining)
+                    "Re-interpretation budget exhausted; still stale: " + ", ".join(remaining)
                 )
                 break
             evidence_before = {
@@ -1025,9 +1268,7 @@ def create_plot_draft_toolset(
             }
             ranks_before = _ranks_for(draft.bible, character_ids)
             run.reinterpretation_runs_used += 1
-            results, errors = _run_interpretations(
-                draft.bible, event.id, character_ids, run.models
-            )
+            results, errors = _run_interpretations(draft.bible, event.id, character_ids, run.models)
             for result in results.values():
                 apply_interpretation_to_bible(draft.bible, result)
             if not errors:
@@ -1047,6 +1288,7 @@ def create_plot_draft_toolset(
                 tuple(refreshed),
             )
         lines.append(_budget_line(run))
+        lines.extend(_drift_note(run))
         return "\n".join(lines)
 
     @tool
@@ -1074,9 +1316,7 @@ def create_plot_draft_toolset(
         stale = sorted(draft.stale_event_ids)
         if stale:
             lines.append("")
-            lines.append(
-                "Stale interpretations (run refresh_interpretations): " + ", ".join(stale)
-            )
+            lines.append("Stale interpretations (run refresh_interpretations): " + ", ".join(stale))
         relation_warnings = format_diagnostics(relation_diagnostics(bible))
         if relation_warnings:
             lines.append("")
@@ -1119,19 +1359,12 @@ def create_plot_draft_toolset(
                 state = ranks.get(intimacy.id)
                 extra = ""
                 if state is not None:
-                    extra = (
-                        f" -- net {state.effective_net:.1f}; "
-                        f"{format_threshold_distance(state)}"
-                    )
-                lines.append(
-                    f"- {intimacy.text} ({intimacy.strength}) [id: {intimacy.id}]{extra}"
-                )
+                    extra = f" -- net {state.effective_net:.1f}; {format_threshold_distance(state)}"
+                lines.append(f"- {intimacy.text} ({intimacy.strength}) [id: {intimacy.id}]{extra}")
         stale = sorted(draft.stale_event_ids)
         if stale:
             lines.append("")
-            lines.append(
-                "Stale interpretations (run refresh_interpretations): " + ", ".join(stale)
-            )
+            lines.append("Stale interpretations (run refresh_interpretations): " + ", ".join(stale))
         effect_warnings = format_effect_diagnostics(effect_diagnostics(bible))
         if effect_warnings:
             lines.append("")
@@ -1161,6 +1394,7 @@ def create_plot_draft_toolset(
                 "WARNING: stale interpretations were not refreshed: "
                 + ", ".join(run.result.stale_event_ids)
             )
+        lines.extend(run.result.drift_report)
         return "\n".join(lines)
 
     @tool
@@ -1220,6 +1454,7 @@ def create_plot_draft_toolset(
                 f"{item.threshold_distance}); target: {item.target}"
                 + (f"; conflict: {item.conflict}" if item.conflict else "")
             )
+        lines.extend(run.result.drift_report)
         return "\n".join(lines)
 
     toolset = PlotDraftToolset(

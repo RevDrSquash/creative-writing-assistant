@@ -15,6 +15,8 @@ from app.tools.plot_draft import (
     ArcGapSpec,
     CandidateChain,
     CandidateEventSpec,
+    DraftRelationSpec,
+    PinnedIntimacy,
     PlotBudget,
     PlotDraftToolset,
     create_plot_draft_toolset,
@@ -225,9 +227,7 @@ def test_update_draft_event_rejects_unknown_id() -> None:
     toolset = _toolset(draft)
 
     with pytest.raises(ToolException, match="Valid events"):
-        toolset.tool("update_draft_event").func(
-            event_id="evt_hallucinated", description="Nope"
-        )
+        toolset.tool("update_draft_event").func(event_id="evt_hallucinated", description="Nope")
 
 
 def test_update_blocked_when_reinterpretation_budget_exhausted() -> None:
@@ -235,9 +235,7 @@ def test_update_blocked_when_reinterpretation_budget_exhausted() -> None:
     toolset = _toolset(draft, max_reinterpretation_runs=0)
 
     with pytest.raises(ToolException, match="Re-interpretation budget exhausted"):
-        toolset.tool("update_draft_event").func(
-            event_id="evt_gate", description="Rewritten."
-        )
+        toolset.tool("update_draft_event").func(event_id="evt_gate", description="Rewritten.")
 
     assert draft.bible.get_event("evt_gate").description == ""
 
@@ -370,9 +368,7 @@ def test_explore_candidates_validates_shape_and_anchors() -> None:
     )
 
     with pytest.raises(ToolException, match="between 2 and 4"):
-        toolset.tool("explore_candidates").func(
-            chains=[CandidateChain(events=[anchored])]
-        )
+        toolset.tool("explore_candidates").func(chains=[CandidateChain(events=[anchored])])
 
     too_long = CandidateChain(events=[anchored.model_copy(deep=True) for _ in range(4)])
     with pytest.raises(ToolException, match="1 to 3 events"):
@@ -461,9 +457,7 @@ def test_nudge_survives_interpretation_rerun(isolated_world: World) -> None:
         rationale="Keep the edge.",
     )
 
-    toolset.tool("update_draft_event").func(
-        event_id="evt_gate", description="Rewritten opening."
-    )
+    toolset.tool("update_draft_event").func(event_id="evt_gate", description="Rewritten opening.")
 
     signal = draft.bible.get_event("evt_gate").signals[0]
     authors = [(entry.author, entry.strength) for entry in signal.evidence]
@@ -530,9 +524,7 @@ def test_reword_evidence_requires_index_when_ambiguous() -> None:
 def test_refresh_reinterprets_stale_events_and_diffs(isolated_world: World) -> None:
     draft = PlotDraft(_bible())
     toolset = _toolset(draft)
-    toolset.tool("update_draft_event").func(
-        event_id="evt_gate", description="Rewritten opening."
-    )
+    toolset.tool("update_draft_event").func(event_id="evt_gate", description="Rewritten opening.")
     assert "evt_meal" in draft.stale_event_ids
 
     result = toolset.tool("refresh_interpretations").func()
@@ -551,9 +543,7 @@ def test_refresh_reinterprets_stale_events_and_diffs(isolated_world: World) -> N
 def test_refresh_stops_at_budget_and_lists_remaining(isolated_world: World) -> None:
     draft = PlotDraft(_bible())
     toolset = _toolset(draft, max_reinterpretation_runs=1)
-    toolset.tool("update_draft_event").func(
-        event_id="evt_gate", description="Rewritten opening."
-    )
+    toolset.tool("update_draft_event").func(event_id="evt_gate", description="Rewritten opening.")
 
     result = toolset.tool("refresh_interpretations").func()
 
@@ -673,3 +663,208 @@ def test_bail_out_rejects_hallucinated_gap_ids() -> None:
             ],
         )
     assert toolset.run.result is None
+
+
+# --------------------------------------------------- preservation pins and drift
+
+
+def _pinned_toolset(draft: PlotDraft, **kwargs: Any) -> PlotDraftToolset:
+    return create_plot_draft_toolset(
+        draft,
+        PlotBudget(max_new_events=5, max_reinterpretation_runs=5),
+        models=_models(5),
+        pins=[PinnedIntimacy(character_id="char_mira", intimacy_id="intim_wary")],
+        **kwargs,
+    )
+
+
+def test_pin_drift_is_measured_in_write_results(isolated_world: World) -> None:
+    draft = PlotDraft(_bible())
+    toolset = _pinned_toolset(draft)
+
+    result = toolset.tool("add_draft_event").func(
+        title="The alley",
+        relations=[EventRelationSpec(kind="follows", event_id="evt_watch")],
+        signals=[Signal(character_id="char_mira", interpretation="Trouble follows me.")],
+    )
+
+    assert "Preservation pins" in result
+    pin_line = next(line for line in result.splitlines() if "[intim_wary]" in line and "->" in line)
+    # Strength-5 approved evidence moves the pinned net, so the pin is not stable.
+    assert "stable" not in pin_line
+
+
+def test_pin_reports_stable_when_untouched(isolated_world: World) -> None:
+    draft = PlotDraft(_bible())
+    toolset = _pinned_toolset(draft)
+
+    # Kael has no intimacies, so the stub proposal for intim_wary is dropped by
+    # interpretation validation and the pinned intimacy never moves.
+    result = toolset.tool("add_draft_event").func(
+        title="The watchtower",
+        relations=[EventRelationSpec(kind="follows", event_id="evt_watch")],
+        signals=[Signal(character_id="char_kael", interpretation="A quiet climb.")],
+    )
+
+    assert "Preservation pins" in result
+    pin_line = next(line for line in result.splitlines() if "[intim_wary]" in line)
+    assert "stable" in pin_line
+    assert "PIN DRIFT" not in result
+
+
+def test_pin_drift_lands_in_plan_result(isolated_world: World) -> None:
+    draft = PlotDraft(_bible())
+    toolset = _pinned_toolset(draft)
+
+    toolset.tool("finish_plot").func(summary="No changes needed.")
+
+    outcome = toolset.run.result
+    assert outcome is not None
+    assert any("Preservation pins" in line for line in outcome.drift_report)
+
+
+def test_unknown_pin_ids_are_rejected() -> None:
+    draft = PlotDraft(_bible())
+
+    with pytest.raises(ValueError, match="Valid characters"):
+        create_plot_draft_toolset(
+            draft,
+            PlotBudget(max_new_events=1, max_reinterpretation_runs=1),
+            pins=[PinnedIntimacy(character_id="char_invented", intimacy_id="intim_wary")],
+        )
+    with pytest.raises(ValueError, match="Valid intimacies"):
+        create_plot_draft_toolset(
+            draft,
+            PlotBudget(max_new_events=1, max_reinterpretation_runs=1),
+            pins=[PinnedIntimacy(character_id="char_mira", intimacy_id="intim_invented")],
+        )
+
+
+# ------------------------------------------------------ revise-range containment
+
+
+def _revise_toolset(draft: PlotDraft, start: str, end: str) -> PlotDraftToolset:
+    return create_plot_draft_toolset(
+        draft,
+        PlotBudget(max_new_events=5, max_reinterpretation_runs=5),
+        models=_models(),
+        revise_range=(start, end),
+    )
+
+
+def test_revise_range_makes_outside_events_read_only(isolated_world: World) -> None:
+    draft = PlotDraft(_bible())
+    toolset = _revise_toolset(draft, "evt_gate", "evt_meal")
+
+    with pytest.raises(ToolException, match="read-only"):
+        toolset.tool("update_draft_event").func(event_id="evt_watch", title="Renamed")
+    with pytest.raises(ToolException, match="read-only"):
+        toolset.tool("delete_draft_event").func(event_id="evt_watch")
+    with pytest.raises(ToolException, match="read-only"):
+        toolset.tool("reword_signal").func(
+            event_id="evt_watch", character_id="char_kael", interpretation="New wording."
+        )
+    assert draft.bible.get_event("evt_watch").title == "The watch"
+
+
+def test_revise_range_allows_in_range_edits_and_reports_end_state_drift(
+    isolated_world: World,
+) -> None:
+    draft = PlotDraft(_bible())
+    toolset = _revise_toolset(draft, "evt_gate", "evt_meal")
+
+    result = toolset.tool("update_draft_event").func(
+        event_id="evt_meal", description="The meal turns tense."
+    )
+
+    assert "Updated draft event" in result
+    assert "End-state drift vs original timeline" in result
+
+
+def test_insert_needs_an_anchor_inside_the_revise_range(isolated_world: World) -> None:
+    draft = PlotDraft(_bible())
+    toolset = _revise_toolset(draft, "evt_gate", "evt_gate")
+
+    with pytest.raises(ToolException, match="outside this run's revise range"):
+        toolset.tool("insert_draft_event").func(
+            title="Between meal and watch",
+            earlier_event_id="evt_meal",
+            later_event_id="evt_watch",
+        )
+
+    result = toolset.tool("insert_draft_event").func(
+        title="Between gate and meal",
+        earlier_event_id="evt_gate",
+        later_event_id="evt_meal",
+    )
+    assert "Inserted draft event" in result
+
+
+def test_add_event_needs_an_anchor_inside_the_revise_range(isolated_world: World) -> None:
+    draft = PlotDraft(_bible())
+    toolset = _revise_toolset(draft, "evt_gate", "evt_gate")
+
+    with pytest.raises(ToolException, match="inside the revise range"):
+        toolset.tool("add_draft_event").func(
+            title="The alley",
+            relations=[EventRelationSpec(kind="follows", event_id="evt_watch")],
+        )
+
+    result = toolset.tool("add_draft_event").func(
+        title="The alley",
+        relations=[EventRelationSpec(kind="follows", event_id="evt_gate")],
+    )
+    assert "Added draft event" in result
+
+
+def test_relation_edits_reject_protected_endpoints(isolated_world: World) -> None:
+    draft = PlotDraft(_bible())
+    toolset = _revise_toolset(draft, "evt_gate", "evt_gate")
+
+    result = toolset.tool("edit_draft_relations").func(
+        add=[DraftRelationSpec(kind="depends_on", source_id="evt_watch", target_id="evt_gate")],
+        remove_relation_ids=["rel_watch"],
+    )
+
+    assert result.count("ERROR") == 2
+    assert "read-only" in result
+    assert draft.bible.get_event_relation("rel_watch") is not None
+    assert len(draft.bible.event_relations) == 2
+
+
+def test_candidate_chains_respect_the_revise_range(isolated_world: World) -> None:
+    draft = PlotDraft(_bible())
+    toolset = _revise_toolset(draft, "evt_gate", "evt_gate")
+
+    with pytest.raises(ToolException, match="Chain 1"):
+        toolset.tool("explore_candidates").func(
+            chains=[
+                CandidateChain(
+                    events=[
+                        CandidateEventSpec(
+                            title="Out of range",
+                            relations=[EventRelationSpec(kind="follows", event_id="evt_watch")],
+                        )
+                    ]
+                ),
+                CandidateChain(
+                    events=[
+                        CandidateEventSpec(
+                            title="In range",
+                            relations=[EventRelationSpec(kind="follows", event_id="evt_gate")],
+                        )
+                    ]
+                ),
+            ]
+        )
+
+
+def test_unknown_revise_range_ids_are_rejected() -> None:
+    draft = PlotDraft(_bible())
+
+    with pytest.raises(ValueError, match="Valid events"):
+        create_plot_draft_toolset(
+            draft,
+            PlotBudget(max_new_events=1, max_reinterpretation_runs=1),
+            revise_range=("evt_gate", "evt_invented"),
+        )

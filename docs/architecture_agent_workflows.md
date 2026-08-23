@@ -358,9 +358,38 @@ structured `PlotPlanResult`. Unlike the enforced pipelines above, it is a tool-l
   ("Plot: Sub-Agent", default role `orchestration`). Interpretation calls made from inside the
   draft tools use the intimacy nodes' own configs.
 
-Chat-agent integration (a `plan_plot` chat tool with a briefing contract, preservation pins,
-revise-range containment, and commit-on-complete) is the next phase; see
-[future_work.md](future_work.md).
+- **Preservation pins and drift reports.** The briefing may pin specific character
+  intimacies (`PinnedIntimacy`). Pins are mechanically checked, not prompted: every write
+  result diffs each pin's derived rank and net against the original timeline, and the final
+  `PlotPlanResult.drift_report` carries the same diff. Pin drift is the agent's cue to undo
+  the change or bail out `overconstrained`.
+- **Revise-range containment.** A `revise_range` (start/end event ids on the base
+  chronology) makes every event outside the range read-only — content edits, deletes,
+  nudges, rewords, and relation edits touching them are rejected by the tools, and new
+  events must anchor to at least one in-range event. Downstream interpretations may still
+  refresh via the stale ripple. In revise mode write results additionally carry an
+  end-state drift diff (rank changes and newly minted intimacies across all characters)
+  against the original timeline.
+
+### Chat integration (`plan_plot` chat tool)
+
+The chat agent cannot create, edit, delete, or re-relate timeline events: the event write
+tools are off its toolset (`STORY_BIBLE_TOOLS` keeps only reads; the write tools remain
+defined in `app/tools/story_bible.py` for the UI trigger path and tests). All timeline
+authoring goes through the `plan_plot` chat tool (`app/tools/plot_planning.py`):
+
+- **Briefing contract.** `briefing` (goal plus target character arcs as shaped trajectories
+  with waypoints, never just endpoints), `scope` (`append`, or `revise_range` with
+  `start_event_id`/`end_event_id`), `pinned_intimacies`, `preservation_guidance` (free-text
+  do-not-change instructions appended to the sub-agent's system prompt), and a mandatory
+  budget (`max_new_events`, `max_reinterpretation_runs`) that grounds budget bail-outs.
+- **Claim and commit.** The run holds the coarse story-bible `JobManager` claim
+  (`hold_story_bible_claim`) for its duration, so it appears in the Work Queue, completion
+  raises a toast, and a second plot run cannot race it. On status `completed` with draft
+  steps, the tool commits the draft all-or-nothing inside the held claim
+  (`PlotDraft.commit()` refuses if the live events changed since the fork). An infeasible
+  run commits nothing; the tool returns the reason, measured gap report, and drift report
+  for the chat agent to relay to the writer.
 
 ## Related Docs
 

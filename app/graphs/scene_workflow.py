@@ -261,9 +261,7 @@ def _structured_invoke(
     system: str,
 ) -> BaseModel:
     model = _resolve_model(node_id, models, streaming=False).with_structured_output(schema)
-    return model.invoke(
-        [SystemMessage(content=system), HumanMessage(content=prompt)]
-    )
+    return model.invoke([SystemMessage(content=system), HumanMessage(content=prompt)])
 
 
 def _author_stances_node(models: dict[str, BaseChatModel] | None) -> Any:

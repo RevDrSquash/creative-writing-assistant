@@ -92,9 +92,7 @@ def scene_event_window(bible: StoryBible, event_ids: list[str]) -> tuple[str, st
 
     chrono_index = _event_chronological_index(bible)
     resolved = [
-        (chrono_index[event_id], event_id)
-        for event_id in event_ids
-        if event_id in chrono_index
+        (chrono_index[event_id], event_id) for event_id in event_ids if event_id in chrono_index
     ]
     if not resolved:
         return "", ""

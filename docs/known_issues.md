@@ -193,3 +193,22 @@ fix so the context is not lost between phases.
   semantic re-read is manual).
 - **Possible fix:** Optional debounce after the user leaves an event, or a
   "signals look stale" badge after relation edits that deep-links to Re-run.
+
+## 13. plan_plot blocks the chat turn for the whole plot run
+
+- **Severity:** Low-Medium (UX, by design for now)
+- **Location:** `app/tools/plot_planning.py` (`plan_plot`), `app/graphs/jobs.py`
+- **Introduced:** Plot sub-agent system
+- **Symptom:** The plot sub-agent runs as a blocking tool call inside the chat turn.
+  A multi-event run performs many sequential LLM calls (loop turns plus inline
+  interpretation per event), so the chat reply stalls until the run finishes or
+  bails out. Progress is only visible as the running "Plot plan" job in the Work
+  Queue; the chat panel shows nothing incremental, and the chat turn cannot be used
+  for anything else meanwhile.
+- **Why it is acceptable:** Blocking keeps the contract simple — the chat agent
+  relays a complete, structured result (commit or measured bail-out) in the same
+  turn, and the story-bible claim already serializes concurrent runs.
+- **Possible fix:** Run plot jobs through the `JobManager` work queue like scene
+  generation, have `plan_plot` return a job handle immediately, and surface the
+  step log incrementally; requires the chat agent to poll or be re-invoked on
+  completion.

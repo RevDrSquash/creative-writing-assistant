@@ -38,6 +38,7 @@ from app.models.client import get_chat_model_for_node
 from app.models.config import PLOT_AGENT_NODE_ID
 from app.tools.plot_draft import (
     DRAFT_WRITE_TOOL_NAMES,
+    PinnedIntimacy,
     PlotBudget,
     PlotDraftToolset,
     PlotPlanResult,
@@ -76,6 +77,11 @@ How to work:
 - Structural edits (inserts, relation rewires, mid-timeline content edits) flag
   downstream interpretations stale. Repair them with refresh_interpretations before
   finishing.
+- The briefing may pin intimacies that must not change and may limit you to a revise
+  range. Pins are measured: every write result diffs each pin against the original
+  timeline — on PIN DRIFT, undo the drift (backtrack via delete/update or counter it)
+  or bail_out (overconstrained). Events outside the revise range are read-only; work
+  within the range and keep the end-state drift report as small as the goal allows.
 - Watch the budget line in every write result. When it runs low, converge or bail out.
 
 Ending the run (mandatory): every run ends with exactly one terminal call —
@@ -133,6 +139,8 @@ def run_plot_agent(
     model: BaseChatModel | None = None,
     models: dict[str, Any] | None = None,
     guidance: str = "",
+    pins: list[PinnedIntimacy] | None = None,
+    revise_range: tuple[str, str] | None = None,
     recursion_limit: int | None = None,
 ) -> PlotPlanResult:
     """Run the plot sub-agent over ``draft`` and return its structured result.
@@ -140,13 +148,17 @@ def run_plot_agent(
     Blocking. The draft is mutated in place; committing it is the caller's
     decision (and only sensible when the result's status is ``completed``).
     ``model`` overrides the loop model and ``models`` the interpretation
-    workflow's per-node models (both used by tests). ``recursion_limit`` caps
-    graph steps; the default scales with the budget. A run that ends without a
-    terminal call — including by hitting the step limit — is force-bailed as
-    infeasible so a ``PlotPlanResult`` is always returned.
+    workflow's per-node models (both used by tests). ``pins`` and
+    ``revise_range`` are the briefing's preservation constraints, enforced by
+    the toolset (drift reports and read-only containment). ``recursion_limit``
+    caps graph steps; the default scales with the budget. A run that ends
+    without a terminal call — including by hitting the step limit — is
+    force-bailed as infeasible so a ``PlotPlanResult`` is always returned.
     """
 
-    toolset = create_plot_draft_toolset(draft, budget, models=models)
+    toolset = create_plot_draft_toolset(
+        draft, budget, models=models, pins=pins, revise_range=revise_range
+    )
     agent = build_plot_agent(toolset, model=model, guidance=guidance)
     limit = recursion_limit or _default_recursion_limit(budget)
     config = {"recursion_limit": limit}
@@ -171,9 +183,7 @@ def _default_recursion_limit(budget: PlotBudget) -> int:
     fixed base for orientation and finalization.
     """
 
-    return _BASE_RECURSION_STEPS + 4 * (
-        budget.max_new_events + budget.max_reinterpretation_runs
-    )
+    return _BASE_RECURSION_STEPS + 4 * (budget.max_new_events + budget.max_reinterpretation_runs)
 
 
 def _force_bail_out(toolset: PlotDraftToolset, recursion_limit: int) -> None:

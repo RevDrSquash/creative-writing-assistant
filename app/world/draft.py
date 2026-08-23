@@ -88,6 +88,12 @@ class PlotDraft:
         self._stale: set[str] = set()
 
     @property
+    def base(self) -> StoryBible:
+        """The bible as it was when the draft forked. Treat as read-only."""
+
+        return self._base
+
+    @property
     def steps(self) -> tuple[DraftStep, ...]:
         return tuple(self._steps)
 

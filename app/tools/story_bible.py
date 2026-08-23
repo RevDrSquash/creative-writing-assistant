@@ -1029,6 +1029,12 @@ def _derived_character_lines(
     ]
 
 
+# The chat agent's story-bible toolset. Event writes are deliberately absent:
+# timeline authoring goes through the plot sub-agent (`plan_plot` in
+# app/tools/plot_planning.py), which drafts in a sandbox with inline
+# interpretation feedback and commits all-or-nothing. The event write tools
+# below (add_event, update_event, delete_event, add_event_relation,
+# remove_event_relation) remain defined for the UI trigger path and tests.
 STORY_BIBLE_TOOLS = [
     read_story_bible,
     update_narrative_style,
@@ -1043,10 +1049,5 @@ STORY_BIBLE_TOOLS = [
     delete_character,
     read_timeline,
     read_event,
-    add_event,
-    update_event,
-    delete_event,
-    add_event_relation,
-    remove_event_relation,
     read_world_state,
 ]

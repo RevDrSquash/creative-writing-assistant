@@ -75,9 +75,7 @@ def _mira_signal() -> Signal:
     return Signal(
         character_id="char_mira",
         interpretation="A hint",
-        evidence=[
-            IntimacyEvidence(intimacy_id="intim_wary", direction="supports", strength=2)
-        ],
+        evidence=[IntimacyEvidence(intimacy_id="intim_wary", direction="supports", strength=2)],
     )
 
 

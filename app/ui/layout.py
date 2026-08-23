@@ -104,6 +104,8 @@ def _render_job_completion_toasts() -> None:
                     ui.notify("Agent reply ready", type="positive")
                 elif job.kind == "intimacy_interpretation":
                     ui.notify(f"{job.label} interpreted", type="positive")
+                elif job.kind == "plot_draft":
+                    ui.notify(f"{job.label} finished", type="positive")
             elif job.status == "failed":
                 if job.kind == "scene_generation":
                     ui.notify(
@@ -115,6 +117,11 @@ def _render_job_completion_toasts() -> None:
                 elif job.kind == "intimacy_interpretation":
                     ui.notify(
                         f"Intimacy interpretation failed: {job.error or 'unknown error'}",
+                        type="negative",
+                    )
+                elif job.kind == "plot_draft":
+                    ui.notify(
+                        f"Plot run failed: {job.error or 'unknown error'}",
                         type="negative",
                     )
 

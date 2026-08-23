@@ -64,9 +64,7 @@ class SingleWritePerMessageMiddleware(AgentMiddleware):
         message = _emitting_message(request)
         if message is None:
             return None
-        writes = [
-            call for call in message.tool_calls if call.get("name") in self._write_tool_names
-        ]
+        writes = [call for call in message.tool_calls if call.get("name") in self._write_tool_names]
         if len(writes) <= 1 or request.tool_call.get("id") == writes[0].get("id"):
             return None
         batched = ", ".join(call.get("name") or "?" for call in writes)

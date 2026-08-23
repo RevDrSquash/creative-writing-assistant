@@ -675,6 +675,15 @@ async def test_work_queue_nav_and_empty_page(user: User) -> None:
     await user.should_see("No active or recent workflows.")
 
 
+async def test_work_queue_shows_running_plot_run(user: User) -> None:
+    from app.graphs.jobs import get_job_manager
+
+    with get_job_manager().hold_story_bible_claim(label="Plot plan"):
+        await user.open("/queue")
+        await user.should_see("Plot plan")
+        await user.should_see("Running")
+
+
 async def test_generate_all_scenes_dialog_checkbox_defaults(
     user: User,
     isolated_data_dir: Path,

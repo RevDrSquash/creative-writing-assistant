@@ -39,7 +39,7 @@ The app is a local-first Python writing workspace built around one in-memory `Wo
     The lock alone only prevents overlapping saves from colliding (on Windows two overlapping
     atomic saves collide on the file lock); it does not fix ordering. The tool node runs a single
     AI message's batched tool calls concurrently (`asyncio.gather` async, a thread pool sync), so
-    order-sensitive mutations (``add_event`` with inline ``relations`` referencing
+    order-sensitive mutations (e.g. a draft tool's ``relations`` referencing
     siblings created earlier in the batch) could run against a partial timeline or
     fail validation out of emission order. ``SerializeToolCallsMiddleware``
     (`app/graphs/serialize_tools_middleware.py`) gates each call on its index within the emitting
@@ -85,8 +85,15 @@ The app is a local-first Python writing workspace built around one in-memory `Wo
   - Tools expose explicit actions such as reading scenes, updating scene metadata, listing world data, appending prose, replacing text, and updating Story Bible fields.
   - Write tools mutate world state before returning.
   - Tools raise `ToolException` for expected domain errors (e.g. an unknown entity id). The agent is built with a `ToolRetryMiddleware(max_retries=0, on_failure="continue")` so a failing tool call produces an error `ToolMessage` for the model to recover from instead of aborting the run. Tools are local and deterministic, so retries are disabled.
-  - Workflows or subagents can also be exposed as tools.
-  - Intimacy edits are not authored by the agent. `add_event` / `update_event` accept
+  - Workflows or subagents can also be exposed as tools. The realized instance is
+    `plan_plot` (`app/tools/plot_planning.py`): the chat agent's toolset carries no event
+    write tools at all — timeline authoring is delegated to the plot sub-agent, which
+    drafts in a `PlotDraft` sandbox with inline interpretation feedback and commits
+    all-or-nothing under the story-bible claim (see
+    [architecture_agent_workflows.md](architecture_agent_workflows.md) "Plot Sub-Agent").
+    The event write tools (`add_event`, `update_event`, `delete_event`, relation tools)
+    remain defined for the UI trigger path and tests.
+  - Intimacy edits are not authored by the agent. Event tools accept
     signals as hints (`character_id` + `interpretation`); the intimacy interpretation
     workflow runs automatically, interprets the event per relevant character, and writes
     approved signals with evidence and creation/rewording records. Intimacy rank is

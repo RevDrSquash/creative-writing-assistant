@@ -71,9 +71,10 @@ def _queue_page() -> None:
     with ui.column().classes("w-full gap-4 p-4 max-w-3xl"):
         ui.label("Work Queue").classes("text-2xl font-semibold").mark("work-queue-page-title")
         ui.label(
-            "Background scene generation, intimacy interpretation, and chat turns. "
-            "Queued scenes wait until prerequisites finish, then run up to the "
-            "parallel limit. Intimacy jobs run per character in parallel."
+            "Background scene generation, intimacy interpretation, plot runs, and chat "
+            "turns. Queued scenes wait until prerequisites finish, then run up to the "
+            "parallel limit. Intimacy jobs run per character in parallel. A plot run "
+            "claims the story bible until it commits or bails out."
         ).classes("text-grey-7")
 
         @ui.refreshable
