@@ -327,6 +327,41 @@ A separate maintenance/consolidation workflow (merge, split, archive intimacies 
 stored evidence history) is future work and deliberately out of scope for the interpretation
 pipeline.
 
+## Plot Sub-Agent (`plan_plot`)
+
+The plot sub-agent drafts timeline events inside a `PlotDraft` sandbox (`app/world/draft.py`)
+to fulfill a briefing — goal, target character arcs, constraints, and a budget — and returns a
+structured `PlotPlanResult`. Unlike the enforced pipelines above, it is a tool-loop agent
+(`create_agent`, like the chat agent) built in `app/graphs/plot_agent.py` and registered as
+`plan_plot` in the workflow registry.
+
+- **Per-run tool binding.** `create_plot_draft_toolset` (`app/tools/plot_draft.py`) builds the
+  tools as closures over one `PlotDraft` and one `PlotBudget`, so the compiled graph is per-run
+  and never cached. Write tools run interpretation synchronously and return evidence, rank
+  movements, and distance-to-threshold in the tool result — the feedback loop lives in the tool
+  result itself.
+- **One write per message, by construction.** `SingleWritePerMessageMiddleware`
+  (`app/graphs/single_write_middleware.py`) rejects every draft-write tool call after the first
+  within a single AI message (the write set is `DRAFT_WRITE_TOOL_NAMES`; read tools may batch
+  freely). Batching writes blind is therefore impossible mechanically, not just by prompt. It
+  is listed after `SerializeToolCallsMiddleware`, which must stay outermost so its per-batch
+  gate still advances when a call is rejected without executing.
+- **Structured outcome, guaranteed.** `run_plot_agent(draft, budget, briefing)` is the blocking
+  entry point. The run ends via the terminal tools `finish_plot` (status `completed`) or
+  `bail_out` (status `infeasible` with reason `budget | judgment | overconstrained` and a
+  measured per-arc gap report). A run that stops without a terminal call is nudged once to
+  finalize; if it still refuses, or exhausts its step limit (a recursion limit scaled from the
+  budget), the runner force-records a budget bail-out so the caller always receives a
+  `PlotPlanResult`. Committing the draft is the caller's responsibility and only sensible on
+  `completed`.
+- **Model config.** The loop resolves its model through the `plot_agent` graph node
+  ("Plot: Sub-Agent", default role `orchestration`). Interpretation calls made from inside the
+  draft tools use the intimacy nodes' own configs.
+
+Chat-agent integration (a `plan_plot` chat tool with a briefing contract, preservation pins,
+revise-range containment, and commit-on-complete) is the next phase; see
+[future_work.md](future_work.md).
+
 ## Related Docs
 
 - System architecture and orchestration overview: see [architecture.md](architecture.md).

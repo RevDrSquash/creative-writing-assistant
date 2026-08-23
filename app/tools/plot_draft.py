@@ -53,6 +53,27 @@ MAX_CANDIDATE_CHAINS = 4
 MIN_CANDIDATE_CHAINS = 2
 MAX_CHAIN_EVENTS = 3
 
+# Tools that mutate the draft or end the run. The plot agent's
+# one-write-per-message middleware (SingleWritePerMessageMiddleware) rejects
+# batching these so every write's interpretation feedback is read before the
+# next write is chosen. Read-only tools (read_draft_timeline, read_draft_state,
+# explore_candidates) may batch freely.
+DRAFT_WRITE_TOOL_NAMES: frozenset[str] = frozenset(
+    {
+        "add_draft_event",
+        "insert_draft_event",
+        "update_draft_event",
+        "delete_draft_event",
+        "edit_draft_relations",
+        "nudge_intimacy",
+        "reword_signal",
+        "reword_evidence_rationale",
+        "refresh_interpretations",
+        "finish_plot",
+        "bail_out",
+    }
+)
+
 
 class PlotBudget(BaseModel):
     """Run budget from the briefing. Exhaustion grounds a budget-based bail-out."""
