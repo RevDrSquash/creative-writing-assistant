@@ -19,6 +19,7 @@ from app.tools.plot_draft import (
     PinnedIntimacy,
     PlotBudget,
     PlotDraftToolset,
+    RankTarget,
     create_plot_draft_toolset,
 )
 from app.world.draft import PlotDraft
@@ -123,8 +124,9 @@ def _toolset(
     max_new_events: int = 5,
     max_reinterpretation_runs: int = 5,
     strength: int = 3,
+    auto_plan: bool = True,
 ) -> PlotDraftToolset:
-    return create_plot_draft_toolset(
+    toolset = create_plot_draft_toolset(
         draft,
         PlotBudget(
             max_new_events=max_new_events,
@@ -132,6 +134,166 @@ def _toolset(
         ),
         models=_models(strength),
     )
+    if auto_plan:
+        toolset.tool("plan_rank_targets").func(
+            targets=[],
+            note="This test does not intend rank movement.",
+        )
+    return toolset
+
+
+# ---------------------------------------------------------- rank-target planning
+
+
+def test_draft_writes_require_a_rank_target_plan() -> None:
+    draft = PlotDraft(_bible())
+    toolset = _toolset(draft, auto_plan=False)
+
+    with pytest.raises(ToolException, match="plan_rank_targets"):
+        toolset.tool("add_draft_event").func(
+            title="The alley",
+            relations=[EventRelationSpec(kind="follows", event_id="evt_watch")],
+        )
+
+    assert draft.bible.get_event("evt_the_alley") is None
+    assert toolset.run.new_events_used == 0
+
+
+def test_rank_target_plan_validates_ids_and_empty_intent() -> None:
+    toolset = _toolset(PlotDraft(_bible()), auto_plan=False)
+
+    with pytest.raises(ToolException, match="non-empty note"):
+        toolset.tool("plan_rank_targets").func(targets=[])
+    with pytest.raises(ToolException, match="Valid characters"):
+        toolset.tool("plan_rank_targets").func(
+            targets=[
+                RankTarget(
+                    character_id="char_invented",
+                    intimacy_id="intim_wary",
+                    target_rank="moderate",
+                )
+            ]
+        )
+    with pytest.raises(ToolException, match="Valid intimacies"):
+        toolset.tool("plan_rank_targets").func(
+            targets=[
+                RankTarget(
+                    character_id="char_mira",
+                    intimacy_id="intim_invented",
+                    target_rank="moderate",
+                )
+            ]
+        )
+
+    result = toolset.tool("plan_rank_targets").func(
+        targets=[],
+        note="The requested edit is rank-neutral.",
+    )
+    assert "none declared" in result
+    assert toolset.run.rank_targets == []
+
+
+def test_rank_target_scoreboard_reports_hit_not_yet_and_transient_hit() -> None:
+    hit_toolset = _toolset(PlotDraft(_bible()), auto_plan=False)
+    hit = hit_toolset.tool("plan_rank_targets").func(
+        targets=[
+            RankTarget(
+                character_id="char_mira",
+                intimacy_id="intim_wary",
+                target_rank="minor",
+            )
+        ]
+    )
+    assert "HIT Mira" in hit
+
+    not_yet = hit_toolset.tool("plan_rank_targets").func(
+        targets=[
+            RankTarget(
+                character_id="char_mira",
+                intimacy_id="intim_wary",
+                target_rank="moderate",
+            )
+        ]
+    )
+    assert "NOT YET Mira" in not_yet
+    assert "from moderate" in not_yet
+    assert hit_toolset.run.rank_target_revisions == 1
+
+    intimacy = Intimacy(id="intim_wary", text="Wary of outsiders", strength="minor")
+    character = Character(
+        id="char_mira",
+        identity=CharacterIdentity(name="Mira"),
+        baseline_state=CharacterBaselineState(intimacies=[intimacy]),
+    )
+    observations = [
+        ("supports", 3),
+        ("supports", 3),
+        ("supports", 3),
+        ("contradicts", 5),
+        ("contradicts", 5),
+    ]
+    events = [
+        Event(
+            id=f"evt_{index}",
+            title=f"Beat {index}",
+            signals=[
+                Signal(
+                    character_id=character.id,
+                    evidence=[
+                        IntimacyEvidence(
+                            intimacy_id=intimacy.id,
+                            direction=direction,
+                            strength=strength,
+                        )
+                    ],
+                )
+            ],
+        )
+        for index, (direction, strength) in enumerate(observations, start=1)
+    ]
+    transient_toolset = _toolset(
+        PlotDraft(StoryBible(characters=[character], timeline=events)),
+        auto_plan=False,
+    )
+    transient = transient_toolset.tool("plan_rank_targets").func(
+        targets=[
+            RankTarget(
+                character_id=character.id,
+                intimacy_id=intimacy.id,
+                target_rank="moderate",
+            )
+        ]
+    )
+    assert "TRANSIENT HIT Mira" in transient
+    assert "current minor" in transient
+
+
+def test_finish_rejects_or_acknowledges_unmet_rank_targets() -> None:
+    toolset = _toolset(PlotDraft(_bible()), auto_plan=False)
+    toolset.tool("plan_rank_targets").func(
+        targets=[
+            RankTarget(
+                character_id="char_mira",
+                intimacy_id="intim_wary",
+                target_rank="moderate",
+            )
+        ]
+    )
+
+    with pytest.raises(ToolException, match="Rank targets remain unmet"):
+        toolset.tool("finish_plot").func(summary="The shape is otherwise complete.")
+
+    result = toolset.tool("finish_plot").func(
+        summary="The shape is otherwise complete.",
+        unmet_targets_note="The event budget was intentionally reserved for another arc.",
+    )
+    assert "Plot run completed" in result
+    outcome = toolset.run.result
+    assert outcome is not None
+    assert outcome.rank_targets[0].status == "not_yet"
+    assert outcome.rank_targets[0].target_rank == "moderate"
+    assert outcome.gap_report[0].target == "moderate"
+    assert "intentionally reserved" in outcome.gap_report[0].conflict
 
 
 # ------------------------------------------------- write + inline interpretation
@@ -537,7 +699,9 @@ def test_refresh_reinterprets_stale_events_and_diffs(isolated_world: World) -> N
     signal = draft.bible.get_event("evt_meal").signals[0]
     assert signal.interpretation == "I still cannot trust them."
 
-    assert toolset.tool("refresh_interpretations").func() == "No stale events to refresh."
+    assert toolset.tool("refresh_interpretations").func().startswith(
+        "No stale events to refresh."
+    )
 
 
 def test_refresh_stops_at_budget_and_lists_remaining(isolated_world: World) -> None:
@@ -669,13 +833,18 @@ def test_bail_out_rejects_hallucinated_gap_ids() -> None:
 
 
 def _pinned_toolset(draft: PlotDraft, **kwargs: Any) -> PlotDraftToolset:
-    return create_plot_draft_toolset(
+    toolset = create_plot_draft_toolset(
         draft,
         PlotBudget(max_new_events=5, max_reinterpretation_runs=5),
         models=_models(5),
         pins=[PinnedIntimacy(character_id="char_mira", intimacy_id="intim_wary")],
         **kwargs,
     )
+    toolset.tool("plan_rank_targets").func(
+        targets=[],
+        note="This test measures preservation drift only.",
+    )
+    return toolset
 
 
 def test_pin_drift_is_measured_in_write_results(isolated_world: World) -> None:
@@ -744,12 +913,17 @@ def test_unknown_pin_ids_are_rejected() -> None:
 
 
 def _revise_toolset(draft: PlotDraft, start: str, end: str) -> PlotDraftToolset:
-    return create_plot_draft_toolset(
+    toolset = create_plot_draft_toolset(
         draft,
         PlotBudget(max_new_events=5, max_reinterpretation_runs=5),
         models=_models(),
         revise_range=(start, end),
     )
+    toolset.tool("plan_rank_targets").func(
+        targets=[],
+        note="This test exercises revise-range containment.",
+    )
+    return toolset
 
 
 def test_revise_range_makes_outside_events_read_only(isolated_world: World) -> None:

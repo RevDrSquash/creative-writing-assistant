@@ -371,6 +371,32 @@ structured `PlotPlanResult`. Unlike the enforced pipelines above, it is a tool-l
   end-state drift diff (rank changes and newly minted intimacies across all characters)
   against the original timeline.
 
+### Rank-target plan
+
+Scene writing consumes intimacy ranks rather than their within-band accumulator scores, so a
+dramatic arc that moves the net without crossing a rank boundary is invisible downstream. Every
+plot run therefore declares its intended rank movement mechanically before it may edit the draft:
+
+- **Declared intent.** `plan_rank_targets(targets, note="")` records zero or more
+  `RankTarget` values (`character_id`, `intimacy_id`, `target_rank`). Character and intimacy ids
+  resolve against the draft bible, and targets may name only existing intimacies. A newly minted
+  intimacy can be targeted by re-planning after its creation. An empty target list is valid only
+  with a non-empty note that explicitly says why no rank movement is intended.
+- **Write gate and revisions.** All draft mutation tools reject calls until a target plan exists.
+  The planning tool consumes no event or re-interpretation budget and may be called again when the
+  story pivots; each replacement after the first is counted as a plan revision. It is itself in
+  the one-write-per-message set, so the model must read the declared scoreboard before drafting.
+- **Measured scoreboard.** Every write result appends the current target scoreboard beside the
+  preservation drift report. A target is `hit` when the current rank equals the target,
+  `transient hit` when replay crossed the target rank but later moved away, or `not yet` with the
+  current rank, effective net, and distance-to-threshold. This makes crossings, rather than
+  unobservable movement inside a band, the loop's success criterion.
+- **Terminal accountability.** `finish_plot` rejects while any target is not currently hit unless
+  the agent supplies `unmet_targets_note`. The agent must strengthen/add events, deliberately
+  re-plan, or acknowledge the miss. Acknowledged misses become measured `ArcGapReport` entries.
+  `PlotPlanResult` carries the final target scoreboard and plan-revision count so the chat-side
+  result can report hits, misses, and acknowledged gaps.
+
 ### Chat integration (`plan_plot` chat tool)
 
 The chat agent cannot create, edit, delete, or re-relate timeline events: the event write

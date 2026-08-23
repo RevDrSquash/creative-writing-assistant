@@ -160,6 +160,22 @@ def _format_result(result: PlotPlanResult, *, committed: bool) -> str:
         f"{result.reinterpretation_runs_used}/{result.reinterpretation_budget} "
         "re-interpretation runs."
     )
+    if result.rank_targets:
+        lines.append(f"Rank targets (plan revisions: {result.rank_target_revisions}):")
+        labels = {"hit": "HIT", "transient_hit": "TRANSIENT HIT", "not_yet": "NOT YET"}
+        for target in result.rank_targets:
+            measurement = f"net {target.effective_net:.1f}"
+            if target.threshold_distance:
+                measurement = f"{measurement}; {target.threshold_distance}"
+            lines.append(
+                f"- {labels[target.status]} {target.character_name} [{target.character_id}] "
+                f"{target.intimacy_text or target.intimacy_id} [{target.intimacy_id}]: "
+                f"target {target.target_rank}; current {target.current_rank} ({measurement})"
+            )
+    elif result.rank_targets_note:
+        lines.append(f"Rank targets: none declared. Note: {result.rank_targets_note}")
+    else:
+        lines.append("Rank targets: no plan was declared before the run ended.")
     if result.step_summaries:
         lines.append("Steps:")
         lines.extend(f"- {summary}" for summary in result.step_summaries)

@@ -18,22 +18,31 @@ from app.world.models import (
     IntimacyEvidence,
 )
 
-RANK_ORDER: tuple[DerivedIntimacyStrength, ...] = ("dormant", "minor", "major", "defining")
+RANK_ORDER: tuple[DerivedIntimacyStrength, ...] = (
+    "dormant",
+    "minor",
+    "moderate",
+    "major",
+    "defining",
+)
 STRENGTH_WEIGHTS: dict[int, float] = {1: 1.0, 2: 2.0, 3: 3.5, 4: 5.5, 5: 9.0}
 RANK_SEEDS: dict[DerivedIntimacyStrength, float] = {
     "dormant": 0.0,
     "minor": 5.0,
-    "major": 12.0,
+    "moderate": 8.5,
+    "major": 13.0,
     "defining": 20.0,
 }
 PROMOTE_AT: dict[DerivedIntimacyStrength, float] = {
     "dormant": 3.5,
-    "minor": 12.0,
+    "minor": 9.5,
+    "moderate": 15.5,
     "major": 22.0,
 }
 DEMOTE_AT: dict[DerivedIntimacyStrength, float] = {
     "minor": 1.5,
-    "major": 6.0,
+    "moderate": 5.0,
+    "major": 9.5,
     "defining": 10.0,
 }
 SCENARIO_REPEAT_FACTOR = 0.4
@@ -42,6 +51,7 @@ MOMENTUM_WINDOW = 3
 MOMENTUM_BLEND = 0.25
 _RANK_TO_EVIDENCE_STRENGTH: dict[str, EvidenceStrength] = {
     "minor": 2,
+    "moderate": 3,
     "major": 3,
     "defining": 5,
 }

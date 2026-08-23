@@ -212,3 +212,18 @@ fix so the context is not lost between phases.
   generation, have `plan_plot` return a job handle immediately, and surface the
   step log incrementally; requires the chat agent to poll or be re-invoked on
   completion.
+
+## 14. Plot rank targets cannot name not-yet-created intimacies
+
+- **Severity:** Low (planning ergonomics, validated and recoverable)
+- **Location:** `app/tools/plot_draft.py` — `plan_rank_targets`
+- **Introduced:** Plot rank-target planning
+- **Symptom:** A rank target must resolve to an intimacy already present in the draft bible.
+  The initial plan therefore cannot target an intimacy that a later event is expected to mint.
+  After creation, the plot sub-agent must call `plan_rank_targets` again to add that target; the
+  replacement is counted as a plan revision.
+- **Why it is acceptable:** Rejecting speculative ids preserves the tool boundary that every
+  model-supplied reference resolves against canonical world data. Re-planning is budget-free and
+  its revision is visible in the final result.
+- **Possible fix:** Add a separate candidate-target type keyed by proposed intimacy text, then
+  deterministically bind it to the id minted by an approved interpretation result.

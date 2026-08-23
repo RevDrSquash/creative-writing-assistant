@@ -39,6 +39,7 @@ from app.tools.story_bible import _signals_as_hints
 from app.world.draft import PlotDraft
 from app.world.evidence import RankState, format_threshold_distance
 from app.world.models import (
+    DerivedIntimacyStrength,
     Event,
     EventRelationKind,
     EventRelationSpec,
@@ -72,6 +73,7 @@ MAX_CHAIN_EVENTS = 3
 # explore_candidates) may batch freely.
 DRAFT_WRITE_TOOL_NAMES: frozenset[str] = frozenset(
     {
+        "plan_rank_targets",
         "add_draft_event",
         "insert_draft_event",
         "update_draft_event",
@@ -104,6 +106,14 @@ class PinnedIntimacy(BaseModel):
 
     character_id: str
     intimacy_id: str
+
+
+class RankTarget(BaseModel):
+    """One existing intimacy rank the plot run intends to reach."""
+
+    character_id: str
+    intimacy_id: str
+    target_rank: DerivedIntimacyStrength
 
 
 class DraftRelationSpec(BaseModel):
@@ -168,6 +178,20 @@ class ArcGapReport(BaseModel):
     threshold_distance: str = ""
 
 
+class RankTargetReport(BaseModel):
+    """Measured final or in-progress status for one declared rank target."""
+
+    character_id: str
+    character_name: str = ""
+    intimacy_id: str
+    intimacy_text: str = ""
+    target_rank: DerivedIntimacyStrength
+    current_rank: str = ""
+    status: Literal["hit", "transient_hit", "not_yet"]
+    effective_net: float = 0.0
+    threshold_distance: str = ""
+
+
 class PlotPlanResult(BaseModel):
     """Structured outcome of a plot run, produced by finish_plot or bail_out."""
 
@@ -183,6 +207,9 @@ class PlotPlanResult(BaseModel):
     reinterpretation_budget: int = 0
     gap_report: list[ArcGapReport] = Field(default_factory=list)
     drift_report: list[str] = Field(default_factory=list)
+    rank_targets: list[RankTargetReport] = Field(default_factory=list)
+    rank_targets_note: str = ""
+    rank_target_revisions: int = 0
 
 
 @dataclass
@@ -193,6 +220,9 @@ class PlotDraftRun:
     budget: PlotBudget
     models: dict[str, Any] | None = None
     pins: list[PinnedIntimacy] = field(default_factory=list)
+    rank_targets: list[RankTarget] | None = None
+    rank_targets_note: str = ""
+    rank_target_revisions: int = 0
     protected_event_ids: frozenset[str] = frozenset()
     revise_active: bool = False
     new_events_used: int = 0
@@ -549,6 +579,100 @@ def _drift_note(run: PlotDraftRun) -> list[str]:
     return lines
 
 
+def _rank_target_reports(run: PlotDraftRun) -> list[RankTargetReport]:
+    """Measure every declared target against the draft's current replay state."""
+
+    reports: list[RankTargetReport] = []
+    for target in run.rank_targets or []:
+        state = _ranks_for(run.draft.bible, [target.character_id]).get(
+            target.character_id, {}
+        ).get(target.intimacy_id)
+        if state is None:
+            status: Literal["hit", "transient_hit", "not_yet"] = "not_yet"
+            current_rank = "unknown"
+            effective_net = 0.0
+            distance = ""
+        else:
+            current_rank = state.rank
+            effective_net = state.effective_net
+            distance = format_threshold_distance(state)
+            if state.rank == target.target_rank:
+                status = "hit"
+            elif any(crossing.new_rank == target.target_rank for crossing in state.crossings):
+                status = "transient_hit"
+            else:
+                status = "not_yet"
+        catalog = dict(run.draft.bible.intimacy_catalog(target.character_id))
+        reports.append(
+            RankTargetReport(
+                character_id=target.character_id,
+                character_name=_character_name(run.draft.bible, target.character_id),
+                intimacy_id=target.intimacy_id,
+                intimacy_text=catalog.get(target.intimacy_id, ""),
+                target_rank=target.target_rank,
+                current_rank=current_rank,
+                status=status,
+                effective_net=effective_net,
+                threshold_distance=distance,
+            )
+        )
+    return reports
+
+
+def _rank_target_lines(run: PlotDraftRun) -> list[str]:
+    """Render the current rank-target scoreboard for a write result."""
+
+    if run.rank_targets is None:
+        return ["Rank targets: NOT PLANNED (call plan_rank_targets before drafting)."]
+    if not run.rank_targets:
+        note = f" Note: {run.rank_targets_note}" if run.rank_targets_note else ""
+        return [f"Rank targets: none declared.{note}"]
+    lines = [f"Rank targets (plan revisions: {run.rank_target_revisions}):"]
+    labels = {"hit": "HIT", "transient_hit": "TRANSIENT HIT", "not_yet": "NOT YET"}
+    for report in _rank_target_reports(run):
+        measurement = f"net {report.effective_net:.1f}"
+        if report.threshold_distance:
+            measurement = f"{measurement}; {report.threshold_distance}"
+        lines.append(
+            f"  - {labels[report.status]} {report.character_name} [{report.character_id}]: "
+            f"'{report.intimacy_text or report.intimacy_id}' [{report.intimacy_id}] target "
+            f"{report.target_rank}; current {report.current_rank} ({measurement})"
+        )
+    return lines
+
+
+def _write_feedback_lines(run: PlotDraftRun) -> list[str]:
+    """Append the target scoreboard and preservation/revise drift feedback."""
+
+    return [*_rank_target_lines(run), *_drift_note(run)]
+
+
+def _unmet_rank_targets(run: PlotDraftRun) -> list[RankTargetReport]:
+    return [report for report in _rank_target_reports(run) if report.status != "hit"]
+
+
+def _rank_target_gap_reports(
+    reports: list[RankTargetReport],
+    acknowledgement: str,
+) -> list[ArcGapReport]:
+    """Convert acknowledged target misses into the standard measured gap shape."""
+
+    return [
+        ArcGapReport(
+            character_id=report.character_id,
+            character_name=report.character_name,
+            intimacy_id=report.intimacy_id,
+            intimacy_text=report.intimacy_text,
+            target=report.target_rank,
+            conflict=acknowledgement,
+            current_rank=report.current_rank,
+            effective_net=report.effective_net,
+            threshold_distance=report.threshold_distance,
+        )
+        for report in reports
+    ]
+
+
 def _editable_listing(run: PlotDraftRun, bible: StoryBible) -> str:
     editable = [
         f"{event.title or 'Untitled'} [{event.id}]"
@@ -613,6 +737,9 @@ def _build_result(
         reinterpretation_budget=run.budget.max_reinterpretation_runs,
         gap_report=gap_report or [],
         drift_report=_drift_note(run),
+        rank_targets=_rank_target_reports(run),
+        rank_targets_note=run.rank_targets_note,
+        rank_target_revisions=run.rank_target_revisions,
     )
 
 
@@ -621,6 +748,13 @@ def _require_active(run: PlotDraftRun) -> None:
         raise ToolException(
             "This plot run already produced a result (finish_plot or bail_out was called); "
             "no further draft actions are allowed."
+        )
+
+
+def _require_plan(run: PlotDraftRun) -> None:
+    if run.rank_targets is None:
+        raise ToolException(
+            "Declare intended rank movement with plan_rank_targets before using draft write tools."
         )
 
 
@@ -721,6 +855,54 @@ def create_plot_draft_toolset(
     )
 
     @tool
+    def plan_rank_targets(targets: list[RankTarget], note: str = "") -> str:
+        """Declare or revise the rank crossings this plot run intends to land.
+
+        Call this before any draft write. Each target names an existing
+        character intimacy and its desired final derived rank. New intimacies
+        cannot be targeted until an event has minted them; call this tool again
+        after creation to revise the plan. An empty target list is allowed only
+        with a non-empty note explaining why no rank movement is intended.
+        Re-planning consumes no budget but increments the plan revision count.
+        """
+
+        _require_active(run)
+        clean_note = note.strip()
+        if not targets and not clean_note:
+            raise ToolException(
+                "An empty rank-target plan requires a non-empty note explaining why "
+                "no rank movement is intended."
+            )
+        resolved: list[RankTarget] = []
+        seen: set[tuple[str, str]] = set()
+        for target in targets:
+            character_id = _resolve_character_id(draft.bible, target.character_id)
+            intimacy_id = _resolve_intimacy_id(draft.bible, character_id, target.intimacy_id)
+            key = (character_id, intimacy_id)
+            if key in seen:
+                raise ToolException(
+                    f"Duplicate rank target for character {character_id}, intimacy {intimacy_id}."
+                )
+            seen.add(key)
+            resolved.append(
+                RankTarget(
+                    character_id=character_id,
+                    intimacy_id=intimacy_id,
+                    target_rank=target.target_rank,
+                )
+            )
+        if run.rank_targets is not None:
+            run.rank_target_revisions += 1
+        run.rank_targets = resolved
+        run.rank_targets_note = clean_note
+        action = (
+            f"Revised rank-target plan (revision {run.rank_target_revisions})."
+            if run.rank_target_revisions
+            else "Declared rank-target plan."
+        )
+        return "\n".join([action, *_write_feedback_lines(run)])
+
+    @tool
     def add_draft_event(
         title: str,
         description: str = "",
@@ -741,6 +923,7 @@ def create_plot_draft_toolset(
         """
 
         _require_active(run)
+        _require_plan(run)
         _require_new_event_budget(run)
         hints = _signals_as_hints(signals or [])
         ranks_before = _ranks_for(draft.bible, _hint_character_ids(draft.bible, hints))
@@ -763,7 +946,7 @@ def create_plot_draft_toolset(
         lines.append(_budget_line(run))
         lines.extend(_interpretation_report(draft.bible, results, errors, ranks_before))
         lines.extend(_stale_note(draft, ()))
-        lines.extend(_drift_note(run))
+        lines.extend(_write_feedback_lines(run))
         return "\n".join(lines)
 
     @tool
@@ -788,6 +971,7 @@ def create_plot_draft_toolset(
         """
 
         _require_active(run)
+        _require_plan(run)
         _require_new_event_budget(run)
         hints = _signals_as_hints(signals or [])
         ranks_before = _ranks_for(draft.bible, _hint_character_ids(draft.bible, hints))
@@ -824,7 +1008,7 @@ def create_plot_draft_toolset(
         lines.append(_budget_line(run))
         lines.extend(_interpretation_report(draft.bible, results, errors, ranks_before))
         lines.extend(_stale_note(draft, stale_added))
-        lines.extend(_drift_note(run))
+        lines.extend(_write_feedback_lines(run))
         return "\n".join(lines)
 
     @tool
@@ -847,6 +1031,7 @@ def create_plot_draft_toolset(
         """
 
         _require_active(run)
+        _require_plan(run)
         resolved_id = _resolve_event_id(draft.bible, event_id)
         _require_editable(run, resolved_id)
         event = draft.bible.get_event(resolved_id)
@@ -875,7 +1060,7 @@ def create_plot_draft_toolset(
         lines.append(_budget_line(run))
         lines.extend(_interpretation_report(draft.bible, results, errors, ranks_before))
         lines.extend(_stale_note(draft, stale_added))
-        lines.extend(_drift_note(run))
+        lines.extend(_write_feedback_lines(run))
         return "\n".join(lines)
 
     @tool
@@ -887,6 +1072,7 @@ def create_plot_draft_toolset(
         """
 
         _require_active(run)
+        _require_plan(run)
         resolved_id = _resolve_event_id(draft.bible, event_id)
         _require_editable(run, resolved_id)
         try:
@@ -896,7 +1082,7 @@ def create_plot_draft_toolset(
         stale_added = draft.steps[-1].stale_added
         lines = [f"Deleted draft event '{event.title or 'Untitled'}' (id: {resolved_id})."]
         lines.extend(_stale_note(draft, stale_added))
-        lines.extend(_drift_note(run))
+        lines.extend(_write_feedback_lines(run))
         return "\n".join(lines)
 
     @tool
@@ -915,6 +1101,7 @@ def create_plot_draft_toolset(
         """
 
         _require_active(run)
+        _require_plan(run)
         if not add and not remove_relation_ids:
             raise ToolException("Pass at least one relation to add or remove.")
         report: list[str] = []
@@ -962,7 +1149,7 @@ def create_plot_draft_toolset(
             )
         lines = ["Relation edits:", *report]
         lines.extend(_stale_note(draft, tuple(dict.fromkeys(stale))))
-        lines.extend(_drift_note(run))
+        lines.extend(_write_feedback_lines(run))
         return "\n".join(lines)
 
     @tool
@@ -1074,6 +1261,7 @@ def create_plot_draft_toolset(
         """
 
         _require_active(run)
+        _require_plan(run)
         if not rationale.strip():
             raise ToolException("A nudge requires a non-empty rationale.")
         resolved_event = _resolve_event_id(draft.bible, event_id)
@@ -1132,7 +1320,7 @@ def create_plot_draft_toolset(
                 [resolved_intimacy],
             )
         )
-        lines.extend(_drift_note(run))
+        lines.extend(_write_feedback_lines(run))
         return "\n".join(lines)
 
     @tool
@@ -1145,6 +1333,7 @@ def create_plot_draft_toolset(
         """
 
         _require_active(run)
+        _require_plan(run)
         if not interpretation.strip():
             raise ToolException("Pass a non-empty interpretation text.")
         resolved_event = _resolve_event_id(draft.bible, event_id)
@@ -1164,10 +1353,12 @@ def create_plot_draft_toolset(
             f"Reworded signal on [{resolved_event}] for {resolved_character}",
             (resolved_event,),
         )
-        return (
+        lines = [
             f"Reworded the signal on event {resolved_event} for {resolved_character}. "
             "Rank is unchanged; a later re-interpretation will replace this wording."
-        )
+        ]
+        lines.extend(_write_feedback_lines(run))
+        return "\n".join(lines)
 
     @tool
     def reword_evidence_rationale(
@@ -1186,6 +1377,7 @@ def create_plot_draft_toolset(
         """
 
         _require_active(run)
+        _require_plan(run)
         if not rationale.strip():
             raise ToolException("Pass a non-empty rationale.")
         resolved_event = _resolve_event_id(draft.bible, event_id)
@@ -1227,10 +1419,12 @@ def create_plot_draft_toolset(
             f"Reworded evidence rationale for {resolved_intimacy} on [{resolved_event}]",
             (resolved_event,),
         )
-        return (
+        lines = [
             f"Reworded the {resolved_intimacy} evidence rationale on event {resolved_event}. "
             "Rank is unchanged."
-        )
+        ]
+        lines.extend(_write_feedback_lines(run))
+        return "\n".join(lines)
 
     @tool
     def refresh_interpretations() -> str:
@@ -1246,11 +1440,12 @@ def create_plot_draft_toolset(
         """
 
         _require_active(run)
+        _require_plan(run)
         from app.graphs.intimacy_interpretation import apply_interpretation_to_bible
 
         stale = draft.stale_event_ids
         if not stale:
-            return "No stale events to refresh."
+            return "\n".join(["No stale events to refresh.", *_write_feedback_lines(run)])
         ordered = [event for event in draft.chronology() if event.id in stale]
         lines = ["Refreshed stale interpretations:"]
         refreshed: list[str] = []
@@ -1294,7 +1489,7 @@ def create_plot_draft_toolset(
                 tuple(refreshed),
             )
         lines.append(_budget_line(run))
-        lines.extend(_drift_note(run))
+        lines.extend(_write_feedback_lines(run))
         return "\n".join(lines)
 
     @tool
@@ -1378,18 +1573,43 @@ def create_plot_draft_toolset(
         return "\n".join(lines)
 
     @tool
-    def finish_plot(summary: str) -> str:
+    def finish_plot(summary: str, unmet_targets_note: str = "") -> str:
         """Finish the plot run successfully. Terminal: no draft edits afterwards.
 
         Call once the briefing's goals are met. `summary` describes what was
-        drafted and why it satisfies the briefing. Refresh stale
-        interpretations first; unrepaired staleness is reported as a warning.
+        drafted and why it satisfies the briefing. If declared rank targets
+        remain unmet, either keep drafting, revise the target plan, or pass a
+        non-empty `unmet_targets_note` acknowledging why the misses remain;
+        acknowledged misses are included in the measured gap report. Refresh
+        stale interpretations first; unrepaired staleness is reported as a
+        warning.
         """
 
         _require_active(run)
+        _require_plan(run)
         if not summary.strip():
             raise ToolException("Pass a non-empty summary of the drafted plot.")
-        run.result = _build_result(run, status="completed", summary=summary.strip())
+        unmet = _unmet_rank_targets(run)
+        acknowledgement = unmet_targets_note.strip()
+        if unmet and not acknowledgement:
+            misses = "; ".join(
+                f"{report.character_name} [{report.character_id}] "
+                f"{report.intimacy_text or report.intimacy_id} [{report.intimacy_id}] "
+                f"target {report.target_rank}, current {report.current_rank}"
+                for report in unmet
+            )
+            raise ToolException(
+                "Rank targets remain unmet: "
+                + misses
+                + ". Add or strengthen events, revise plan_rank_targets, or pass a non-empty "
+                "unmet_targets_note to acknowledge the misses."
+            )
+        run.result = _build_result(
+            run,
+            status="completed",
+            summary=summary.strip(),
+            gap_report=_rank_target_gap_reports(unmet, acknowledgement),
+        )
         lines = [
             "Plot run completed.",
             f"Drafted events: {', '.join(run.result.drafted_event_ids) or '(none)'}",
@@ -1400,6 +1620,7 @@ def create_plot_draft_toolset(
                 "WARNING: stale interpretations were not refreshed: "
                 + ", ".join(run.result.stale_event_ids)
             )
+        lines.extend(_rank_target_lines(run))
         lines.extend(run.result.drift_report)
         return "\n".join(lines)
 
@@ -1460,12 +1681,14 @@ def create_plot_draft_toolset(
                 f"{item.threshold_distance}); target: {item.target}"
                 + (f"; conflict: {item.conflict}" if item.conflict else "")
             )
+        lines.extend(_rank_target_lines(run))
         lines.extend(run.result.drift_report)
         return "\n".join(lines)
 
     toolset = PlotDraftToolset(
         run=run,
         tools=[
+            plan_rank_targets,
             add_draft_event,
             insert_draft_event,
             update_draft_event,

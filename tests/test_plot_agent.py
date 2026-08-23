@@ -150,11 +150,16 @@ def _models() -> dict[str, Any]:
 
 
 def _toolset(draft: PlotDraft) -> PlotDraftToolset:
-    return create_plot_draft_toolset(
+    toolset = create_plot_draft_toolset(
         draft,
         PlotBudget(max_new_events=5, max_reinterpretation_runs=5),
         models=_models(),
     )
+    toolset.tool("plan_rank_targets").func(
+        targets=[],
+        note="This middleware test does not intend rank movement.",
+    )
+    return toolset
 
 
 _CALL_COUNTER = iter(range(10_000))
@@ -299,6 +304,12 @@ def test_run_plot_agent_happy_path_returns_completed_result(isolated_world: Worl
     fake_model = ToolAwareFakeChatModel(
         messages=iter(
             [
+                _tool_call_message(
+                    (
+                        "plan_rank_targets",
+                        {"targets": [], "note": "No rank movement is intended."},
+                    )
+                ),
                 _tool_call_message(("add_draft_event", _add_alley_args())),
                 _tool_call_message(("finish_plot", {"summary": "Mira's wariness deepens."})),
                 AIMessage(content="Done."),
@@ -376,6 +387,12 @@ def test_run_plot_agent_nudges_once_then_accepts_finish(isolated_world: World) -
         messages=iter(
             [
                 AIMessage(content="I believe the draft already satisfies the briefing."),
+                _tool_call_message(
+                    (
+                        "plan_rank_targets",
+                        {"targets": [], "note": "No rank movement is needed."},
+                    )
+                ),
                 _tool_call_message(("finish_plot", {"summary": "Nothing needed changing."})),
                 AIMessage(content="Done."),
             ]
@@ -472,3 +489,9 @@ def test_build_plot_agent_appends_guidance_to_system_prompt(isolated_world: Worl
     assert isinstance(recorded[0], SystemMessage)
     assert recorded[0].content.startswith(PLOT_AGENT_SYSTEM_PROMPT)
     assert "Do not change Mira's relationship to the war." in recorded[0].content
+
+
+def test_plot_agent_prompt_requires_rank_target_planning() -> None:
+    assert "Plan rank movement first" in PLOT_AGENT_SYSTEM_PROMPT
+    assert "plan_rank_targets" in PLOT_AGENT_SYSTEM_PROMPT
+    assert "unmet_targets_note" in PLOT_AGENT_SYSTEM_PROMPT

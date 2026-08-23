@@ -16,7 +16,7 @@ from app.graphs.jobs import get_job_manager
 from app.graphs.scene_workflow import structured_fake_model
 from app.models.config import INTIMACY_ANALYZE_NODE_ID, INTIMACY_REVIEW_NODE_ID
 from app.tools import WRITING_TOOLS
-from app.tools.plot_draft import PinnedIntimacy, create_plot_draft_toolset
+from app.tools.plot_draft import PinnedIntimacy, RankTarget, create_plot_draft_toolset
 from app.tools.plot_planning import plan_plot
 from app.world.models import (
     Character,
@@ -106,6 +106,21 @@ def _stub_run_plot_agent(outcome: str):
         toolset = create_plot_draft_toolset(
             draft, budget, models=_models(), pins=pins, revise_range=revise_range
         )
+        if outcome == "target_hit":
+            toolset.tool("plan_rank_targets").func(
+                targets=[
+                    RankTarget(
+                        character_id="char_mira",
+                        intimacy_id="intim_wary",
+                        target_rank="minor",
+                    )
+                ]
+            )
+        else:
+            toolset.tool("plan_rank_targets").func(
+                targets=[],
+                note="This stubbed run does not intend rank movement.",
+            )
         if outcome == "completed":
             toolset.tool("add_draft_event").func(
                 title="The alley",
@@ -113,7 +128,7 @@ def _stub_run_plot_agent(outcome: str):
                 signals=[Signal(character_id="char_mira", interpretation="Trouble.")],
             )
             toolset.tool("finish_plot").func(summary="Mira's wariness deepens.")
-        elif outcome == "no_changes":
+        elif outcome in {"no_changes", "target_hit"}:
             toolset.tool("finish_plot").func(summary="The timeline already fits the goal.")
         else:
             toolset.tool("bail_out").func(
@@ -188,6 +203,23 @@ def test_completed_run_with_no_steps_commits_nothing(
 
     assert "no changes" in result
     assert len(isolated_world.story_bible.timeline) == 2
+
+
+def test_plan_plot_renders_rank_target_scoreboard(
+    isolated_world: World, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _seed_world(isolated_world)
+    monkeypatch.setattr(plot_agent_module, "run_plot_agent", _stub_run_plot_agent("target_hit"))
+
+    result = plan_plot.func(
+        briefing="Keep Mira's current wariness rank.",
+        max_new_events=1,
+        max_reinterpretation_runs=1,
+    )
+
+    assert "Rank targets (plan revisions: 0)" in result
+    assert "HIT Mira [char_mira]" in result
+    assert "target minor; current minor" in result
 
 
 def test_plan_plot_rejects_concurrent_runs(
@@ -296,3 +328,4 @@ def test_chat_prompt_describes_the_plan_plot_contract() -> None:
     assert "plan_plot" in DEFAULT_SYSTEM_PROMPT
     assert "revise_range" in DEFAULT_SYSTEM_PROMPT
     assert "pinned_intimacies" in DEFAULT_SYSTEM_PROMPT
+    assert "measured rank targets" in DEFAULT_SYSTEM_PROMPT

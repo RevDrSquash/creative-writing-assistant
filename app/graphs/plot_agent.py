@@ -60,12 +60,18 @@ do touches the live world; the caller commits the draft only if you finish succe
 How to work:
 - Orient first: read_draft_timeline and read_draft_state show the current draft, derived
   ranks, distance-to-threshold, and any stale interpretations.
+- Plan rank movement first: scene writing sees intimacy ranks, not movement within a rank
+  band, so drama must land as crossings to affect downstream scenes. Before any draft write,
+  call plan_rank_targets with the existing intimacies and final ranks the briefing should
+  reach. If no rank movement is intended, declare an empty target list with a note. Watch the
+  target scoreboard after every write. Re-plan deliberately when the story pivots or after a
+  new intimacy is minted; do not silently move the goalposts.
 - Draft one step at a time. Write tools (add_draft_event, insert_draft_event,
   update_draft_event, delete_draft_event, edit_draft_relations, nudge_intimacy,
-  reword_signal, reword_evidence_rationale, refresh_interpretations, finish_plot,
-  bail_out) are limited to one per message; batching several is rejected. Each write's
-  result carries the interpretation feedback (reviewed evidence, rank movements,
-  distance-to-threshold) — read it before choosing the next step.
+  reword_signal, reword_evidence_rationale, refresh_interpretations, plan_rank_targets,
+  finish_plot, bail_out) are limited to one per message; batching several is rejected. Each
+  write's result carries interpretation feedback and the rank-target scoreboard — read it
+  before choosing the next step.
 - Use explore_candidates to compare 2-4 candidate event chains speculatively before
   committing to one. Adopt a chain (or a prefix of one) by re-issuing its events through
   the write tools, or discard all of them. It consumes no budget.
@@ -85,13 +91,15 @@ How to work:
 - Watch the budget line in every write result. When it runs low, converge or bail out.
 
 Ending the run (mandatory): every run ends with exactly one terminal call —
-finish_plot(summary) when the briefing's goals are met, or bail_out(reason, explanation,
-gaps) when they cannot be. Bail out when the budget cannot plausibly close the measured
-gap ('budget'), when closing it would contradict the briefing's arc shape or established
-characterization ('judgment'), or when a preservation constraint conflicts with the
-target ('overconstrained' — name the conflict). Quantify unmet arcs with the gaps
-parameter so the report is measured, not vibes. Never stop responding without a
-terminal call."""
+finish_plot(summary, unmet_targets_note) when the briefing's goals are met, or
+bail_out(reason, explanation, gaps) when they cannot be. finish_plot rejects unmet rank
+targets unless you strengthen the draft, revise the target plan, or explicitly acknowledge
+the misses in unmet_targets_note. Bail out when the budget cannot plausibly close the
+measured gap ('budget'), when closing it would contradict the briefing's arc shape or
+established characterization ('judgment'), or when a preservation constraint conflicts
+with the target ('overconstrained' — name the conflict). Quantify unmet arcs with the gaps
+parameter so the report is measured, not vibes. Never stop responding without a terminal
+call."""
 
 _FINALIZE_NUDGE = (
     "You stopped without calling a terminal tool. Call finish_plot if the briefing's "

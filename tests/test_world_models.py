@@ -595,9 +595,9 @@ def test_derive_state_applies_evidence_rank_and_keeps_dormant_intimacies() -> No
     after_proof = derive_state_at(bible, 1).characters[character.id]
     after_erosion = derive_state(bible).characters[character.id]
 
-    # One identity-shaking support promotes minor to major, not defining.
-    # A later identity-shaking contradiction then demotes major to minor.
-    assert after_proof.intimacies[0].strength == "major"
+    # One identity-shaking support promotes only one step, minor to moderate.
+    # A later identity-shaking contradiction then demotes moderate to minor.
+    assert after_proof.intimacies[0].strength == "moderate"
     assert after_erosion.intimacies[0].strength == "minor"
     assert after_erosion.intimacies[0].id == intimacy.id
 
@@ -663,7 +663,7 @@ def test_derive_state_recomputes_evidence_rank_at_inserted_event() -> None:
                     IntimacyEvidence(
                         intimacy_id=intimacy.id,
                         direction="contradicts",
-                        strength=3,
+                        strength=5,
                         rationale="A mid-timeline crack.",
                     )
                 ],
@@ -686,9 +686,9 @@ def test_derive_state_recomputes_evidence_rank_at_inserted_event() -> None:
 
     # Replay recomputes over the current order: the inserted contradiction is
     # enough to keep the later identity-shaking support from promoting.
-    assert after_insert.intimacies[0].strength == "minor"
+    assert after_insert.intimacies[0].strength == "dormant"
     assert after_both.intimacies[0].strength == "minor"
-    assert without_insert.intimacies[0].strength == "major"
+    assert without_insert.intimacies[0].strength == "moderate"
 
 
 def test_derive_state_same_signal_add_and_evidence() -> None:

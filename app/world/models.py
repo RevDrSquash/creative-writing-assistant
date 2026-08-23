@@ -20,8 +20,8 @@ from pydantic import BaseModel, Field
 
 SCHEMA_VERSION = 9
 
-IntimacyStrength = Literal["minor", "major", "defining"]
-DerivedIntimacyStrength = Literal["dormant", "minor", "major", "defining"]
+IntimacyStrength = Literal["minor", "moderate", "major", "defining"]
+DerivedIntimacyStrength = Literal["dormant", "minor", "moderate", "major", "defining"]
 EvidenceDirection = Literal["supports", "contradicts"]
 EvidenceStrength = Literal[1, 2, 3, 4, 5]
 EvidenceNovelty = Literal["novel", "duplicate"]
@@ -30,10 +30,11 @@ ReviewDecision = Literal["approved", "revised", "rejected"]
 WorldStateKind = Literal["pressure", "thread", "consequence"]
 EventRelationKind = Literal["follows", "directly_follows", "depends_on", "during"]
 
-INTIMACY_STRENGTHS: tuple[IntimacyStrength, ...] = ("minor", "major", "defining")
+INTIMACY_STRENGTHS: tuple[IntimacyStrength, ...] = ("minor", "moderate", "major", "defining")
 DERIVED_INTIMACY_STRENGTHS: tuple[DerivedIntimacyStrength, ...] = (
     "dormant",
     "minor",
+    "moderate",
     "major",
     "defining",
 )
@@ -131,8 +132,9 @@ def utc_now() -> datetime:
 class Intimacy(BaseModel):
     """A character-subjective belief, attachment, value, fear, or desire.
 
-    Stored baseline and creation records use ``minor`` / ``major`` / ``defining``.
-    Replay may derive ``dormant`` when accumulated evidence erodes below ``minor``.
+    Stored baseline and creation records use ``minor`` / ``moderate`` / ``major`` /
+    ``defining``. Replay may derive ``dormant`` when accumulated evidence erodes below
+    ``minor``.
     """
 
     id: str = Field(default_factory=new_id)

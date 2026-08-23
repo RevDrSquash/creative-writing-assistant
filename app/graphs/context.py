@@ -43,6 +43,7 @@ the princess".
 Each intimacy has a strength that scales its influence on behavior:
 - dormant: no current strength; the intimacy and its evidence history remain
 - minor: colors reactions but is easily overridden
+- moderate: a steady presence; shapes reactions in its domain but yields to major drives
 - major: regularly shapes decisions and emotional responses
 - defining: a core driver; other motives yield to it when they conflict
 Rank is derived from accumulated signal evidence during replay, not stored.
@@ -96,8 +97,9 @@ Timeline authoring (plan_plot):
   a time in a sandbox, interprets each event as it goes, and commits all-or-nothing.
 - Write the briefing with the goal and each target character arc as a shaped trajectory
   with waypoints (for example "distrust of authority deepens through the midpoint, then
-  reverses to trust by the end"), never just an endpoint. Gather ids with the read tools
-  first.
+  reverses to trust by the end"), never just an endpoint. Express desired arcs strongly
+  enough to imply intended rank movement; the sub-agent translates that movement into
+  measured rank targets. Gather ids with the read tools first.
 - Choose the scope: append (continue the timeline) or revise_range with start_event_id
   and end_event_id (rework that stretch; events outside it stay read-only).
 - Pass pinned_intimacies for character intimacies that must not change and
