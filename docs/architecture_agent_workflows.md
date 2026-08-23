@@ -250,6 +250,14 @@ returns an `InterpretationResult` and **does not mutate the world**. Persistence
 event tools, the event-editor re-run button, and any future plot-editor loop — invocation
 is not coupled to NiceGUI handlers.
 
+Both stages can target an arbitrary `StoryBible` rather than the live world:
+`run_intimacy_interpretation(..., bible=...)` assembles context, validates, and reviews
+against the passed bible (default: live world), and `apply_interpretation_to_bible(bible,
+result)` writes a reviewed result into a passed bible in place with no persistence —
+`apply_interpretation(result)` is the live-world path that wraps it in
+`world_transaction()`. This is what lets the plot sub-agent interpret and apply events
+inside a `PlotDraft` sandbox (`app/world/draft.py`) before committing.
+
 The graph is an enforced sequence with no conditional routing:
 
 1. **`assemble_context` (deterministic, no LLM).** The event, the character's identity,

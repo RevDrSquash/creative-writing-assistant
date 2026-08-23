@@ -48,10 +48,15 @@ The app is a local-first Python writing workspace built around one in-memory `Wo
     `world_transaction()`: the lock is held across the whole mutate+save, and the in-memory
     mutation is rolled back if the save fails, so memory and disk never diverge. Without this, a
     failed save left a phantom mutation in memory that the model's retry then duplicated.
-  - The transaction is per tool call. If a future workflow needs all-or-nothing semantics across
-    many edits (e.g. a subagent run), build that as a run-scoped checkpoint/commit on the store;
-    it composes with the per-call transactions and does not require copy-on-write of the
-    singleton, which would break the UI's direct object bindings.
+  - The transaction is per tool call. For all-or-nothing semantics across many event edits
+    (the plot sub-agent run), `app/world/draft.py` provides `PlotDraft`: a sandboxed deep copy
+    of the Story Bible with validated event/relation operations (including an atomic
+    insert-between rewire), a step log with backtracking, and stale-interpretation tracking.
+    Its single `commit()` replaces the live `timeline` and `event_relations` inside one
+    `world_transaction()`; it requires the coarse `story_bible` `JobManager` claim
+    (`hold_story_bible_claim` in `app/graphs/jobs.py`) and refuses to commit if the live events
+    changed since the draft forked. The `World` singleton itself is never copy-on-write, so the
+    UI's direct object bindings stay valid.
   - UI form edits mutate bound objects directly and then call `save_world()`; they get the save
     lock but not rollback (see known issues).
 

@@ -7,6 +7,7 @@ import pytest
 from app.graphs.intimacy_interpretation import (
     NO_RELEVANT_CHARACTERS_MESSAGE,
     apply_interpretation,
+    apply_interpretation_to_bible,
     relevant_character_ids,
     run_and_apply_intimacy_interpretation,
 )
@@ -293,6 +294,30 @@ def test_apply_rerun_replaces_stale_structural_effects(isolated_world: World) ->
     assert "Owes Kael a debt" in texts
     assert "A passing fancy" not in texts
     assert "Wary of outsiders" in texts
+
+
+def test_apply_to_bible_writes_passed_bible_without_touching_world(
+    isolated_world: World,
+) -> None:
+    isolated_world.story_bible.characters.append(_character("Mira", "char_mira"))
+    isolated_world.story_bible.timeline.append(
+        Event(
+            id="evt_look",
+            title="A look",
+            signals=[Signal(character_id="char_mira", interpretation="Hint")],
+        )
+    )
+    draft = isolated_world.story_bible.model_copy(deep=True)
+    before = isolated_world.model_dump(mode="json")
+
+    apply_interpretation_to_bible(draft, _approved_result("evt_look", "char_mira"))
+
+    draft_signal = draft.timeline[0].signals[0]
+    assert draft_signal.interpretation == "They meant it."
+    assert draft_signal.review is not None
+    assert draft_signal.review.decision == "approved"
+    assert isolated_world.model_dump(mode="json") == before
+    assert isolated_world.story_bible.timeline[0].signals[0].interpretation == "Hint"
 
 
 def test_apply_failed_save_rolls_back_memory(
