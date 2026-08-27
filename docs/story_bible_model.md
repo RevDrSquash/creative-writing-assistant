@@ -440,7 +440,11 @@ renderer so scoped character context cannot leak late-story state into an earlie
 Agent tools provide simple CRUD over the editable entities (narrative style fields, world facts,
 baseline world state, characters, events with world-state effects and signals, event
 relationships) plus read access to derived state at any timeline position. Tools mutate the in-memory `World` and write through
-to disk, the same as user edits via forms.
+to disk, the same as user edits via forms. Write tools that take several sibling
+prose fields (`update_narrative_style`, `upsert_character`) treat each field as its
+own JSON argument and reject leftover tool-call markup (XML `<parameter>` tags or
+sibling field tags concatenated into an earlier string) with `ToolException` so the
+model can retry instead of persisting the leak.
 
 `read_character_arc(character_id, start_event_id="", end_event_id="")` returns the formatted
 arc for a character. Start state is entering the window (before the start event); end state

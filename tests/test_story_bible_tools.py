@@ -181,6 +181,46 @@ def test_update_narrative_style_persists(isolated_world: World) -> None:
     assert bible.writing_style == ""
 
 
+def test_update_narrative_style_schema_describes_separate_prose_fields() -> None:
+    schema = update_narrative_style.get_input_schema().model_json_schema()
+    for field in ("premise", "tone", "themes", "writing_style"):
+        description = schema["properties"][field].get("description", "")
+        assert "plain prose" in description.lower()
+        assert "own JSON argument" in description
+
+
+def test_update_narrative_style_rejects_leaked_parameter_markup(
+    isolated_world: World,
+) -> None:
+    leaked = (
+        "Power, consent, and the cost of wanting.\n</themes>\n"
+        '<parameter name="writing_style">Close third, present tense.'
+    )
+    with pytest.raises(ToolException, match="leftover tool-call markup"):
+        update_narrative_style.func(themes=leaked)
+
+    bible = isolated_world.story_bible
+    assert bible.themes == ""
+    assert bible.writing_style == ""
+
+
+def test_update_narrative_style_rejects_sibling_field_xml_tags(
+    isolated_world: World,
+) -> None:
+    with pytest.raises(ToolException, match="leftover tool-call markup"):
+        update_narrative_style.func(tone="Noir comedy.</writing_style>")
+
+    assert isolated_world.story_bible.tone == ""
+
+
+def test_upsert_character_rejects_leaked_parameter_markup(isolated_world: World) -> None:
+    leaked = 'Grew up in the Reach.</parameter>\n<parameter name="voice">Soft, precise.'
+    with pytest.raises(ToolException, match="leftover tool-call markup"):
+        upsert_character.func(name="Mira", background=leaked)
+
+    assert isolated_world.story_bible.characters == []
+
+
 def test_world_fact_crud(isolated_world: World) -> None:
     result = upsert_world_fact.func("The Reach", "A coastal region", tags=["region"])
     fact = isolated_world.story_bible.world_facts[0]
