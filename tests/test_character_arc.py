@@ -313,11 +313,11 @@ def test_transitions_include_derived_rank_crossing() -> None:
     assert arc.transitions[0].changes == ("Evidence supports Trusts the council (strength 3)",)
     assert arc.transitions[1].changes == (
         "Evidence supports Trusts the council (strength 3)",
-        "Derived rank Trusts the council: minor to major",
+        "Derived rank Trusts the council: minor to moderate",
     )
-    assert arc.end_state.intimacies[0].strength == "major"
+    assert arc.end_state.intimacies[0].strength == "moderate"
     rendered = format_character_arc(arc)
-    assert "from defining" in rendered
+    assert "from major" in rendered
     assert "above minor" in rendered
 
 

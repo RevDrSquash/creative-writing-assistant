@@ -7,6 +7,7 @@ result. See ``docs/architecture_agent_workflows.md``.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Any
 
 from langchain_core.language_models import BaseChatModel
@@ -149,14 +150,21 @@ later. Existing signals on this event are hints, not canon."""
 
 def build_intimacy_interpreter_graph(
     models: dict[str, BaseChatModel] | None = None,
+    *,
+    bible: StoryBible | None = None,
 ) -> CompiledStateGraph:
-    """Build the enforced per-character intimacy interpretation graph."""
+    """Build the enforced per-character intimacy interpretation graph.
 
+    ``bible`` targets the run at an arbitrary Story Bible (for example a plot
+    draft); the default reads the live world.
+    """
+
+    source = _bible_source(bible)
     graph = StateGraph(IntimacyWorkflowState)
-    graph.add_node("assemble_context", _assemble_context_node())
+    graph.add_node("assemble_context", _assemble_context_node(source))
     graph.add_node("analyze", _analyze_node(models))
-    graph.add_node("validate", _validate_node())
-    graph.add_node("review", _review_node(models))
+    graph.add_node("validate", _validate_node(source))
+    graph.add_node("review", _review_node(models, source))
 
     graph.add_edge(START, "assemble_context")
     graph.add_edge("assemble_context", "analyze")
@@ -171,13 +179,18 @@ def run_intimacy_interpretation(
     character_id: str,
     *,
     models: dict[str, BaseChatModel] | None = None,
+    bible: StoryBible | None = None,
 ) -> InterpretationResult:
-    """Run interpretation for one character and one event. Does not mutate the world."""
+    """Run interpretation for one character and one event. Does not mutate any bible.
 
-    bible = get_world().story_bible
-    _require_event(bible, event_id)
-    _require_character(bible, character_id)
-    workflow = build_intimacy_interpreter_graph(models=models)
+    ``bible`` targets the run at an arbitrary Story Bible (for example a plot
+    draft); the default is the live world.
+    """
+
+    target = bible if bible is not None else get_world().story_bible
+    _require_event(target, event_id)
+    _require_character(target, character_id)
+    workflow = build_intimacy_interpreter_graph(models=models, bible=bible)
     final = workflow.invoke({"event_id": event_id, "character_id": character_id})
     payload = final.get("result")
     if not payload:
@@ -319,11 +332,18 @@ def validate_analysis(
     )
 
 
-def _assemble_context_node() -> Any:
+def _bible_source(bible: StoryBible | None) -> Callable[[], StoryBible]:
+    """Return a per-node accessor for the target bible (live world by default)."""
+
+    if bible is None:
+        return lambda: get_world().story_bible
+    return lambda: bible
+
+
+def _assemble_context_node(source: Callable[[], StoryBible]) -> Any:
     def node(state: IntimacyWorkflowState) -> dict[str, Any]:
-        bible = get_world().story_bible
         return {
-            "context": assemble_intimacy_context(bible, state["event_id"], state["character_id"])
+            "context": assemble_intimacy_context(source(), state["event_id"], state["character_id"])
         }
 
     return node
@@ -348,17 +368,16 @@ def _analyze_node(models: dict[str, BaseChatModel] | None) -> Any:
     return node
 
 
-def _validate_node() -> Any:
+def _validate_node(source: Callable[[], StoryBible]) -> Any:
     def node(state: IntimacyWorkflowState) -> dict[str, Any]:
-        bible = get_world().story_bible
         analysis = AnalysisOutput.model_validate(state.get("analysis") or {})
-        validated = validate_analysis(bible, state["character_id"], analysis)
+        validated = validate_analysis(source(), state["character_id"], analysis)
         return {"validated": validated.model_dump()}
 
     return node
 
 
-def _review_node(models: dict[str, BaseChatModel] | None) -> Any:
+def _review_node(models: dict[str, BaseChatModel] | None, source: Callable[[], StoryBible]) -> Any:
     def node(state: IntimacyWorkflowState) -> dict[str, Any]:
         validated = ValidatedProposal.model_validate(state.get("validated") or {})
         prompt = (
@@ -382,7 +401,7 @@ def _review_node(models: dict[str, BaseChatModel] | None) -> Any:
             system=_REVIEW_SYSTEM_PROMPT,
         )
         result = _result_from_review(
-            get_world().story_bible,
+            source(),
             state["event_id"],
             state["character_id"],
             state.get("context", ""),

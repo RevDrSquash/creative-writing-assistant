@@ -54,31 +54,52 @@ def test_single_ordinary_event_does_not_promote() -> None:
     assert state.rank == "minor"
     assert state.crossings == ()
     assert state.distance_to_promote is not None
-    assert state.distance_to_promote > 0
+    assert state.distance_to_promote <= 0
+    assert "score met for moderate; needs another event to cross" in format_threshold_distance(
+        state
+    )
 
 
-def test_two_distinct_meaningful_supports_promote_minor_to_major() -> None:
+def test_gated_demotion_is_annotated_not_negative() -> None:
+    state = accumulate_rank(
+        "minor",
+        [_obs(event_id="e1", strength=4, direction="contradicts", chronological_index=0)],
+    )
+
+    assert state.rank == "minor"
+    assert state.distance_to_demote is not None
+    assert state.distance_to_demote <= 0
+    rendered = format_threshold_distance(state)
+    assert "eroded to the dormant threshold; needs another event to cross" in rendered
+    assert "-" not in rendered
+
+
+def test_successive_meaningful_supports_promote_minor_to_moderate_to_major() -> None:
     state = accumulate_rank(
         "minor",
         [
             _obs(event_id="e1", strength=3, chronological_index=0, scenario_id="a"),
             _obs(event_id="e2", strength=3, chronological_index=1, scenario_id="b"),
+            _obs(event_id="e3", strength=3, chronological_index=2, scenario_id="c"),
         ],
     )
 
     assert state.rank == "major"
-    assert state.crossings[-1].previous_rank == "minor"
-    assert state.crossings[-1].new_rank == "major"
+    assert [(crossing.previous_rank, crossing.new_rank) for crossing in state.crossings] == [
+        ("minor", "moderate"),
+        ("moderate", "major"),
+    ]
     assert "e1" in {item.event_id for item in state.contributions}
     assert "e2" in {item.event_id for item in state.contributions}
+    assert "e3" in {item.event_id for item in state.contributions}
 
 
 def test_same_scenario_pair_is_reinforcement_without_promotion() -> None:
     state = accumulate_rank(
         "minor",
         [
-            _obs(event_id="e1", strength=3, chronological_index=0, scenario_id="scene"),
-            _obs(event_id="e2", strength=3, chronological_index=1, scenario_id="scene"),
+            _obs(event_id="e1", strength=2, chronological_index=0, scenario_id="scene"),
+            _obs(event_id="e2", strength=2, chronological_index=1, scenario_id="scene"),
         ],
     )
 
@@ -91,17 +112,17 @@ def test_duplicate_novelty_diminishes_weight() -> None:
     novel = accumulate_rank(
         "minor",
         [
-            _obs(event_id="e1", strength=3, chronological_index=0, scenario_id="a"),
-            _obs(event_id="e2", strength=3, chronological_index=1, scenario_id="b"),
+            _obs(event_id="e1", strength=2, chronological_index=0, scenario_id="a"),
+            _obs(event_id="e2", strength=2, chronological_index=1, scenario_id="b"),
         ],
     )
     duplicate = accumulate_rank(
         "minor",
         [
-            _obs(event_id="e1", strength=3, chronological_index=0, scenario_id="a"),
+            _obs(event_id="e1", strength=2, chronological_index=0, scenario_id="a"),
             _obs(
                 event_id="e2",
-                strength=3,
+                strength=2,
                 chronological_index=1,
                 scenario_id="b",
                 novelty="duplicate",
@@ -109,15 +130,15 @@ def test_duplicate_novelty_diminishes_weight() -> None:
         ],
     )
 
-    assert novel.rank == "major"
+    assert novel.rank == "moderate"
     assert duplicate.rank == "minor"
     assert duplicate.contributions[-1].weight < novel.contributions[-1].weight
 
 
-def test_identity_shaking_promotes_minor_but_not_to_defining() -> None:
+def test_identity_shaking_promotes_minor_one_step_to_moderate() -> None:
     state = accumulate_rank("minor", [_obs(event_id="e1", strength=5)])
 
-    assert state.rank == "major"
+    assert state.rank == "moderate"
     assert all(crossing.new_rank != "defining" for crossing in state.crossings)
 
 
@@ -156,6 +177,25 @@ def test_two_ordinary_contradictions_do_not_crack_defining() -> None:
     assert state.rank == "defining"
 
 
+def test_moderate_band_demotes_to_minor() -> None:
+    state = accumulate_rank(
+        "moderate",
+        [
+            _obs(event_id="e1", strength=2, direction="contradicts", chronological_index=0),
+            _obs(event_id="e2", strength=2, direction="contradicts", chronological_index=1),
+        ],
+    )
+
+    assert state.rank == "minor"
+    assert [(crossing.previous_rank, crossing.new_rank) for crossing in state.crossings] == [
+        ("moderate", "minor")
+    ]
+
+
+def test_defining_demotion_threshold_remains_ten() -> None:
+    assert DEMOTE_AT["defining"] == 10.0
+
+
 def test_erosion_below_minor_yields_dormant() -> None:
     state = accumulate_rank(
         "minor",
@@ -189,7 +229,7 @@ def test_distance_to_threshold_matches_constants() -> None:
 
     assert empty.distance_to_promote == PROMOTE_AT["minor"] - empty.effective_net
     assert empty.distance_to_demote == empty.effective_net - DEMOTE_AT["minor"]
-    assert "from major" in format_threshold_distance(empty)
+    assert "from moderate" in format_threshold_distance(empty)
     assert "above dormant" in format_threshold_distance(empty)
 
 
@@ -258,7 +298,7 @@ def test_replay_skips_rejected_signal_evidence() -> None:
     assert derived.intimacies[0].strength == "minor"
 
 
-def test_replay_promotes_across_distinct_events() -> None:
+def test_replay_promotes_across_successive_distinct_events() -> None:
     intimacy = Intimacy(id="intim_wary", text="Wary", strength="minor")
     character = Character(
         id="char_mira",
@@ -300,13 +340,31 @@ def test_replay_promotes_across_distinct_events() -> None:
                     )
                 ],
             ),
+            Event(
+                id="event_c",
+                title="C",
+                signals=[
+                    Signal(
+                        character_id=character.id,
+                        evidence=[
+                            IntimacyEvidence(
+                                intimacy_id=intimacy.id,
+                                direction="supports",
+                                strength=3,
+                            )
+                        ],
+                    )
+                ],
+            ),
         ],
     )
 
     after_first = derive_state_at(bible, 1).characters[character.id]
-    after_both = derive_state(bible).characters[character.id]
+    after_two = derive_state_at(bible, 2).characters[character.id]
+    after_three = derive_state(bible).characters[character.id]
     assert after_first.intimacies[0].strength == "minor"
-    assert after_both.intimacies[0].strength == "major"
+    assert after_two.intimacies[0].strength == "moderate"
+    assert after_three.intimacies[0].strength == "major"
 
     explained = explain_intimacies(bible, character.id)
     assert explained[intimacy.id].rank == "major"

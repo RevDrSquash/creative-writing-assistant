@@ -5,7 +5,8 @@ from __future__ import annotations
 import asyncio
 import threading
 import uuid
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterator, Sequence
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Literal
@@ -16,11 +17,14 @@ from app.graphs.intimacy_interpretation import NO_RELEVANT_CHARACTERS_MESSAGE
 from app.persistence import ChatConversation, get_chat_conversation
 from app.world.scene import resolve_scene, set_scene_text
 
-JobKind = Literal["scene_generation", "chat_turn", "intimacy_interpretation"]
+JobKind = Literal["scene_generation", "chat_turn", "intimacy_interpretation", "plot_draft"]
 JobStatus = Literal["running", "finished", "failed"]
 QueueStatus = Literal["pending", "running", "finished", "failed", "blocked"]
 
 CHAT_CLAIM = "chat"
+# Coarse claim over the whole story bible's events, held by a plot-draft run so
+# a PlotDraft commit's wholesale replacement cannot race other event writers.
+STORY_BIBLE_CLAIM = "story_bible"
 MAX_PARALLEL_SCENE_GENERATIONS = 3
 
 
@@ -354,6 +358,34 @@ class JobManager:
                 empty_reason=empty_reason,
                 finished_character_ids=finished,
             )
+
+    @contextmanager
+    def hold_story_bible_claim(self, label: str = "Plot draft") -> Iterator[Job]:
+        """Hold the coarse story-bible claim for the duration of a plot-draft run.
+
+        ``PlotDraft.commit()`` requires this claim so its wholesale replacement
+        of the timeline cannot race UI or background event writers. A second
+        acquisition while one is held is rejected.
+        """
+
+        with self._lock:
+            if STORY_BIBLE_CLAIM in self._claim_index:
+                msg = "The story bible is already claimed by another plot run"
+                raise RuntimeError(msg)
+            job = Job(
+                id=str(uuid.uuid4()),
+                kind="plot_draft",
+                label=label,
+                claims=[STORY_BIBLE_CLAIM],
+            )
+            self._register_job(job)
+        try:
+            yield job
+        except BaseException as exc:
+            self._finish_job(job.id, status="failed", error=str(exc))
+            raise
+        else:
+            self._finish_job(job.id, status="finished")
 
     def scene_is_claimed(self, scene_id: str) -> bool:
         """Return True when any running job claims ``scene_id``."""

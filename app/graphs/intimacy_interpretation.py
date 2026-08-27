@@ -64,42 +64,55 @@ def relevant_character_ids(world: World, event_id: str) -> list[str]:
 
 
 def apply_interpretation(result: InterpretationResult) -> None:
-    """Persist a reviewed interpretation through ``world_transaction()``.
-
-    Each run owns this signal's workflow-authored records: evidence and
-    creation/rewording effects are replaced, not merged, so a re-run cannot
-    leave stale proposals behind. Approved and revised results write them even
-    when rank will not change. Rejected results write interpretation plus
-    review metadata and clear this signal's evidence and workflow effects so
-    the event stops contributing.
-    """
+    """Persist a reviewed interpretation to the live world through ``world_transaction()``."""
 
     with world_transaction() as world:
-        event = world.story_bible.get_event(result.event_id)
-        if event is None:
-            msg = f"Event not found: {result.event_id}"
-            raise ValueError(msg)
-        if world.story_bible.get_character(result.character_id) is None:
-            msg = f"Character not found: {result.character_id}"
-            raise ValueError(msg)
+        apply_interpretation_to_bible(world.story_bible, result)
 
-        signal = _upsert_signal(event, result.character_id)
-        signal.interpretation = result.interpretation
-        signal.review = result.review
 
-        if result.review.decision == "rejected":
-            signal.evidence = []
-            _drop_workflow_effects(signal)
-            return
+def apply_interpretation_to_bible(bible: StoryBible, result: InterpretationResult) -> None:
+    """Apply a reviewed interpretation to ``bible`` in place, with no persistence.
 
-        evidence, new_intimacies = _dedupe_new_intimacies(
-            world.story_bible,
-            result.character_id,
-            result.evidence,
-            result.new_intimacies,
-        )
-        signal.evidence = evidence
-        _replace_structural_effects(signal, new_intimacies, result.rewordings)
+    ``bible`` may be any Story Bible — the live world (via
+    ``apply_interpretation``) or a plot draft's sandbox copy. Each run owns
+    this signal's workflow-authored records: interpretation-authored evidence
+    and creation/rewording effects are replaced, not merged, so a re-run cannot
+    leave stale proposals behind. Evidence authored by the plot agent
+    (``author == "plot_agent"``, the bounded nudges) is never the workflow's to
+    replace and survives re-runs. Approved and revised results write their
+    records even when rank will not change. Rejected results write
+    interpretation plus review metadata and clear this signal's
+    interpretation-authored evidence and workflow effects so the event stops
+    contributing (a rejected signal contributes nothing to replay, so surviving
+    nudges are inert until a re-run changes the verdict).
+    """
+
+    event = bible.get_event(result.event_id)
+    if event is None:
+        msg = f"Event not found: {result.event_id}"
+        raise ValueError(msg)
+    if bible.get_character(result.character_id) is None:
+        msg = f"Character not found: {result.character_id}"
+        raise ValueError(msg)
+
+    signal = _upsert_signal(event, result.character_id)
+    signal.interpretation = result.interpretation
+    signal.review = result.review
+    preserved = [entry for entry in signal.evidence if entry.author == "plot_agent"]
+
+    if result.review.decision == "rejected":
+        signal.evidence = preserved
+        _drop_workflow_effects(signal)
+        return
+
+    evidence, new_intimacies = _dedupe_new_intimacies(
+        bible,
+        result.character_id,
+        result.evidence,
+        result.new_intimacies,
+    )
+    signal.evidence = evidence + preserved
+    _replace_structural_effects(signal, new_intimacies, result.rewordings)
 
 
 def run_and_apply_intimacy_interpretation(

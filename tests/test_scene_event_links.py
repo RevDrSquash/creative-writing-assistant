@@ -45,7 +45,9 @@ def test_prune_event_links_removes_ids_from_all_blueprints(isolated_world: World
     assert isolated_world.scenes[0].blueprint.related_event_ids == []
 
 
-def test_enacted_event_select_options_excludes_elsewhere_enacted_events(isolated_world: World) -> None:
+def test_enacted_event_select_options_excludes_elsewhere_enacted_events(
+    isolated_world: World,
+) -> None:
     event_a = Event(id="event_a", title="Beat A")
     event_b = Event(id="event_b", title="Beat B")
     isolated_world.story_bible.timeline.extend([event_a, event_b])

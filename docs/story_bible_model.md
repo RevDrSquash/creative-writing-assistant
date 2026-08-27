@@ -111,8 +111,9 @@ timeline. They are validated when drafting; deleting an event prunes its ids fro
 ### Intimacy
 
 A character-subjective belief, attachment, value, fear, desire, or relationship assumption.
-Fields: `id`, `text`, and `strength` (`minor`, `major`, or `defining`). Strength defines the
-intimacy's impact on the character's behavior. Intimacies live in character baseline state.
+Fields: `id`, `text`, and `strength` (`minor`, `moderate`, `major`, or `defining`). Strength
+defines the intimacy's impact on the character's behavior. Intimacies live in character baseline
+state.
 
 An intimacy's rank at any timeline position is **derived** during replay from accumulated
 signal evidence rather than mutated by effects. Contradicting evidence erodes rank; erosion
@@ -200,7 +201,10 @@ mutations), optional `review` metadata, and `evidence_schema_version`.
 
 Each evidence entry records the affected intimacy id, a `direction` (`supports` or
 `contradicts`), an ordinal strength (1–5), a brief rationale, a `novelty` tag
-(`novel` or `duplicate`, default `novel`), and optional confidence. Structural records
+(`novel` or `duplicate`, default `novel`), optional confidence, and an `author`
+provenance tag (`interpretation`, the default, or `plot_agent` for the plot sub-agent's
+bounded nudges — capped at strength 1). Interpretation re-runs replace only
+`interpretation`-authored entries, so plot-agent nudges survive them. Structural records
 for intimacy creation and rewording remain effect-shaped (see Character-State Effects
 below); review metadata from the interpretation workflow lives on the signal, not on
 those records.
@@ -336,7 +340,7 @@ multiply that weight:
 Support and contradiction are accumulated separately (contradictory evidence is
 not cancelled away in the explanation). Standing net is `seed + support -
 contradict`, where the seed parks the baseline rank inside its hysteresis band
-(dormant 0, minor 5, major 12, defining 20).
+(dormant 0, minor 5, moderate 8.5, major 13, defining 20).
 
 **Recent momentum** is the signed total of observations from the last three
 distinct contributing events. Effective net is `standing_net + 0.25 *
@@ -351,13 +355,15 @@ Promotion (effective net ≥) and demotion (effective net ≤) are asymmetric:
 | Current rank | Promote at | Demote at |
 | --- | --- | --- |
 | dormant | 3.5 → minor | — |
-| minor | 12.0 → major | 1.5 → dormant |
-| major | 22.0 → defining | 6.0 → minor |
+| minor | 9.5 → moderate | 1.5 → dormant |
+| moderate | 15.5 → major | 5.0 → minor |
+| major | 22.0 → defining | 9.5 → moderate |
 | defining | — | 10.0 → major |
 
-Thresholds are calibrated for a lean timeline: two distinct meaningful supports
-promote minor → major; the same two in one scenario do not. Defining is
-resistant — two ordinary contradictions will not crack it.
+Thresholds are calibrated for a lean timeline: one or two strong novel beats can cross a band,
+while the 4.5–6 point hysteresis overlaps still absorb momentum jitter. Successive distinct
+meaningful supports can promote minor → moderate → major; repeats in one scenario are diminished.
+Defining is resistant — two ordinary contradictions will not crack it.
 
 Hard rules on top of the numbers:
 
@@ -379,7 +385,14 @@ signals moved the threshold and why), and the remaining distance to the next
 promotion and demotion boundaries. `explain_intimacies` / `explain_intimacies_at`
 expose this for a character at a timeline position. Character-arc markdown and
 `read_character` / `read_world_state` append the distances next to each derived
-intimacy (for example `7.0 from major, 3.5 above dormant`).
+intimacy (for example `4.5 from moderate, 3.5 above dormant`).
+
+Because the hard rules can hold a rank back even when the score has crossed a
+threshold (for example a single strength-4 event pushing effective net past a
+promote boundary), a met-but-gated threshold is annotated instead of rendered
+as a negative distance: `score met for moderate; needs another event to cross`
+(promotion) or `eroded to the minor threshold; needs another event to cross`
+(demotion).
 
 ## Character Arc Derivation
 
@@ -394,8 +407,8 @@ window, and the state after it. Chronology is the same graph-derived order repla
 - **Window**: inclusive of both endpoints. `transitions` has one entry per event in the window
   that carries a signal for this character (events without such a signal are omitted). Each
   transition records the event id/title/description, the signal interpretation, and
-  human-readable `changes` (for example "Added intimacy … (major)", "Strengthened … to
-  defining", "Derived rank …: minor to major"). Start and end intimacy lines include
+  human-readable `changes` (for example "Added intimacy … (moderate)", "Strengthened … to
+  defining", "Derived rank …: minor to moderate"). Start and end intimacy lines include
   distance-to-threshold from the accumulator. The names `transitions` and `changes` are
   change-kind-agnostic so later state kinds (appearance and so on) can be added without
   renaming the API.
@@ -427,7 +440,11 @@ renderer so scoped character context cannot leak late-story state into an earlie
 Agent tools provide simple CRUD over the editable entities (narrative style fields, world facts,
 baseline world state, characters, events with world-state effects and signals, event
 relationships) plus read access to derived state at any timeline position. Tools mutate the in-memory `World` and write through
-to disk, the same as user edits via forms.
+to disk, the same as user edits via forms. Write tools that take several sibling
+prose fields (`update_narrative_style`, `upsert_character`) treat each field as its
+own JSON argument and reject leftover tool-call markup (XML `<parameter>` tags or
+sibling field tags concatenated into an earlier string) with `ToolException` so the
+model can retry instead of persisting the leak.
 
 `read_character_arc(character_id, start_event_id="", end_event_id="")` returns the formatted
 arc for a character. Start state is entering the window (before the start event); end state

@@ -250,6 +250,14 @@ returns an `InterpretationResult` and **does not mutate the world**. Persistence
 event tools, the event-editor re-run button, and any future plot-editor loop — invocation
 is not coupled to NiceGUI handlers.
 
+Both stages can target an arbitrary `StoryBible` rather than the live world:
+`run_intimacy_interpretation(..., bible=...)` assembles context, validates, and reviews
+against the passed bible (default: live world), and `apply_interpretation_to_bible(bible,
+result)` writes a reviewed result into a passed bible in place with no persistence —
+`apply_interpretation(result)` is the live-world path that wraps it in
+`world_transaction()`. This is what lets the plot sub-agent interpret and apply events
+inside a `PlotDraft` sandbox (`app/world/draft.py`) before committing.
+
 The graph is an enforced sequence with no conditional routing:
 
 1. **`assemble_context` (deterministic, no LLM).** The event, the character's identity,
@@ -295,10 +303,13 @@ Key decisions (2026-08-21 project review):
   and any new-intimacy or rewording proposals; a reviewer approves or revises; the apply stage
   writes approved signals with evidence entries and creation/rewording records through
   ordinary application code (no LLM executor). Each run **owns** the signal's
-  workflow-authored records: evidence and creation/rewording effects are replaced (a prior
-  `AddIntimacy` survives only while the new result still references its intimacy, since it is
-  the establishing record), and a rejected verdict clears them — replay additionally treats a
-  rejected signal as contributing nothing. Legacy/UI-authored effects on the same signal are
+  workflow-authored records: interpretation-authored evidence and creation/rewording effects
+  are replaced (a prior `AddIntimacy` survives only while the new result still references its
+  intimacy, since it is the establishing record), and a rejected verdict clears them — replay
+  additionally treats a rejected signal as contributing nothing. Evidence carrying the
+  `author == "plot_agent"` provenance tag (bounded nudges appended by the plot sub-agent's
+  draft tools in `app/tools/plot_draft.py`) is never the workflow's to replace and survives
+  re-runs. Legacy/UI-authored effects on the same signal are
   left untouched by apply. Rank changes are never written: the
   deterministic accumulator in `app/world/evidence.py` (`accumulate_rank`) derives rank
   during replay and is directly callable as a what-if oracle (see
@@ -315,6 +326,96 @@ Key decisions (2026-08-21 project review):
 A separate maintenance/consolidation workflow (merge, split, archive intimacies using the
 stored evidence history) is future work and deliberately out of scope for the interpretation
 pipeline.
+
+## Plot Sub-Agent (`plan_plot`)
+
+The plot sub-agent drafts timeline events inside a `PlotDraft` sandbox (`app/world/draft.py`)
+to fulfill a briefing — goal, target character arcs, constraints, and a budget — and returns a
+structured `PlotPlanResult`. Unlike the enforced pipelines above, it is a tool-loop agent
+(`create_agent`, like the chat agent) built in `app/graphs/plot_agent.py` and registered as
+`plan_plot` in the workflow registry.
+
+- **Per-run tool binding.** `create_plot_draft_toolset` (`app/tools/plot_draft.py`) builds the
+  tools as closures over one `PlotDraft` and one `PlotBudget`, so the compiled graph is per-run
+  and never cached. Write tools run interpretation synchronously and return evidence, rank
+  movements, and distance-to-threshold in the tool result — the feedback loop lives in the tool
+  result itself.
+- **One write per message, by construction.** `SingleWritePerMessageMiddleware`
+  (`app/graphs/single_write_middleware.py`) rejects every draft-write tool call after the first
+  within a single AI message (the write set is `DRAFT_WRITE_TOOL_NAMES`; read tools may batch
+  freely). Batching writes blind is therefore impossible mechanically, not just by prompt. It
+  is listed after `SerializeToolCallsMiddleware`, which must stay outermost so its per-batch
+  gate still advances when a call is rejected without executing.
+- **Structured outcome, guaranteed.** `run_plot_agent(draft, budget, briefing)` is the blocking
+  entry point. The run ends via the terminal tools `finish_plot` (status `completed`) or
+  `bail_out` (status `infeasible` with reason `budget | judgment | overconstrained` and a
+  measured per-arc gap report). A run that stops without a terminal call is nudged once to
+  finalize; if it still refuses, or exhausts its step limit (a recursion limit scaled from the
+  budget), the runner force-records a budget bail-out so the caller always receives a
+  `PlotPlanResult`. Committing the draft is the caller's responsibility and only sensible on
+  `completed`.
+- **Model config.** The loop resolves its model through the `plot_agent` graph node
+  ("Plot: Sub-Agent", default role `orchestration`). Interpretation calls made from inside the
+  draft tools use the intimacy nodes' own configs.
+
+- **Preservation pins and drift reports.** The briefing may pin specific character
+  intimacies (`PinnedIntimacy`). Pins are mechanically checked, not prompted: every write
+  result diffs each pin's derived rank and net against the original timeline, and the final
+  `PlotPlanResult.drift_report` carries the same diff. Pin drift is the agent's cue to undo
+  the change or bail out `overconstrained`.
+- **Revise-range containment.** A `revise_range` (start/end event ids on the base
+  chronology) makes every event outside the range read-only — content edits, deletes,
+  nudges, rewords, and relation edits touching them are rejected by the tools, and new
+  events must anchor to at least one in-range event. Downstream interpretations may still
+  refresh via the stale ripple. In revise mode write results additionally carry an
+  end-state drift diff (rank changes and newly minted intimacies across all characters)
+  against the original timeline.
+
+### Rank-target plan
+
+Scene writing consumes intimacy ranks rather than their within-band accumulator scores, so a
+dramatic arc that moves the net without crossing a rank boundary is invisible downstream. Every
+plot run therefore declares its intended rank movement mechanically before it may edit the draft:
+
+- **Declared intent.** `plan_rank_targets(targets, note="")` records zero or more
+  `RankTarget` values (`character_id`, `intimacy_id`, `target_rank`). Character and intimacy ids
+  resolve against the draft bible, and targets may name only existing intimacies. A newly minted
+  intimacy can be targeted by re-planning after its creation. An empty target list is valid only
+  with a non-empty note that explicitly says why no rank movement is intended.
+- **Write gate and revisions.** All draft mutation tools reject calls until a target plan exists.
+  The planning tool consumes no event or re-interpretation budget and may be called again when the
+  story pivots; each replacement after the first is counted as a plan revision. It is itself in
+  the one-write-per-message set, so the model must read the declared scoreboard before drafting.
+- **Measured scoreboard.** Every write result appends the current target scoreboard beside the
+  preservation drift report. A target is `hit` when the current rank equals the target,
+  `transient hit` when replay crossed the target rank but later moved away, or `not yet` with the
+  current rank, effective net, and distance-to-threshold. This makes crossings, rather than
+  unobservable movement inside a band, the loop's success criterion.
+- **Terminal accountability.** `finish_plot` rejects while any target is not currently hit unless
+  the agent supplies `unmet_targets_note`. The agent must strengthen/add events, deliberately
+  re-plan, or acknowledge the miss. Acknowledged misses become measured `ArcGapReport` entries.
+  `PlotPlanResult` carries the final target scoreboard and plan-revision count so the chat-side
+  result can report hits, misses, and acknowledged gaps.
+
+### Chat integration (`plan_plot` chat tool)
+
+The chat agent cannot create, edit, delete, or re-relate timeline events: the event write
+tools are off its toolset (`STORY_BIBLE_TOOLS` keeps only reads; the write tools remain
+defined in `app/tools/story_bible.py` for the UI trigger path and tests). All timeline
+authoring goes through the `plan_plot` chat tool (`app/tools/plot_planning.py`):
+
+- **Briefing contract.** `briefing` (goal plus target character arcs as shaped trajectories
+  with waypoints, never just endpoints), `scope` (`append`, or `revise_range` with
+  `start_event_id`/`end_event_id`), `pinned_intimacies`, `preservation_guidance` (free-text
+  do-not-change instructions appended to the sub-agent's system prompt), and a mandatory
+  budget (`max_new_events`, `max_reinterpretation_runs`) that grounds budget bail-outs.
+- **Claim and commit.** The run holds the coarse story-bible `JobManager` claim
+  (`hold_story_bible_claim`) for its duration, so it appears in the Work Queue, completion
+  raises a toast, and a second plot run cannot race it. On status `completed` with draft
+  steps, the tool commits the draft all-or-nothing inside the held claim
+  (`PlotDraft.commit()` refuses if the live events changed since the fork). An infeasible
+  run commits nothing; the tool returns the reason, measured gap report, and drift report
+  for the chat agent to relay to the writer.
 
 ## Related Docs
 

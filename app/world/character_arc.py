@@ -32,7 +32,7 @@ from app.world.replay import (
     intimacy_tracks_from_baselines,
 )
 
-_STRENGTH_ORDER = {"dormant": -1, "minor": 0, "major": 1, "defining": 2}
+_STRENGTH_ORDER = {"dormant": -1, "minor": 0, "moderate": 1, "major": 2, "defining": 3}
 
 
 @dataclass(frozen=True)

@@ -193,3 +193,37 @@ fix so the context is not lost between phases.
   semantic re-read is manual).
 - **Possible fix:** Optional debounce after the user leaves an event, or a
   "signals look stale" badge after relation edits that deep-links to Re-run.
+
+## 13. plan_plot blocks the chat turn for the whole plot run
+
+- **Severity:** Low-Medium (UX, by design for now)
+- **Location:** `app/tools/plot_planning.py` (`plan_plot`), `app/graphs/jobs.py`
+- **Introduced:** Plot sub-agent system
+- **Symptom:** The plot sub-agent runs as a blocking tool call inside the chat turn.
+  A multi-event run performs many sequential LLM calls (loop turns plus inline
+  interpretation per event), so the chat reply stalls until the run finishes or
+  bails out. Progress is only visible as the running "Plot plan" job in the Work
+  Queue; the chat panel shows nothing incremental, and the chat turn cannot be used
+  for anything else meanwhile.
+- **Why it is acceptable:** Blocking keeps the contract simple — the chat agent
+  relays a complete, structured result (commit or measured bail-out) in the same
+  turn, and the story-bible claim already serializes concurrent runs.
+- **Possible fix:** Run plot jobs through the `JobManager` work queue like scene
+  generation, have `plan_plot` return a job handle immediately, and surface the
+  step log incrementally; requires the chat agent to poll or be re-invoked on
+  completion.
+
+## 14. Plot rank targets cannot name not-yet-created intimacies
+
+- **Severity:** Low (planning ergonomics, validated and recoverable)
+- **Location:** `app/tools/plot_draft.py` — `plan_rank_targets`
+- **Introduced:** Plot rank-target planning
+- **Symptom:** A rank target must resolve to an intimacy already present in the draft bible.
+  The initial plan therefore cannot target an intimacy that a later event is expected to mint.
+  After creation, the plot sub-agent must call `plan_rank_targets` again to add that target; the
+  replacement is counted as a plan revision.
+- **Why it is acceptable:** Rejecting speculative ids preserves the tool boundary that every
+  model-supplied reference resolves against canonical world data. Re-planning is budget-free and
+  its revision is visible in the final result.
+- **Possible fix:** Add a separate candidate-target type keyed by proposed intimacy text, then
+  deterministically bind it to the id minted by an approved interpretation result.

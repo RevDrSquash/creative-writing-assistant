@@ -62,19 +62,24 @@ hints to the workflow (see [architecture_agent_workflows.md](architecture_agent_
 A separate maintenance/consolidation workflow (merge, split, archive intimacies using the
 stored evidence history) remains future work, out of scope for the interpretation pipeline.
 
-## Plot editor agent
+## Plot sub-agent follow-ups
 
-A planned agent that closes the feedback loop between plot planning and the evidence-based
-intimacy system. Today the intimacy pipeline is purely interpretive (events in, evidence and
-derived rank out); there is no mechanism that answers "what events would produce the character
-arc I want?". The plot editor agent would iterate: author or adjust an event, run the
-interpretation workflow, inspect the resulting evidence and distance-to-threshold, and tweak
-until the arc plays out as intended. This is deliberately a separate project *after* the
-evidence-based intimacy system stabilizes; the intimacy work accommodates it cheaply by making
-the accumulator a pure what-if oracle that exposes distance-to-threshold, and by keeping the
-interpretation run's entry point UI-independent (see
-[story_bible_model.md](story_bible_model.md) and
-[architecture_agent_workflows.md](architecture_agent_workflows.md)).
+The plot editor agent shipped as the plot sub-agent (`plan_plot`): the chat agent briefs it,
+it drafts events one at a time in a `PlotDraft` sandbox with inline interpretation feedback,
+and it commits all-or-nothing or bails out with a measured gap report (see
+[architecture_agent_workflows.md](architecture_agent_workflows.md) "Plot Sub-Agent").
+Remaining ideas, deliberately deferred:
+
+- **User review before commit.** Commit is a single choke point, so a "present the draft to
+  the writer for approval" step can be layered on without restructuring.
+- **Event split/merge primitives.** Signals attach to events, so splitting/merging has no
+  clean division of signal sets; the sub-agent approximates it in-draft via
+  delete-and-recreate, where re-interpretation regenerates the signals anyway.
+- **Timeline branch-and-merge.** Candidate chains with adopt-a-chain-or-prefix selection plus
+  backtracking cover the need without merge reconciliation.
+- **Semantic look-ahead.** "Was this intimacy necessary for a future event?" is not knowable
+  mechanically; the drift report, dangling-reference diagnostics, and preservation pins are
+  the practical proxies.
 
 ## User context notes
 

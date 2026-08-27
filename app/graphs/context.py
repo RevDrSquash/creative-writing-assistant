@@ -43,6 +43,7 @@ the princess".
 Each intimacy has a strength that scales its influence on behavior:
 - dormant: no current strength; the intimacy and its evidence history remain
 - minor: colors reactions but is easily overridden
+- moderate: a steady presence; shapes reactions in its domain but yields to major drives
 - major: regularly shapes decisions and emotional responses
 - defining: a core driver; other motives yield to it when they conflict
 Rank is derived from accumulated signal evidence during replay, not stored.
@@ -88,9 +89,25 @@ Story bible tools:
   position.
 - Use read_character_arc (or read_character with start/end event ids) to see a character's
   state entering and leaving a timeline window, plus the transitions in between.
-- On add_event / update_event, pass signals only as hints: character_id plus
-  interpretation. Do not author intimacy effects or evidence; interpretation
-  runs automatically and writes those. Baseline intimacies stay on upsert_character."""
+- Baseline intimacies stay on upsert_character.
+
+Timeline authoring (plan_plot):
+- You cannot create, edit, delete, or re-relate timeline events directly. All event
+  authoring goes through plan_plot, which runs a plot sub-agent that drafts events one at
+  a time in a sandbox, interprets each event as it goes, and commits all-or-nothing.
+- Write the briefing with the goal and each target character arc as a shaped trajectory
+  with waypoints (for example "distrust of authority deepens through the midpoint, then
+  reverses to trust by the end"), never just an endpoint. Express desired arcs strongly
+  enough to imply intended rank movement; the sub-agent translates that movement into
+  measured rank targets. Gather ids with the read tools first.
+- Choose the scope: append (continue the timeline) or revise_range with start_event_id
+  and end_event_id (rework that stretch; events outside it stay read-only).
+- Pass pinned_intimacies for character intimacies that must not change and
+  preservation_guidance for free-text do-not-change instructions.
+- Set the budget deliberately (max_new_events, max_reinterpretation_runs); it is
+  mandatory and bounds the run.
+- If the run returns infeasible, nothing was committed: relay the reason, gap report,
+  and drift report to the writer and discuss reworking the briefing before retrying."""
 
 
 def compose_story_bible_system_prompt(*usage_sections: str) -> str:

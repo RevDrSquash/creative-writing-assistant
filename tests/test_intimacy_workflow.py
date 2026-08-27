@@ -321,6 +321,40 @@ def test_analyze_prompt_includes_hint_and_primer(isolated_world: World) -> None:
     assert result.evidence
 
 
+def test_run_targets_passed_bible_and_leaves_world_untouched(isolated_world: World) -> None:
+    character_id, event_id, intimacy_id = _seed_character_and_event(isolated_world)
+    draft = isolated_world.story_bible.model_copy(deep=True)
+    draft.timeline.append(
+        Event(
+            id="event_draft_only",
+            title="Draft-only event",
+            description="Exists only in the draft copy.",
+            signals=[Signal(character_id=character_id, interpretation="A new hint.")],
+        )
+    )
+    draft.event_relations.append(
+        EventRelation(kind="follows", source_id="event_draft_only", target_id=event_id)
+    )
+    before = isolated_world.model_dump(mode="json")
+    models = _models(_analysis(intimacy_id), _review(intimacy_id=intimacy_id))
+
+    result = run_intimacy_interpretation(
+        "event_draft_only",
+        character_id,
+        models=models,
+        bible=draft,
+    )
+
+    assert result.event_id == "event_draft_only"
+    assert result.evidence[0].intimacy_id == intimacy_id
+    assert "Draft-only event" in result.context
+    assert isolated_world.model_dump(mode="json") == before
+
+    # The live-world default still rejects the draft-only event.
+    with pytest.raises(ValueError, match="event_draft_only"):
+        run_intimacy_interpretation("event_draft_only", character_id, models=models)
+
+
 def test_unknown_ids_raise(isolated_world: World) -> None:
     character_id, event_id, intimacy_id = _seed_character_and_event(isolated_world)
     models = _models(_analysis(intimacy_id), _review(intimacy_id=intimacy_id))

@@ -240,7 +240,7 @@ def test_store_load_migrates_v8_to_v9_converts_strength_effects(tmp_path: Path) 
     assert signal.evidence[0].strength == 5
     derived = derive_state(world.story_bible)
     # Migrated single identity-shaking evidence follows the accumulator, not last-write.
-    assert derived.characters["char_mira"].intimacies[0].strength == "major"
+    assert derived.characters["char_mira"].intimacies[0].strength == "moderate"
 
 
 def test_get_world_singleton_loads_once_and_save_world_persists(

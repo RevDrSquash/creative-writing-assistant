@@ -50,10 +50,16 @@ from app.world.store import get_world
 _STRENGTH_OPTIONS = {
     "dormant": "Dormant",
     "minor": "Minor",
+    "moderate": "Moderate",
     "major": "Major",
     "defining": "Defining",
 }
-_BASELINE_STRENGTH_OPTIONS = {"minor": "Minor", "major": "Major", "defining": "Defining"}
+_BASELINE_STRENGTH_OPTIONS = {
+    "minor": "Minor",
+    "moderate": "Moderate",
+    "major": "Major",
+    "defining": "Defining",
+}
 _EVIDENCE_DIRECTION_OPTIONS = {
     "supports": "Supports",
     "contradicts": "Contradicts",

@@ -34,6 +34,7 @@ SCENE_PROSE_REVISE_NODE_ID = "scene_prose_revise"
 SCENE_SUMMARY_NODE_ID = "scene_summary"
 INTIMACY_ANALYZE_NODE_ID = "intimacy_analyze"
 INTIMACY_REVIEW_NODE_ID = "intimacy_review"
+PLOT_AGENT_NODE_ID = "plot_agent"
 
 
 class ModelConfig(BaseModel):
@@ -140,6 +141,11 @@ GRAPH_NODES: tuple[GraphNode, ...] = (
         INTIMACY_REVIEW_NODE_ID,
         "Intimacy: Review",
         default_config_id=JUDGMENT_CONFIG_ID,
+    ),
+    GraphNode(
+        PLOT_AGENT_NODE_ID,
+        "Plot: Sub-Agent",
+        default_config_id=ORCHESTRATION_CONFIG_ID,
     ),
 )
 GRAPH_NODE_MAP = {node.node_id: node for node in GRAPH_NODES}
